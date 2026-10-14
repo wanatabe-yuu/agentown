@@ -135,7 +135,7 @@ export class DockerDriver implements RuntimeDriver {
       "HOME=/workspace/home",
     ];
     if (spec.preset.model) env.push(`AGENTOWN_MODEL=${spec.preset.model}`);
-    if (spec.preset.providerSecret && process.env.ANTHROPIC_API_KEY) env.push(`ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
+    if (spec.providerKey) env.push(`ANTHROPIC_API_KEY=${spec.providerKey}`);
     const cpu = parseCpu(spec.preset.resources.cpu);
     const mem = parseMemory(spec.preset.resources.memory);
     const { status } = await this.call(
@@ -152,6 +152,8 @@ export class DockerDriver implements RuntimeDriver {
           "agentown.io/generation": String(spec.generation),
           "agentown.io/namespace": spec.namespace,
           "agentown.io/preset": spec.preset.id,
+          // Single Docker host: placement is recorded but there is only one node.
+          "agentown.io/placement": spec.preset.placement,
         },
         HostConfig: {
           NetworkMode: this.networkName(spec.namespace),

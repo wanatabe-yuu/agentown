@@ -11,6 +11,8 @@ export interface RuntimeSpec {
   storageRef: string;
   displayName: string;
   jobRole: string;
+  /** Plaintext provider key for this agent only (null = none). Delivered as a per-agent secret. */
+  providerKey: string | null;
 }
 
 export interface PodInfo {

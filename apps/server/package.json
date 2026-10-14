@@ -17,7 +17,8 @@
     "ws": "8.22.0",
     "zod": "3.25.76",
     "@fastify/static": "8.3.0",
-    "yaml": "2.9.1"
+    "yaml": "2.9.1",
+    "@anthropic-ai/sdk": "0.133.0"
   },
   "devDependencies": {
     "@types/pg": "8.23.1",

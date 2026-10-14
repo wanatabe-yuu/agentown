@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statS
 import { join } from "node:path";
 import { ClaudeAdapter } from "./adapters/claude.ts";
 import { ScriptAdapter } from "./adapters/script.ts";
-import type { Adapter, RunContext, RunResult, TaskInfo } from "./adapters/types.ts";
+import type { Adapter, RunConfig, RunContext, RunResult, TaskInfo } from "./adapters/types.ts";
 import { AgentownClient, ApiError } from "./client.ts";
 
 /**
@@ -89,7 +89,9 @@ async function uploadOutputs(runId: string, dir: string) {
   return n;
 }
 
-async function execute(run: { id: string; attempt: number }, task: TaskInfo, resumed: boolean) {
+const DEFAULT_CONFIG: RunConfig = { harness: "script", model: null, effort: null, instructions: "", maxTurns: 40, hasCredential: false };
+
+async function execute(run: { id: string; attempt: number }, task: TaskInfo, resumed: boolean, config: RunConfig = DEFAULT_CONFIG) {
   busy = true;
   const workdir = join(WORKSPACE, "tasks", task.id);
   const outputDir = join(workdir, `out-${run.attempt}`);
@@ -124,6 +126,7 @@ async function execute(run: { id: string; attempt: number }, task: TaskInfo, res
   }, 15000);
 
   const ctx: RunContext = {
+    config,
     task,
     runId: run.id,
     workdir,
@@ -175,7 +178,7 @@ async function loop() {
     if (!busy && acceptingWork) {
       try {
         const claim = await api.post("/api/runs/claim", { generation });
-        if (claim) await execute(claim.run, claim.task, claim.resumed);
+        if (claim) await execute(claim.run, claim.task, claim.resumed, claim.config);
       } catch (err) {
         if (stale(err)) shutdown("runtime generation replaced");
         else log("claim failed", String(err));

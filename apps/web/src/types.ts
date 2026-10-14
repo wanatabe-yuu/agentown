@@ -13,6 +13,7 @@ export interface Agent {
   desiredRuntime: "running" | "stopped";
   work: { state: WorkState; reported: WorkState; detail: string | null; updatedAt: string | null };
   lastHeartbeatAt: string | null;
+  config: AgentConfig;
   runtime: {
     presetId: string;
     generation: number;
@@ -25,7 +26,31 @@ export interface Agent {
   } | null;
 }
 
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+
+export interface AgentConfig {
+  credentialId: string | null;
+  model: string | null;
+  effort: Effort | null;
+  instructions: string;
+  maxTurns: number;
+}
+
+export interface Credential {
+  id: string;
+  name: string;
+  provider: string;
+  keyHint: string;
+  models: string[];
+  departments: string[] | null;
+  revision: number;
+  createdAt: string;
+  modelsRefreshedAt: string;
+  revokedAt: string | null;
+}
+
 export interface AgentDetail extends Agent {
+  credential: Credential | null;
   grants: Array<{ id: string; action: string; scope: { kind: string; ids?: string[] }; constraints: { templates?: string[] }; delegable: boolean; issuer: string; parentGrantId: string | null }>;
   can: Record<string, boolean>;
 }
@@ -85,7 +110,7 @@ export interface AgentEvent {
 
 export interface Catalog {
   templates: Array<{ id: string; jobRole: string; runtimePreset: string; policyProfile: string }>;
-  presets: Array<{ id: string; harness: string; image: string }>;
+  presets: Array<{ id: string; harness: string; image: string; placement?: string }>;
   departments: Department[];
   projects: Array<{ id: string; name: string }>;
 }

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { PassThrough } from "node:stream";
-import { ACTIONS, type Actor, WORK_STATES } from "@agentown/core";
+import { ACTIONS, type Actor, EFFORTS, WORK_STATES } from "@agentown/core";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -21,13 +21,32 @@ const scopeSchema = z.union([
   z.object({ kind: z.literal("projects"), ids: z.array(z.string()).min(1) }),
 ]);
 
+const agentConfigSchema = z
+  .object({
+    credentialId: z.string().nullable(),
+    model: z.string().max(100).nullable(),
+    effort: z.enum(EFFORTS).nullable(),
+    instructions: z.string().max(8000),
+    maxTurns: z.number().int().min(1).max(200),
+  })
+  .partial()
+  .strict();
+
 const S = {
+  agentConfig: agentConfigSchema,
+  credential: z.object({
+    name: z.string().min(1).max(60),
+    provider: z.enum(["anthropic"]).default("anthropic"),
+    apiKey: z.string().min(8).max(500),
+    departments: z.array(z.string()).nullable().default(null),
+  }),
   spawn: z.object({
     templateId: z.string(),
     displayName: z.string().min(1).max(40),
     reportsToAgentId: z.string().nullable(),
     departmentId: z.string().optional(),
     idempotencyKey: z.string().max(100).optional(),
+    config: agentConfigSchema.optional(),
   }),
   updateAgent: z.object({ displayName: z.string().min(1).max(40).optional(), reportsToAgentId: z.string().nullable().optional() }),
   retire: z.object({ purgeWorkspace: z.boolean().default(false) }).default({}),
@@ -144,6 +163,25 @@ export async function buildApp(opts: AppOptions) {
   app.get<{ Params: { id: string }; Querystring: { after?: string } }>("/api/agents/:id/logs", async (req) => ({
     lines: await service.logs(actorOf(req), req.params.id, Number(req.query.after ?? 0)),
   }));
+
+  app.put<{ Params: { id: string } }>("/api/agents/:id/config", async (req) =>
+    changed(await service.configureAgent(actorOf(req), req.params.id, parse(S.agentConfig, req.body))),
+  );
+
+  // ---- credentials (owner-managed; the key is write-only)
+  app.get("/api/credentials", async (req) => ({ credentials: await service.listCredentials(actorOf(req)) }));
+  app.post("/api/credentials", async (req, reply) => {
+    reply.status(201);
+    return service.createCredential(actorOf(req), parse(S.credential, req.body));
+  });
+  app.post<{ Params: { id: string } }>("/api/credentials/:id/refresh-models", async (req) =>
+    service.refreshCredentialModels(actorOf(req), req.params.id),
+  );
+  app.delete<{ Params: { id: string } }>("/api/credentials/:id", async (req, reply) => {
+    await service.revokeCredential(actorOf(req), req.params.id);
+    changed(null);
+    return reply.status(204).send();
+  });
 
   // ---- grants
   app.post("/api/grants", async (req, reply) => {

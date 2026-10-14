@@ -6,12 +6,14 @@ import { createPool, migrate } from "../src/db.ts";
 import { RuntimeController } from "../src/runtime/controller.ts";
 import type { ExecStreams, PodInfo, RuntimeDriver, RuntimeSpec } from "../src/runtime/driver.ts";
 import { podName } from "../src/runtime/driver.ts";
+import type { ModelLister } from "../src/providers.ts";
+import { SecretBox } from "../src/secrets.ts";
 import { Service } from "../src/service.ts";
 
 /** In-memory driver: pods become Ready immediately. Records issued tokens so tests can act as runtimes. */
 export class FakeDriver implements RuntimeDriver {
   readonly kind = "fake";
-  pods = new Map<string, PodInfo & { agentId: string; namespace: string }>();
+  pods = new Map<string, PodInfo & { agentId: string; namespace: string; providerKey: string | null }>();
   tokens = new Map<string, string>();
   identities = new Set<string>();
 
@@ -30,6 +32,7 @@ export class FakeDriver implements RuntimeDriver {
       name,
       agentId: spec.agentId,
       namespace: spec.namespace,
+      providerKey: spec.providerKey,
       generation: spec.generation,
       phase: "Running",
       ready: true,
@@ -58,7 +61,12 @@ export async function setup() {
   await migrate(db);
   const config = parseOrgConfig(readFileSync(new URL("../../../config/agentown.yaml", import.meta.url), "utf8"));
   const bus = new EventBus();
-  const service = new Service(db, config, bus);
+  // Fake provider: keys starting with "sk-test-" are valid; the suffix picks the model set.
+  const modelLister: ModelLister = async (_provider, apiKey) => {
+    if (!apiKey.startsWith("sk-test-")) throw new Error("401 invalid x-api-key");
+    return apiKey.includes("small") ? ["claude-haiku-5-5"] : ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
+  };
+  const service = new Service(db, config, bus, SecretBox.forTests(), modelLister);
   const { ownerToken } = await service.bootstrap();
   const driver = new FakeDriver();
   const controller = new RuntimeController(service, driver, { apiUrlForRuntimes: "http://test" });

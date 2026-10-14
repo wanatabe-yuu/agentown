@@ -32,9 +32,13 @@ const runtimePresetSchema = z.object({
   image: z.string(),
   imagePullPolicy: z.enum(["Always", "IfNotPresent", "Never"]).default("IfNotPresent"),
   harness: z.enum(["script", "claude"]),
-  /** Name of a Secret (in each department namespace) holding provider credentials, if the harness needs one. */
-  providerSecret: z.string().optional(),
+  /** Default model when an agent has none configured; must exist on the agent's credential. */
   model: z.string().optional(),
+  /**
+   * shared: any node. dedicated-node: at most one dedicated agent per node, only on
+   * nodes labelled agentown.io/pool=dedicated (tainted so nothing else lands there).
+   */
+  placement: z.enum(["shared", "dedicated-node"]).default("shared"),
   workspace: z.object({ size: z.string().default("1Gi") }).default({}),
   resources: z
     .object({ cpu: z.string().default("500m"), memory: z.string().default("512Mi") })

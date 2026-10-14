@@ -1,6 +1,8 @@
 import {
   type Action,
   type Actor,
+  type AgentConfig,
+  type Effort,
   type AgentNode,
   type Grant,
   type GrantConstraints,
@@ -14,8 +16,10 @@ import {
   OrgGraph,
   PLAYBOOK_ARG_NAME,
   PLAYBOOK_NAME,
+  EFFORTS,
   WORK_STATES,
   authorize,
+  isGrantEffective,
   canDelegate,
   canTransition,
   isTerminal,
@@ -23,6 +27,8 @@ import {
 import type pg from "pg";
 import type { AgentEventRow, EventBus } from "./bus.ts";
 import { type Db, type Queryable, tx } from "./db.ts";
+import { type ModelLister, PROVIDERS, type Provider } from "./providers.ts";
+import type { SecretBox } from "./secrets.ts";
 import {
   ApiError,
   actorRef,
@@ -58,6 +64,27 @@ export interface AgentRow {
   work_updated_at: Date | null;
   last_heartbeat_at: Date | null;
   created_at: Date;
+  credential_id: string | null;
+  model: string | null;
+  effort: Effort | null;
+  instructions: string;
+  max_turns: number;
+  config_revision: number;
+}
+
+interface CredentialRow {
+  id: string;
+  name: string;
+  provider: Provider;
+  ciphertext: Buffer;
+  key_hint: string;
+  models: string[];
+  departments: string[] | null;
+  revision: number;
+  created_by: string;
+  created_at: Date;
+  models_refreshed_at: Date;
+  revoked_at: Date | null;
 }
 
 export interface RuntimeRow {
@@ -71,6 +98,7 @@ export interface RuntimeRow {
   observed_detail: string | null;
   observed_at: Date | null;
   ready_generation: number | null;
+  applied_secret_rev: string | null;
 }
 
 export interface TaskRow {
@@ -155,6 +183,8 @@ export class Service {
     readonly db: Db,
     readonly config: OrgConfig,
     readonly bus: EventBus,
+    readonly secrets: SecretBox,
+    private readonly modelLister: ModelLister,
   ) {}
 
   // ---------------------------------------------------------------- plumbing
@@ -368,15 +398,32 @@ export class Service {
       reportsTo: string | null;
       createdBy: string;
       spawnKey: string | null;
+      config?: Partial<AgentConfig>;
     },
   ): Promise<void> {
     const { template, preset, profile } = this.template(a.templateId);
+    const cfg = a.config ?? {};
     const seat = await ctx.c.query<{ n: string }>("SELECT count(*) AS n FROM agents WHERE department_id = $1", [a.departmentId]);
     await ctx.c.query(
       `INSERT INTO agents(id, department_id, display_name, job_role, template_id, reports_to, lifecycle_state,
-         desired_runtime, created_by, spawn_key, seat)
-       VALUES ($1,$2,$3,$4,$5,$6,'provisioning','running',$7,$8,$9)`,
-      [a.id, a.departmentId, a.displayName, template.jobRole, template.id, a.reportsTo, a.createdBy, a.spawnKey, Number(seat.rows[0]!.n)],
+         desired_runtime, created_by, spawn_key, seat, credential_id, model, effort, instructions, max_turns)
+       VALUES ($1,$2,$3,$4,$5,$6,'provisioning','running',$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [
+        a.id,
+        a.departmentId,
+        a.displayName,
+        template.jobRole,
+        template.id,
+        a.reportsTo,
+        a.createdBy,
+        a.spawnKey,
+        Number(seat.rows[0]!.n),
+        cfg.credentialId ?? null,
+        cfg.model ?? null,
+        cfg.effort ?? null,
+        cfg.instructions ?? "",
+        cfg.maxTurns ?? 40,
+      ],
     );
     await ctx.c.query(
       `INSERT INTO agent_runtimes(agent_id, preset_id, namespace, storage_ref) VALUES ($1,$2,$3,$4)`,
@@ -423,7 +470,14 @@ export class Service {
 
   async spawn(
     actor: Actor,
-    input: { templateId: string; displayName: string; reportsToAgentId: string | null; departmentId?: string; idempotencyKey?: string },
+    input: {
+      templateId: string;
+      displayName: string;
+      reportsToAgentId: string | null;
+      departmentId?: string;
+      idempotencyKey?: string;
+      config?: Partial<AgentConfig>;
+    },
   ): Promise<{ agent: ReturnType<Service["presentAgent"]>; existing: boolean }> {
     this.template(input.templateId);
     const spawnKey = input.idempotencyKey ? `${actorRef(actor)}:${input.idempotencyKey}` : null;
@@ -455,8 +509,9 @@ export class Service {
         actor,
         "agent.spawn",
         { agentId: input.reportsToAgentId ?? undefined, templateId: input.templateId },
-        { policy, q: ctx.c, detail: { displayName: input.displayName } },
+        { policy, q: ctx.c, detail: { displayName: input.displayName, credentialId: input.config?.credentialId ?? null } },
       );
+      const config = input.config ? await this.validateConfig(ctx.c, departmentId, emptyConfig(), input.config) : undefined;
       const id = newId("a", 4);
       await this.insertAgent(ctx, {
         id,
@@ -466,6 +521,7 @@ export class Service {
         reportsTo: input.reportsToAgentId,
         createdBy: actorRef(actor),
         spawnKey,
+        config,
       });
       return id;
     });
@@ -498,6 +554,7 @@ export class Service {
       desiredRuntime: a.desired_runtime,
       work: { state: workState, reported: a.work_state, detail: a.work_detail, updatedAt: a.work_updated_at?.toISOString() ?? null },
       lastHeartbeatAt: a.last_heartbeat_at?.toISOString() ?? null,
+      config: this.agentConfig(a),
       runtime: r
         ? {
             presetId: r.preset_id,
@@ -534,13 +591,16 @@ export class Service {
     // Tell the caller what *they* may do to this agent, so the UI can show/hide
     // controls. The server still re-checks every call.
     const can: Partial<Record<Action, boolean>> = {};
-    for (const a of ["task.create", "task.assign", "runtime.control", "runtime.logs", "runtime.exec", "agent.update", "agent.retire", "permission.delegate"] as const) {
+    for (const a of ["task.create", "task.assign", "runtime.control", "runtime.logs", "runtime.exec", "agent.update", "agent.retire", "agent.configure", "permission.delegate"] as const) {
       can[a] = authorize(actor, a, { agentId: id }, policy).allowed;
     }
     can["agent.spawn"] = this.config.agentTemplates.some(
       (t) => authorize(actor, "agent.spawn", { agentId: id, templateId: t.id }, policy).allowed,
     );
-    return { ...agent, grants, can };
+    const cred = agent.config.credentialId
+      ? (await this.db.query<CredentialRow>("SELECT * FROM credentials WHERE id=$1", [agent.config.credentialId])).rows[0]
+      : undefined;
+    return { ...agent, grants, can, credential: cred ? this.presentCredential(cred) : null };
   }
 
   async updateAgent(actor: Actor, id: string, input: { displayName?: string; reportsToAgentId?: string | null }) {
@@ -655,6 +715,186 @@ export class Service {
       [id, after],
     );
     return rows.map((r) => ({ seq: Number(r.seq), at: r.at, runId: r.run_id, stream: r.stream, line: r.line }));
+  }
+
+  // ---------------------------------------------------------------- credentials & per-agent config
+
+  agentConfig(a: AgentRow): AgentConfig {
+    return { credentialId: a.credential_id, model: a.model, effort: a.effort, instructions: a.instructions, maxTurns: a.max_turns };
+  }
+
+  /** What the harness needs per run (non-secret). The API key reaches the runtime separately. */
+  runConfig(a: AgentRow) {
+    const preset = this.config.runtimeCatalog.find((p) => p.id === this.template(a.template_id).preset.id)!;
+    return {
+      harness: preset.harness,
+      model: a.model ?? preset.model ?? null,
+      effort: a.effort,
+      instructions: a.instructions,
+      maxTurns: a.max_turns,
+      hasCredential: !!a.credential_id,
+    };
+  }
+
+  presentCredential(r: CredentialRow) {
+    return {
+      id: r.id,
+      name: r.name,
+      provider: r.provider,
+      keyHint: `…${r.key_hint}`,
+      models: r.models,
+      departments: r.departments,
+      revision: r.revision,
+      createdBy: r.created_by,
+      createdAt: r.created_at.toISOString(),
+      modelsRefreshedAt: r.models_refreshed_at.toISOString(),
+      revokedAt: r.revoked_at?.toISOString() ?? null,
+    };
+  }
+
+  private async getCredentialRow(id: string, q: Queryable = this.db): Promise<CredentialRow> {
+    const { rows } = await q.query<CredentialRow>("SELECT * FROM credentials WHERE id=$1", [id]);
+    if (!rows[0]) throw notFound("credential");
+    return rows[0];
+  }
+
+  private async requireOwner(actor: Actor, action: string, target: string | null) {
+    if (actor.kind === "human") {
+      await this.audit(this.db, actor, action, target, true, "organization owner");
+      return;
+    }
+    await this.audit(this.db, actor, action, target, false, "credentials are managed by the owner");
+    throw deny(`${action} denied: credentials are managed by the owner`);
+  }
+
+  private async discoverModels(provider: Provider, apiKey: string): Promise<string[]> {
+    try {
+      const models = await this.modelLister(provider, apiKey);
+      if (!models.length) throw new Error("key works but lists no models");
+      return models;
+    } catch (err) {
+      throw badRequest(`provider rejected the key: ${redactLine(String((err as Error).message ?? err)).slice(0, 200)}`);
+    }
+  }
+
+  /** Owner sees every credential; an agent sees metadata only if it may configure someone. Never the key. */
+  async listCredentials(actor: Actor) {
+    if (actor.kind === "agent") {
+      const policy = await this.loadPolicy();
+      const mayConfigure = policy.grants.some((g) => g.principalId === actor.id && g.action === "agent.configure" && isGrantEffective(g, policy));
+      if (!mayConfigure) throw deny("listing credentials requires an agent.configure grant");
+    }
+    const { rows } = await this.db.query<CredentialRow>(
+      `SELECT * FROM credentials ${actor.kind === "agent" ? "WHERE revoked_at IS NULL" : ""} ORDER BY created_at`,
+    );
+    return rows.map((r) => this.presentCredential(r));
+  }
+
+  async createCredential(actor: Actor, input: { name: string; provider: Provider; apiKey: string; departments: string[] | null }) {
+    await this.requireOwner(actor, "credential.create", input.name);
+    if (!PROVIDERS.includes(input.provider)) throw badRequest("unsupported provider");
+    for (const d of input.departments ?? []) if (!this.config.departments.some((x) => x.id === d)) throw badRequest(`unknown department ${d}`);
+    const apiKey = input.apiKey.trim();
+    const models = await this.discoverModels(input.provider, apiKey);
+    return this.withTx(async (ctx) => {
+      const id = newId("k");
+      await ctx.c.query(
+        `INSERT INTO credentials(id, name, provider, ciphertext, key_hint, models, departments, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [id, input.name.slice(0, 60), input.provider, this.secrets.seal(apiKey), apiKey.slice(-4), models, input.departments?.length ? input.departments : null, actorRef(actor)],
+      );
+      await this.emit(ctx, { type: "credential.created", payload: { credentialId: id, name: input.name, models: models.length } });
+      return this.presentCredential(await this.getCredentialRow(id, ctx.c));
+    });
+  }
+
+  async refreshCredentialModels(actor: Actor, id: string) {
+    await this.requireOwner(actor, "credential.refresh", id);
+    const cred = await this.getCredentialRow(id);
+    if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
+    const models = await this.discoverModels(cred.provider, this.secrets.open(cred.ciphertext));
+    await this.db.query("UPDATE credentials SET models=$2, models_refreshed_at=now() WHERE id=$1", [id, models]);
+    return this.presentCredential(await this.getCredentialRow(id));
+  }
+
+  /** Revoking pulls the key from every runtime that holds it (the controller replaces idle runtimes). */
+  async revokeCredential(actor: Actor, id: string) {
+    await this.requireOwner(actor, "credential.revoke", id);
+    await this.withTx(async (ctx) => {
+      await this.getCredentialRow(id, ctx.c);
+      await ctx.c.query("UPDATE credentials SET revoked_at=now(), revision=revision+1 WHERE id=$1 AND revoked_at IS NULL", [id]);
+      await this.emit(ctx, { type: "credential.revoked", payload: { credentialId: id } });
+    });
+  }
+
+  /** Merge and validate a config change for an agent in `departmentId`. */
+  private async validateConfig(q: Queryable, departmentId: string, current: AgentConfig, change: Partial<AgentConfig>): Promise<AgentConfig> {
+    const next: AgentConfig = { ...current, ...Object.fromEntries(Object.entries(change).filter(([, v]) => v !== undefined)) };
+    if (change.credentialId !== undefined && change.credentialId !== current.credentialId && change.model === undefined) {
+      next.model = null; // a different key may not offer the old model
+    }
+    if (next.effort !== null && !EFFORTS.includes(next.effort)) throw badRequest("invalid effort");
+    if (!Number.isInteger(next.maxTurns) || next.maxTurns < 1 || next.maxTurns > 200) throw badRequest("maxTurns must be 1..200");
+    next.instructions = (next.instructions ?? "").slice(0, 8000);
+    if (next.credentialId) {
+      const cred = await this.getCredentialRow(next.credentialId, q);
+      if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
+      if (cred.departments && !cred.departments.includes(departmentId)) {
+        throw deny(`credential ${cred.name} is not available to the ${departmentId} department`);
+      }
+      if (next.model && !cred.models.includes(next.model)) {
+        throw badRequest(`model ${next.model} is not available with credential ${cred.name}`);
+      }
+    } else if (next.model) {
+      throw badRequest("choose a credential before choosing a model");
+    }
+    return next;
+  }
+
+  async configureAgent(actor: Actor, id: string, change: Partial<AgentConfig>) {
+    await this.withTx(async (ctx) => {
+      const a = await this.getAgentRow(id, ctx.c);
+      if (a.lifecycle_state === "retired") throw conflict("retired", "agent is retired");
+      await this.require(actor, "agent.configure", { agentId: id }, {
+        q: ctx.c,
+        detail: { credentialId: change.credentialId, model: change.model, effort: change.effort, instructionsChanged: change.instructions !== undefined },
+      });
+      const next = await this.validateConfig(ctx.c, a.department_id, this.agentConfig(a), change);
+      await ctx.c.query(
+        `UPDATE agents SET credential_id=$2, model=$3, effort=$4, instructions=$5, max_turns=$6, config_revision=config_revision+1 WHERE id=$1`,
+        [id, next.credentialId, next.model, next.effort, next.instructions, next.maxTurns],
+      );
+      await this.emit(ctx, {
+        type: "agent.configured",
+        agentId: id,
+        payload: { credentialId: next.credentialId, model: next.model, effort: next.effort, by: actorRef(actor) },
+      });
+    });
+    return this.presentAgentById(id);
+  }
+
+  /** Controller-side: the key the agent's runtime should hold now, tagged with a revision. */
+  async runtimeCredential(agentId: string): Promise<{ rev: string; apiKey: string | null }> {
+    const a = await this.getAgentRow(agentId);
+    if (!a.credential_id) return { rev: "none", apiKey: null };
+    const cred = await this.getCredentialRow(a.credential_id);
+    if (cred.revoked_at) return { rev: `${cred.id}:revoked`, apiKey: null };
+    return { rev: `${cred.id}:${cred.revision}`, apiKey: this.secrets.open(cred.ciphertext) };
+  }
+
+  async desiredSecretRev(a: AgentRow): Promise<string> {
+    if (!a.credential_id) return "none";
+    const cred = await this.getCredentialRow(a.credential_id);
+    return cred.revoked_at ? `${cred.id}:revoked` : `${cred.id}:${cred.revision}`;
+  }
+
+  async markSecretApplied(agentId: string, generation: number, rev: string) {
+    await this.db.query("UPDATE agent_runtimes SET applied_secret_rev=$3 WHERE agent_id=$1 AND generation=$2", [agentId, generation, rev]);
+  }
+
+  async hasRunningRun(agentId: string): Promise<boolean> {
+    const { rowCount } = await this.db.query("SELECT 1 FROM task_runs WHERE agent_id=$1 AND status='running'", [agentId]);
+    return !!rowCount;
   }
 
   // ---------------------------------------------------------------- grants
@@ -1038,7 +1278,7 @@ export class Service {
       );
       if (existing.rows[0]) {
         const run = existing.rows[0];
-        return { run: this.presentRun(run), task: this.presentTask(await this.getTaskRow(run.task_id, ctx.c)), resumed: true };
+        return { run: this.presentRun(run), task: this.presentTask(await this.getTaskRow(run.task_id, ctx.c)), resumed: true, config: this.runConfig(agent) };
       }
       if (!agent.accepting_work || agent.lifecycle_state === "retired") return null;
       const { rows } = await ctx.c.query<TaskRow>(
@@ -1061,7 +1301,7 @@ export class Service {
       }
       await this.setTaskStatus(ctx, t, "in_progress", null);
       await this.emit(ctx, { type: "run.started", agentId, taskId: t.id, runId, payload: { attempt: t.attempt, generation, title: t.title } });
-      return { run: this.presentRun(ins.rows[0]), task: this.presentTask(t), resumed: false };
+      return { run: this.presentRun(ins.rows[0]), task: this.presentTask(t), resumed: false, config: this.runConfig(agent) };
     });
   }
 
@@ -1283,7 +1523,7 @@ export class Service {
     void actor;
     return {
       templates: this.config.agentTemplates,
-      presets: this.config.runtimeCatalog.map((p) => ({ id: p.id, version: p.version, harness: p.harness, image: p.image, resources: p.resources })),
+      presets: this.config.runtimeCatalog.map((p) => ({ id: p.id, version: p.version, harness: p.harness, image: p.image, resources: p.resources, placement: p.placement, model: p.model ?? null })),
       departments: this.config.departments,
       projects: this.config.projects,
     };
@@ -1369,6 +1609,10 @@ export class Service {
     }
     return out;
   }
+}
+
+function emptyConfig(): AgentConfig {
+  return { credentialId: null, model: null, effort: null, instructions: "", maxTurns: 40 };
 }
 
 export { ApiError };

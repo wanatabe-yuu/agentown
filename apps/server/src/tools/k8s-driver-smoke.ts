@@ -16,11 +16,13 @@ const spec = {
   agentId,
   generation: 1,
   namespace: "agentown-eng",
-  preset: config.runtimeCatalog[0]!,
+  // Exercise the hardest shape: dedicated-node placement + a per-agent provider Secret.
+  preset: config.runtimeCatalog.find((p) => p.placement === "dedicated-node") ?? config.runtimeCatalog[0]!,
   apiUrl: "http://127.0.0.1:8080",
   storageRef: `agent-${agentId}-workspace`,
   displayName: "Smoke",
   jobRole: "engineer",
+  providerKey: "sk-smoke-not-a-real-key",
 };
 let issued = 0;
 await driver.ensureIdentity(spec, async () => {

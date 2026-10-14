@@ -192,6 +192,30 @@ const MIGRATIONS: string[] = [
     close_reason text
   );
   `,
+  `
+  CREATE TABLE credentials (
+    id text PRIMARY KEY,
+    name text NOT NULL,
+    provider text NOT NULL,
+    ciphertext bytea NOT NULL,               -- AES-256-GCM envelope (SecretBox)
+    key_hint text NOT NULL,                  -- last 4 characters, for humans
+    models text[] NOT NULL DEFAULT '{}',     -- what this key can use, discovered from the provider
+    departments text[],                      -- NULL = usable by agents in any department
+    revision int NOT NULL DEFAULT 1,
+    created_by text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    models_refreshed_at timestamptz NOT NULL DEFAULT now(),
+    revoked_at timestamptz
+  );
+  ALTER TABLE agents
+    ADD COLUMN credential_id text REFERENCES credentials(id),
+    ADD COLUMN model text,
+    ADD COLUMN effort text,
+    ADD COLUMN instructions text NOT NULL DEFAULT '',
+    ADD COLUMN max_turns int NOT NULL DEFAULT 40,
+    ADD COLUMN config_revision int NOT NULL DEFAULT 1;
+  ALTER TABLE agent_runtimes ADD COLUMN applied_secret_rev text;
+  `,
 ];
 
 export async function migrate(db: Db): Promise<void> {

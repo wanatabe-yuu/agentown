@@ -9,7 +9,18 @@ export interface TaskInfo {
   projectId: string | null;
 }
 
+/** Per-agent settings delivered with each claim (never contains the API key). */
+export interface RunConfig {
+  harness: "script" | "claude";
+  model: string | null;
+  effort: "low" | "medium" | "high" | "xhigh" | "max" | null;
+  instructions: string;
+  maxTurns: number;
+  hasCredential: boolean;
+}
+
 export interface RunContext {
+  config: RunConfig;
   task: TaskInfo;
   runId: string;
   workdir: string;

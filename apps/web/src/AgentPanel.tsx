@@ -1,12 +1,13 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { api } from "./api.ts";
-import type { Agent, AgentDetail, Catalog, Snapshot, WorkState } from "./types.ts";
+import { AgentConfigForm } from "./Credentials.tsx";
+import type { Agent, AgentDetail, Catalog, Credential, Snapshot, WorkState } from "./types.ts";
 import { ago, describeScope, StatusPill } from "./ui.tsx";
 
 // xterm is only loaded when someone actually opens a terminal.
 const Terminal = lazy(() => import("./Terminal.tsx").then((m) => ({ default: m.Terminal })));
 
-type Tab = "overview" | "tasks" | "logs" | "permissions" | "terminal";
+type Tab = "overview" | "tasks" | "logs" | "config" | "permissions" | "terminal";
 
 interface Props {
   agentId: string;
@@ -71,7 +72,7 @@ export function AgentPanel(p: Props) {
       </header>
 
       <nav className="tabs" role="tablist">
-        {(["overview", "tasks", "logs", "permissions", "terminal"] as Tab[]).map((t) => (
+        {(["overview", "tasks", "logs", "config", "permissions", "terminal"] as Tab[]).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)} disabled={t === "terminal" && !can["runtime.exec"]} title={t === "terminal" && !can["runtime.exec"] ? "You do not hold runtime.exec on this agent" : undefined}>
             {t}
           </button>
@@ -98,6 +99,11 @@ export function AgentPanel(p: Props) {
               <div>Lifecycle</div>
               <div>
                 {agent.lifecycleState} · intake {agent.acceptingWork ? "open" : "paused"} · desired {agent.desiredRuntime}
+              </div>
+              <div>Model</div>
+              <div>
+                {agent.config.model ?? <span className="muted">template default</span>}
+                {detail?.credential && <span className="muted small"> · key {detail.credential.name} ({detail.credential.keyHint})</span>}
               </div>
               <div>Reports to</div>
               <div>{manager ? `${manager.displayName} (${manager.jobRole})` : "— (top of org)"}</div>
@@ -142,6 +148,15 @@ export function AgentPanel(p: Props) {
 
         {tab === "tasks" && <AgentTasks agent={agent} snapshot={p.snapshot} onOpenTask={p.onOpenTask} />}
         {tab === "logs" && <Logs agentId={agent.id} allowed={!!can["runtime.logs"]} />}
+        {tab === "config" && detail && detail.id === agent.id && (
+          <AgentConfigForm
+            key={`${detail.id}:${detail.config.credentialId}:${detail.config.model}`}
+            detail={detail}
+            departmentId={agent.departmentId}
+            harness={p.catalog?.presets.find((x) => x.id === agent.runtime?.presetId)?.harness}
+            notify={p.notify}
+          />
+        )}
         {tab === "permissions" && detail && (
           <section>
             <p className="muted small">
@@ -186,6 +201,17 @@ export function AgentPanel(p: Props) {
 function SpawnForm({ manager, catalog, notify }: { manager: Agent; catalog: Catalog; notify: Props["notify"] }) {
   const [template, setTemplate] = useState(catalog.templates.find((t) => t.jobRole === "engineer")?.id ?? catalog.templates[0]!.id);
   const [name, setName] = useState("");
+  const [creds, setCreds] = useState<Credential[]>([]);
+  const [credentialId, setCredentialId] = useState("");
+  const [model, setModel] = useState("");
+  const tpl = catalog.templates.find((t) => t.id === template);
+  const usesModel = catalog.presets.find((p) => p.id === tpl?.runtimePreset)?.harness !== "script";
+  useEffect(() => {
+    if (!usesModel) return;
+    api<{ credentials: Credential[] }>("GET", "/api/credentials")
+      .then((r) => setCreds(r.credentials.filter((c) => !c.revokedAt && (!c.departments || c.departments.includes(manager.departmentId)))))
+      .catch(() => setCreds([]));
+  }, [usesModel, manager.departmentId]);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -194,6 +220,7 @@ function SpawnForm({ manager, catalog, notify }: { manager: Agent; catalog: Cata
         displayName: name || "New hire",
         reportsToAgentId: manager.id,
         idempotencyKey: `ui-${crypto.randomUUID()}`,
+        ...(usesModel && credentialId ? { config: { credentialId, model: model || null } } : {}),
       });
       notify(`Hiring ${r.agent.displayName} (${r.agent.id}); runtime is provisioning`, "info");
       setName("");
@@ -216,6 +243,24 @@ function SpawnForm({ manager, catalog, notify }: { manager: Agent; catalog: Cata
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" maxLength={40} aria-label="Display name" />
         <button type="submit">Spawn</button>
       </div>
+      {usesModel && (
+        <div className="form-row">
+          <select value={credentialId} onChange={(e) => { setCredentialId(e.target.value); setModel(""); }} aria-label="API key">
+            <option value="">API key: none yet</option>
+            {creds.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.keyHint})
+              </option>
+            ))}
+          </select>
+          <select value={model} onChange={(e) => setModel(e.target.value)} disabled={!credentialId} aria-label="Model">
+            <option value="">model: template default</option>
+            {(creds.find((c) => c.id === credentialId)?.models ?? []).map((m) => (
+              <option key={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+      )}
     </form>
   );
 }

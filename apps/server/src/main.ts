@@ -9,6 +9,8 @@ import { RuntimeController } from "./runtime/controller.ts";
 import type { RuntimeDriver } from "./runtime/driver.ts";
 import { DockerDriver } from "./runtime/docker.ts";
 import { KubernetesDriver } from "./runtime/kubernetes.ts";
+import { listModels } from "./providers.ts";
+import { SecretBox } from "./secrets.ts";
 import { Service } from "./service.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -19,7 +21,8 @@ const db = createPool(env.DATABASE_URL ?? "postgres://agentown:agentown@127.0.0.
 await migrate(db);
 
 const bus = new EventBus();
-const service = new Service(db, config, bus);
+const secrets = SecretBox.fromEnvOrFile(env.AGENTOWN_SECRET_KEY, resolve(root, ".agentown/secret-key"));
+const service = new Service(db, config, bus, secrets, listModels);
 const { ownerToken } = await service.bootstrap({ ownerToken: env.AGENTOWN_OWNER_TOKEN });
 if (ownerToken && !env.AGENTOWN_OWNER_TOKEN) {
   const stateDir = resolve(root, ".agentown");

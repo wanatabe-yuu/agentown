@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentPanel } from "./AgentPanel.tsx";
+import { CredentialsDialog } from "./Credentials.tsx";
 import { OfficeCanvas } from "./OfficeCanvas.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
 import { api, getToken, setToken } from "./api.ts";
@@ -24,6 +25,9 @@ const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null) => st
   "terminal.closed": (e, n) => `terminal on ${n(e.agentId)} closed: ${e.payload.reason}`,
   "grant.created": (e, n) => `${n(e.agentId)} received ${e.payload.action}`,
   "grant.revoked": (e, n) => `${n(e.agentId)} lost ${e.payload.action}`,
+  "agent.configured": (e, n) => `${n(e.agentId)} now uses ${e.payload.model ?? "the default model"}${e.payload.effort ? ` (${e.payload.effort})` : ""}`,
+  "credential.created": (e) => `API key "${e.payload.name}" added (${e.payload.models} models)`,
+  "credential.revoked": () => `an API key was revoked`,
 };
 
 export function App() {
@@ -33,6 +37,7 @@ export function App() {
   const [newTaskFor, setNewTaskFor] = useState<string | null | undefined>(undefined);
   const [view, setView] = useState<"office" | "table">(() => (window.innerWidth < 700 ? "table" : "office"));
   const [showAudit, setShowAudit] = useState(false);
+  const [showKeys, setShowKeys] = useState(false);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [toasts, setToasts] = useState<Array<{ id: number; msg: string; kind: string }>>([]);
   const [flights, setFlights] = useState<Flight[]>([]);
@@ -110,6 +115,9 @@ export function App() {
         </div>
         <button type="button" className="primary" onClick={() => setNewTaskFor(null)}>
           New task
+        </button>
+        <button type="button" onClick={() => setShowKeys(true)}>
+          API keys
         </button>
         <button type="button" onClick={() => setShowAudit(true)}>
           Audit
@@ -202,6 +210,7 @@ export function App() {
         />
       )}
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
+      {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast-${t.kind}`}>

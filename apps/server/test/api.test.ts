@@ -380,3 +380,114 @@ describe("events", () => {
     expect(engView.some((e) => e.agentId === "ceo")).toBe(false);
   });
 });
+
+describe("per-agent credentials and model config", () => {
+  const KEY = "sk-test-org-1234567890abcd";
+  let credId: string;
+  let opsOnlyId: string;
+  let bot: string;
+
+  const podOf = (agentId: string) => [...env.driver.pods.values()].find((p) => p.agentId === agentId)!;
+
+  beforeAll(async () => {
+    const r = await spawnUnder(env.token("lead-eng"), "engineer-claude-v1", "Claudia", "lead-eng", "claude-1");
+    expect(r.status).toBe(202);
+    bot = r.body.agent.id;
+    await env.settle();
+  });
+
+  it("only the owner adds keys; bad keys are rejected; the key is write-only", async () => {
+    expect((await env.call(env.owner, "POST", "/api/credentials", { name: "bad", apiKey: "sk-nope-000000000" })).status).toBe(400);
+    expect((await env.call(env.token("ceo"), "POST", "/api/credentials", { name: "x", apiKey: KEY })).status).toBe(403);
+    const r = await env.call(env.owner, "POST", "/api/credentials", { name: "Org key", apiKey: KEY });
+    expect(r.status).toBe(201);
+    credId = r.body.id;
+    expect(r.body.models).toContain("claude-opus-5-5");
+    expect(r.body.keyHint).toBe("…abcd");
+    expect(JSON.stringify(r.body)).not.toContain(KEY);
+    const ops = await env.call(env.owner, "POST", "/api/credentials", { name: "Ops key", apiKey: "sk-test-ops-small-9999", departments: ["ops"] });
+    opsOnlyId = ops.body.id;
+    expect(ops.body.models).toEqual(["claude-haiku-5-5"]);
+    const { rows } = await env.db.query("SELECT ciphertext FROM credentials WHERE id=$1", [credId]);
+    expect(rows[0].ciphertext.includes(Buffer.from(KEY))).toBe(false);
+  });
+
+  it("listing needs agent.configure and never returns key material", async () => {
+    expect((await env.call(env.token(bot), "GET", "/api/credentials")).status).toBe(403);
+    const r = await env.call(env.token("lead-eng"), "GET", "/api/credentials");
+    expect(r.status).toBe(200);
+    expect(r.body.credentials.map((c: any) => c.id)).toContain(credId);
+    expect(JSON.stringify(r.body)).not.toContain(KEY);
+  });
+
+  it("a leader configures its own report: key + a model that key offers", async () => {
+    const t = env.token("lead-eng");
+    expect((await env.call(t, "PUT", `/api/agents/${bot}/config`, { credentialId: credId, model: "gpt-9" })).status).toBe(400);
+    expect((await env.call(t, "PUT", `/api/agents/${bot}/config`, { credentialId: opsOnlyId })).status).toBe(403);
+    expect((await env.call(t, "PUT", `/api/agents/${bot}/config`, { model: "claude-opus-5-5" })).status).toBe(400); // no key yet
+    expect((await env.call(env.token("lead-ops"), "PUT", `/api/agents/${bot}/config`, { credentialId: credId })).status).toBe(403);
+    const ok = await env.call(t, "PUT", `/api/agents/${bot}/config`, {
+      credentialId: credId,
+      model: "claude-sonnet-5-5",
+      effort: "high",
+      instructions: "Write tests first.",
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body.config).toMatchObject({ credentialId: credId, model: "claude-sonnet-5-5", effort: "high" });
+  });
+
+  it("the controller replaces the idle runtime so it holds exactly its own key", async () => {
+    const before = podOf(bot);
+    expect(before.providerKey).toBeNull();
+    await env.settle();
+    await env.settle();
+    const after = podOf(bot);
+    expect(after.generation).toBe(before.generation + 1);
+    expect(after.providerKey).toBe(KEY);
+    // Other agents never receive it.
+    for (const p of env.driver.pods.values()) if (p.agentId !== bot) expect(p.providerKey).toBeNull();
+  });
+
+  it("claims carry the agent's model settings, not the key", async () => {
+    const g = await gen(bot);
+    await env.call(env.token(bot), "POST", "/api/runtime/heartbeat", { generation: g, state: "idle" });
+    await env.call(env.token("lead-eng"), "POST", "/api/tasks", { title: "think", assigneeAgentId: bot });
+    const c = await env.call(env.token(bot), "POST", "/api/runs/claim", { generation: g });
+    expect(c.body.config).toMatchObject({ harness: "claude", model: "claude-sonnet-5-5", effort: "high", instructions: "Write tests first.", hasCredential: true });
+    expect(JSON.stringify(c.body)).not.toContain(KEY);
+
+    // Key change while a run is in flight: no replacement until it finishes.
+    const opsAll = await env.call(env.owner, "POST", "/api/credentials", { name: "Second", apiKey: "sk-test-second-small-77" });
+    const sw = await env.call(env.token("lead-eng"), "PUT", `/api/agents/${bot}/config`, { credentialId: opsAll.body.id });
+    expect(sw.body.config.model).toBeNull(); // old model is not on the new key
+    await env.settle();
+    expect(podOf(bot).generation).toBe(g);
+    await env.call(env.token(bot), "POST", `/api/runs/${c.body.run.id}/complete`, { generation: g, outcome: "succeeded" });
+    await env.settle();
+    await env.settle();
+    expect(podOf(bot).generation).toBe(g + 1);
+    expect(podOf(bot).providerKey).toBe("sk-test-second-small-77");
+  });
+
+  it("revoking a key pulls it from the runtime", async () => {
+    const { rows } = await env.db.query("SELECT credential_id FROM agents WHERE id=$1", [bot]);
+    expect((await env.call(env.token("ceo"), "DELETE", `/api/credentials/${rows[0].credential_id}`)).status).toBe(403);
+    expect((await env.call(env.owner, "DELETE", `/api/credentials/${rows[0].credential_id}`)).status).toBe(204);
+    await env.settle();
+    await env.settle();
+    expect(podOf(bot).providerKey).toBeNull();
+    expect((await env.call(env.token("lead-eng"), "PUT", `/api/agents/${bot}/config`, { credentialId: rows[0].credential_id })).status).toBe(409);
+  });
+
+  it("CEO can spawn a claude engineer with a key and model in one step", async () => {
+    const r = await env.call(env.token("ceo"), "POST", "/api/agents", {
+      templateId: "engineer-claude-v1",
+      displayName: "Opal",
+      reportsToAgentId: "lead-eng",
+      config: { credentialId: credId, model: "claude-opus-5-5" },
+    });
+    expect(r.status).toBe(202);
+    await env.settle();
+    expect(podOf(r.body.agent.id).providerKey).toBe(KEY);
+  });
+});

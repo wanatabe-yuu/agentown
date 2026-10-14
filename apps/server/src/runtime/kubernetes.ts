@@ -117,12 +117,21 @@ export class KubernetesDriver implements RuntimeDriver {
       { name: "HOME", value: "/workspace/home" },
     ];
     if (spec.preset.model) env.push({ name: "AGENTOWN_MODEL", value: spec.preset.model });
-    if (spec.preset.providerSecret) {
-      env.push({
-        name: "ANTHROPIC_API_KEY",
-        valueFrom: { secretKeyRef: { name: spec.preset.providerSecret, key: "ANTHROPIC_API_KEY", optional: true } },
+    // Per-agent provider key: its own Secret, replaced for every new runtime generation.
+    const providerSecret = `agent-${spec.agentId}-provider`;
+    await ignore404(this.core.deleteNamespacedSecret({ name: providerSecret, namespace: spec.namespace }));
+    if (spec.providerKey) {
+      await this.core.createNamespacedSecret({
+        namespace: spec.namespace,
+        body: {
+          metadata: { name: providerSecret, labels: { ...MANAGED_BY, "agentown.io/agent": spec.agentId } },
+          type: "Opaque",
+          stringData: { ANTHROPIC_API_KEY: spec.providerKey },
+        },
       });
+      env.push({ name: "ANTHROPIC_API_KEY", valueFrom: { secretKeyRef: { name: providerSecret, key: "ANTHROPIC_API_KEY" } } });
     }
+    const dedicated = spec.preset.placement === "dedicated-node";
     await createIfMissing(() =>
       this.core.createNamespacedPod({
         namespace: spec.namespace,
@@ -134,6 +143,7 @@ export class KubernetesDriver implements RuntimeDriver {
               "agentown.io/agent": spec.agentId,
               "agentown.io/generation": String(spec.generation),
               "agentown.io/preset": spec.preset.id,
+              "agentown.io/placement": spec.preset.placement,
             },
           },
           spec: {
@@ -142,6 +152,24 @@ export class KubernetesDriver implements RuntimeDriver {
             enableServiceLinks: false,
             hostname: spec.agentId,
             restartPolicy: "Always",
+            // dedicated-node: only on the dedicated pool, and never two dedicated agents on one node.
+            ...(dedicated
+              ? {
+                  nodeSelector: { "agentown.io/pool": "dedicated" },
+                  tolerations: [{ key: "agentown.io/dedicated", operator: "Exists", effect: "NoSchedule" }],
+                  affinity: {
+                    podAntiAffinity: {
+                      requiredDuringSchedulingIgnoredDuringExecution: [
+                        {
+                          topologyKey: "kubernetes.io/hostname",
+                          namespaceSelector: {},
+                          labelSelector: { matchLabels: { "agentown.io/placement": "dedicated-node" } },
+                        },
+                      ],
+                    },
+                  },
+                }
+              : {}),
             terminationGracePeriodSeconds: 10,
             securityContext: {
               runAsNonRoot: true,
@@ -188,6 +216,7 @@ export class KubernetesDriver implements RuntimeDriver {
 
   async teardown(namespace: string, agentId: string, purgeWorkspace: boolean): Promise<void> {
     await ignore404(this.core.deleteNamespacedSecret({ name: `agent-${agentId}-credentials`, namespace }));
+    await ignore404(this.core.deleteNamespacedSecret({ name: `agent-${agentId}-provider`, namespace }));
     await ignore404(this.core.deleteNamespacedServiceAccount({ name: `agent-${agentId}`, namespace }));
     if (purgeWorkspace) {
       await ignore404(this.core.deleteNamespacedPersistentVolumeClaim({ name: `agent-${agentId}-workspace`, namespace }));

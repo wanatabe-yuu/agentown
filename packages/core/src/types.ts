@@ -14,6 +14,7 @@ export const ACTIONS = [
   "agent.spawn", // target = the manager the new agent will report to
   "agent.update", // rename / change reporting line of the target
   "agent.retire",
+  "agent.configure", // choose the target's API credential, model and agent settings
   "runtime.control", // pause/resume intake, stop/start runtime of the target
   "runtime.logs",
   "runtime.exec", // interactive shell in the target's runtime: a strong permission
@@ -81,6 +82,18 @@ export interface Decision {
   allowed: boolean;
   reason: string;
   grantId?: string;
+}
+
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
+/** Per-agent settings for LLM harnesses. The API key itself never appears here. */
+export interface AgentConfig {
+  credentialId: string | null;
+  model: string | null;
+  effort: Effort | null;
+  instructions: string;
+  maxTurns: number;
 }
 
 export const WORK_STATES = ["idle", "thinking", "executing", "waiting", "blocked", "offline", "error"] as const;
