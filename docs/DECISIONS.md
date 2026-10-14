@@ -18,6 +18,15 @@ Các mục dưới đây là lựa chọn của lần build đầu tiên; cột 
 | 9 | Phong cách 2D | Top‑down, vẽ bằng Canvas 2D (không PixiJS) | Ít phụ thuộc; đủ cho MVP. | Dễ |
 | 10 | Exec/SSH | **Kubernetes exec / Docker exec qua backend**, vé (ticket) dùng một lần, gắn actor + agent + generation; server đóng phiên khi quyền đổi | Đáp ứng “SSH hoặc exec” mà không cần hạ tầng SSH. | — |
 
+## Bổ sung sau phản hồi của người dùng (2026-10-14)
+
+| Vấn đề | Lựa chọn | Lý do |
+|---|---|---|
+| Một API key cho tất cả? | **Không.** Kho key do owner quản lý; mỗi agent chọn key + model mà key đó có; leader/CEO đổi được qua `agent.configure` | Người dùng muốn cấu hình riêng từng agent và chọn model theo key. Chi tiêu theo key là một quyền nên phải có action riêng và có audit. |
+| Lưu key ở đâu | Postgres, mã hoá AES-256-GCM bằng `AGENTOWN_SECRET_KEY`; đưa vào Secret riêng của từng agent | Không cần thêm hệ thống secret ngay. Có thể chuyển sang KMS/Vault sau mà không đổi API. |
+| “Mỗi nhân viên một Pod hoặc node riêng” | Luôn một Pod/agent; preset `placement: dedicated-node` cho agent cần máy riêng (nodeSelector + taint/toleration + anti-affinity); thêm node bằng `scripts/add-node.sh` | Giữ k3s làm điều phối (giống Swarm nhưng có RBAC/admission). Tự động tạo VM khi tuyển dụng để sau. |
+| Có cần Rust không | **Chưa.** Hệ thống chủ yếu chờ I/O (DB, API Kubernetes, LLM ở xa). Phần nặng chạy trong runtime của agent, bằng ngôn ngữ của chính việc đó. | Nếu sau này có hàng nghìn agent, có thể tách riêng event gateway hoặc proxy terminal ra viết bằng Go/Rust; contract HTTP giữ nguyên. |
+
 ## Quy ước thiết kế quan trọng
 
 - **Identity ≠ runtime.** `agentId` bền vững; Pod/container là `agent-<id>-g<generation>`. Mọi lời gọi từ harness mang `generation`; generation cũ bị từ chối (`409 stale_runtime`).
@@ -32,11 +41,12 @@ Các mục dưới đây là lựa chọn của lần build đầu tiên; cột 
 
 - Sandbox build cho phép Docker và chạy được **control plane k3s**, nhưng **không chạy được Pod**: kernel cấm `oom_score_adj` âm mà kubelet luôn đặt cho pod sandbox. Việc lách giới hạn này đã bị từ chối và không được thực hiện.
 - Vì vậy: phần k8s được kiểm chứng ở **API server thật** (RBAC, Pod Security, admission, và `KubernetesDriver` tạo SA/PVC/Secret/Pod thành công) nhưng **chưa thấy Pod agent chạy trên k3s**. Vòng chạy thật end‑to‑end được kiểm chứng bằng **Docker driver**.
-- Adapter `claude` **chưa được gọi thử với API thật** (không có `ANTHROPIC_API_KEY` của người dùng).
+- Adapter `claude` **chưa chạy với API thật** (chưa có key của người dùng). Vòng tool-use đã được test với một Messages API giả lập cục bộ. Server đã gọi provider thật để kiểm tra key, và key sai bị từ chối đúng.
+- Lên lịch node riêng đã kiểm trên k3s thật: Pod dedicated thứ nhất được chọn vào node dedicated, Pod thứ hai bị từ chối do anti‑affinity. Pod không khởi động được do giới hạn của sandbox nói trên.
 
 ## Cần người dùng cung cấp / quyết định tiếp
 
 1. Một máy Linux thật (hoặc VM) để chạy `AGENTOWN_K3S_MODE=native scripts/dev-k3s.sh up` và xác nhận Pod chạy trên k3s.
-2. Provider/model và API key (đặt vào Secret `agentown-provider` ở mỗi namespace phòng ban) nếu muốn agent LLM.
+2. API key (thêm trong UI → API keys) nếu muốn agent LLM.
 3. Mức cô lập: container (hiện tại) hay gVisor/Kata/microVM.
 4. Phong cách hình ảnh văn phòng (hiện là top‑down vẽ tay đơn giản).

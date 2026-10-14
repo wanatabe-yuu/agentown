@@ -29,7 +29,12 @@ mkdir -p "$STATE/k3s-images"
 MODE="${AGENTOWN_K3S_MODE:-docker}"
 
 kc() {
-  if [ "$MODE" = native ]; then k3s kubectl "$@"; else docker exec -i "$NAME" kubectl "$@"; fi
+  if [ "$MODE" = native ]; then
+    # The k3s installer links kubectl; fall back to the multi-call binary.
+    if command -v kubectl >/dev/null; then kubectl "$@"; else k3s kubectl "$@"; fi
+  else
+    docker exec -i "$NAME" kubectl "$@"
+  fi
 }
 
 load_image() {

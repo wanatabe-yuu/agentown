@@ -4,19 +4,22 @@ Văn phòng gồm nhiều AI agent có cấp bậc. Mỗi agent có danh tính b
 
 - Bối cảnh: [`docs/AGENTOWN_HANDOFF.md`](docs/AGENTOWN_HANDOFF.md)
 - Quyết định và giả định: [`docs/DECISIONS.md`](docs/DECISIONS.md)
+- Chạy trên GCP (cấu hình máy, thêm node): [`docs/GCP.md`](docs/GCP.md)
 
 ## Trạng thái (v0.1)
 
 | Phần | Trạng thái | Bằng chứng |
 |---|---|---|
 | Policy engine (default deny, scope theo cây báo cáo, delegation) | ✅ | `packages/core/test/policy.test.ts` (17 test) |
-| Org API (spawn, task, lease, artifact, audit, SSE, terminal) | ✅ | `apps/server/test/api.test.ts` (24 test, Postgres thật) |
+| Org API (spawn, task, lease, artifact, audit, SSE, terminal) | ✅ | `apps/server/test/api.test.ts` (31 test, Postgres thật) |
+| API key riêng + model riêng cho từng agent | ✅ | test credentials trong `api.test.ts`; key sai bị provider thật từ chối |
+| Mỗi agent một Pod; tuỳ chọn một node riêng | ✅ lên lịch trên k3s thật | `k8s-placement-check.ts`: agent dedicated thứ 2 bị từ chối chung node |
 | Agent thật chạy trong runtime riêng (Docker driver) | ✅ | `scripts/demo.sh`, `verify-runtime.ts` (26 kiểm chứng) |
 | Demo CEO → leader → engineer → QA → owner review | ✅ | `scripts/demo.sh` |
 | k3s: RBAC controller, Pod Security, admission policy | ✅ trên API server thật | `scripts/verify-k8s-guardrails.sh` (18 kiểm chứng) |
 | `KubernetesDriver` tạo SA/PVC/Secret/Pod | ✅ trên API server thật | `apps/server/src/tools/k8s-driver-smoke.ts` |
 | Pod agent **chạy** trên k3s | ⚠️ chưa thấy | sandbox build không chạy được Pod — xem DECISIONS |
-| Adapter LLM (`claude`) | ⚠️ chưa gọi API thật | cần `ANTHROPIC_API_KEY` |
+| Adapter LLM (`claude`) | ⚠️ chưa chạy với key thật | vòng tool-use được test với Messages API giả lập cục bộ (`apps/harness/test`) |
 | UI văn phòng 2D + bảng + panel task/log/quyền/terminal | ✅ | kiểm tra bằng Chromium headless |
 
 ## Kiến trúc
@@ -81,6 +84,12 @@ scripts/dev-server.sh                                      # AGENTOWN_RUNTIME_DR
 
 `dev-k3s.sh` tạo namespace cho từng phòng ban (Pod Security `restricted`), Role chỉ trong các namespace đó cho ServiceAccount `agentown-controller`, NetworkPolicy chặn ingress và chỉ cho egress tới DNS/API/HTTPS, ResourceQuota, và `ValidatingAdmissionPolicy` từ chối mọi Pod không giống runtime của Agentown (image ngoài catalog, hostPath, host namespace, token k8s, ServiceAccount không khớp agent). Server dùng kubeconfig của **controller SA**, không phải cluster-admin.
 
+## API key và model cho từng agent
+
+- Owner thêm key trong UI (**API keys**). Server kiểm tra key với provider và lưu danh sách model mà key đó dùng được. Key được mã hoá AES‑256‑GCM, API chỉ trả 4 ký tự cuối. Có thể giới hạn key theo phòng ban.
+- Mỗi agent chọn **một key và một model của key đó**, cộng thêm effort, số lượt tối đa và chỉ dẫn riêng (tab **Config** của agent, hoặc chọn ngay lúc tuyển). Quyền sửa là action `agent.configure`: leader cho cấp dưới trực tiếp, CEO cho cả cây bên dưới.
+- Key chỉ được đưa vào runtime của **đúng agent đó** (Kubernetes Secret riêng / env container riêng). Khi đổi hoặc thu hồi key, controller thay runtime lúc agent rảnh, không cắt ngang việc đang chạy. Model, effort và chỉ dẫn đi kèm mỗi task, nên đổi chúng không cần khởi động lại.
+
 ## Mô hình quyền (tóm tắt)
 
 - Actor luôn lấy từ token (`Authorization: Bearer`): owner (người) hoặc agent. Không tin `actorId` từ client.
@@ -127,7 +136,7 @@ Ma trận quyền mẫu: xem `policyProfiles` trong [`config/agentown.yaml`](con
 - [x] Audit có actor/action/target/kết quả, không lộ secret
 - [x] Demo xuyên suốt với agent thật (Docker driver)
 - [ ] Pod agent chạy trên k3s thật — cần một host Linux bình thường
-- [ ] Agent LLM chạy với API thật — cần API key
+- [ ] Agent LLM chạy với API thật — cần API key (thêm trong UI → API keys)
 
 ## Giới hạn đã biết
 
