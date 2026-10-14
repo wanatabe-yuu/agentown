@@ -70,7 +70,7 @@ SSH into the VM and run a single command:
 curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo bash
 ```
 
-The script downloads the latest release built by GitHub Actions, verifies the Sigstore signature and checksum (see [RELEASING.md](RELEASING.md)), installs Node 22, PostgreSQL, and k3s, loads the agent image into k3s, applies the guard rails (RBAC, Pod Security, admission policy, NetworkPolicy), and then runs the server as the `agentown` systemd service. The script can be rerun safely; rerunning it performs an upgrade.
+The script downloads the latest release built by GitHub Actions, verifies the Sigstore signature and checksum (see [RELEASING.md](RELEASING.md)), installs Node 24, PostgreSQL, and k3s, loads the agent image into k3s, applies the guard rails (RBAC, Pod Security, admission policy, NetworkPolicy), and then runs the server as the `agentown` systemd service. The script can be rerun safely; rerunning it performs an upgrade.
 
 | Path | Contents |
 |---|---|
@@ -95,7 +95,7 @@ Optional variables: `AGENTOWN_VERSION=v0.1.0` to install a pinned release, `AGEN
 
 ```bash
 git clone https://github.com/wanatabe-yuu/Agentown agentown && cd agentown
-sudo bash deploy/gcp/setup-vm.sh          # Docker, Node 22, pnpm, Postgres, k3s
+sudo bash deploy/gcp/setup-vm.sh          # Docker, Node 24, pnpm, Postgres, k3s
 pnpm install && pnpm build:web
 sudo AGENTOWN_K3S_MODE=native scripts/dev-k3s.sh up      # agent image, guard rails, kubeconfig for the controller
 sudo scripts/verify-k8s-guardrails.sh                    # RBAC + admission must pass 18/18

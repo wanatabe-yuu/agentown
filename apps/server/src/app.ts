@@ -49,7 +49,7 @@ const S = {
     config: agentConfigSchema.optional(),
   }),
   updateAgent: z.object({ displayName: z.string().min(1).max(40).optional(), reportsToAgentId: z.string().nullable().optional() }),
-  retire: z.object({ purgeWorkspace: z.boolean().default(false) }).default({}),
+  retire: z.object({ purgeWorkspace: z.boolean().default(false) }).prefault({}),
   createTask: z.object({
     title: z.string().min(1).max(200),
     description: z.string().max(20000).optional(),
@@ -63,13 +63,13 @@ const S = {
     idempotencyKey: z.string().max(100).optional(),
   }),
   assign: z.object({ assigneeAgentId: z.string() }),
-  cancel: z.object({ reason: z.string().max(500).default("") }).default({}),
+  cancel: z.object({ reason: z.string().max(500).default("") }).prefault({}),
   review: z.object({ decision: z.enum(["approve", "reject"]), note: z.string().max(2000).default("") }),
   delegate: z.object({
     principalId: z.string(),
     action: z.enum(ACTIONS),
     scope: scopeSchema,
-    constraints: z.object({ templates: z.array(z.string()).optional() }).default({}),
+    constraints: z.object({ templates: z.array(z.string()).optional() }).prefault({}),
     delegable: z.boolean().default(false),
     expiresAt: z.string().datetime().nullable().optional(),
   }),
@@ -77,19 +77,19 @@ const S = {
   claim: z.object({ generation: z.number().int() }),
   gen: z.object({ generation: z.number().int() }),
   runLogs: z.object({ generation: z.number().int(), lines: z.array(z.object({ stream: z.string(), line: z.string() })).max(500) }),
-  runEvent: z.object({ generation: z.number().int(), type: z.string(), message: z.string().optional(), data: z.record(z.unknown()).optional() }),
+  runEvent: z.object({ generation: z.number().int(), type: z.string(), message: z.string().optional(), data: z.record(z.string(), z.unknown()).optional() }),
   artifact: z.object({ generation: z.number().int(), name: z.string(), contentType: z.string().default("application/octet-stream"), contentBase64: z.string() }),
   complete: z.object({
     generation: z.number().int(),
     outcome: z.enum(["succeeded", "failed", "blocked"]),
     summary: z.string().max(8000).optional(),
-    usage: z.record(z.unknown()).optional(),
+    usage: z.record(z.string(), z.unknown()).optional(),
   }),
 };
 
 function parse<T extends z.ZodTypeAny>(schema: T, data: unknown): z.infer<T> {
   const r = schema.safeParse(data ?? {});
-  if (!r.success) throw badRequest("invalid request body", r.error.flatten());
+  if (!r.success) throw badRequest("invalid request body", z.flattenError(r.error));
   return r.data;
 }
 

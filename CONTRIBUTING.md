@@ -6,7 +6,7 @@ that makes an agent more capable must not make it able to grant itself more.
 
 ## Getting started
 
-Requirements: Node 22, pnpm 10, Docker, PostgreSQL 16.
+Requirements: Node 24, pnpm 10, Docker, PostgreSQL 16.
 
 ```bash
 pnpm install
