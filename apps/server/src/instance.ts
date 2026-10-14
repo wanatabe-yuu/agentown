@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
+import { stringify } from "yaml";
 import { join } from "node:path";
 import { type Actor, orgConfigFrom, parseTemplate, splitInstanceConfig, type TemplateMeta } from "@agentown/core";
+import { z } from "zod";
 import type { EventBus } from "./bus.ts";
 import { type Db, tx } from "./db.ts";
 import type { ModelLister } from "./providers.ts";
@@ -185,9 +187,95 @@ export class Instance {
     ]);
   }
 
-  templates(p: Principal) {
-    this.requireAdmin(p);
-    return [...this.builtInTemplates.values()].map((t) => ({ ...t.meta, builtIn: t.builtIn, departments: (t.doc.departments as Array<{ name: string }>).map((d) => d.name) }));
+  // ---------------------------------------------------------------- templates
+
+  private requireHuman(p: Principal): asserts p is Extract<Principal, { kind: "human" }> {
+    if (p.kind !== "human") throw deny("templates are for people");
+  }
+
+  /** Built-ins for everyone; saved and imported ones for their author (the admin sees all). */
+  async listTemplates(p: Principal) {
+    this.requireHuman(p);
+    const { rows } = await this.db.query(
+      `SELECT t.id, t.name, t.description, t.doc, t.owner_user_id, u.display_name AS owner_name, t.source_org_id, t.created_at
+         FROM templates t JOIN users u ON u.id = t.owner_user_id WHERE $2 OR t.owner_user_id = $1 ORDER BY t.created_at`,
+      [p.id, p.admin],
+    );
+    const summary = (doc: Record<string, unknown>) => (doc.departments as Array<{ name: string }>).map((d) => d.name);
+    return [
+      ...[...this.builtInTemplates.values()].map((t) => ({ ...t.meta, builtIn: true, owner: null, departments: summary(t.doc) })),
+      ...rows.map((r) => ({
+        id: r.id as string,
+        name: r.name as string,
+        description: r.description as string,
+        builtIn: false,
+        owner: { id: r.owner_user_id as string, displayName: r.owner_name as string },
+        sourceOrgId: r.source_org_id as string | null,
+        departments: summary(r.doc),
+      })),
+    ];
+  }
+
+  private async getTemplate(p: Principal, id: string): Promise<OrgTemplate> {
+    this.requireHuman(p);
+    const builtIn = this.builtInTemplates.get(id);
+    if (builtIn) return builtIn;
+    const { rows } = await this.db.query("SELECT * FROM templates WHERE id=$1 AND ($3 OR owner_user_id=$2)", [id, p.id, p.admin]);
+    if (!rows[0]) throw notFound("template");
+    return { meta: { id: rows[0].id, name: rows[0].name, description: rows[0].description }, doc: rows[0].doc, builtIn: false };
+  }
+
+  /** Portable YAML: what a marketplace would carry. */
+  async exportTemplate(p: Principal, id: string): Promise<string> {
+    const t = await this.getTemplate(p, id);
+    return stringify({ format: "agentown.template/v1", meta: t.meta, ...t.doc });
+  }
+
+  private async storeTemplate(p: Principal, meta: { name: string; description: string }, doc: Record<string, unknown>, sourceOrgId: string | null) {
+    this.requireHuman(p);
+    const id = newId("tpl");
+    orgConfigFrom(doc, { id, name: meta.name }, this.file.catalog); // never store something an org could not be made from
+    await this.db.query("INSERT INTO templates(id, name, description, doc, owner_user_id, source_org_id) VALUES ($1,$2,$3,$4,$5,$6)", [
+      id,
+      meta.name,
+      meta.description,
+      JSON.stringify(doc),
+      p.id,
+      sourceOrgId,
+    ]);
+    await this.auditInstance(p, "template.create", id, { name: meta.name, sourceOrgId }, sourceOrgId);
+    return (await this.listTemplates(p)).find((t) => t.id === id)!;
+  }
+
+  /** Import a template file (untrusted: size- and alias-bounded, validated against this install's catalog). */
+  async importTemplate(p: Principal, yaml: string) {
+    this.requireHuman(p);
+    let parsed: ReturnType<typeof parseTemplate>;
+    try {
+      parsed = parseTemplate(yaml, this.file.catalog);
+    } catch (err) {
+      throw badRequest(`not a usable template: ${err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message}`);
+    }
+    return this.storeTemplate(p, { name: parsed.meta.name, description: parsed.meta.description }, parsed.doc, null);
+  }
+
+  /** Save an organization (structure + current agent tree) as a template in the owner's library. */
+  async saveOrgAsTemplate(p: Principal, service: Service, actor: Actor, meta: { name: string; description: string }) {
+    return this.storeTemplate(p, meta, await service.asTemplateDoc(actor), service.orgId);
+  }
+
+  async deleteTemplate(p: Principal, id: string) {
+    this.requireHuman(p);
+    if (this.builtInTemplates.has(id)) throw deny("built-in templates cannot be deleted");
+    const r = await this.db.query("DELETE FROM templates WHERE id=$1 AND ($3 OR owner_user_id=$2)", [id, p.id, p.admin]);
+    if (!r.rowCount) throw notFound("template");
+    await this.auditInstance(p, "template.delete", id, {});
+  }
+
+  /** Change an organization's structure, validated against this install's runtime catalog. */
+  async updateOrgConfig(service: Service, actor: Actor, input: { revision: number; doc: Record<string, unknown> }) {
+    const org = (await this.db.query("SELECT name FROM organizations WHERE id=$1", [service.orgId])).rows[0];
+    return service.replaceConfig(actor, input, (doc) => orgConfigFrom(doc, { id: service.orgId, name: org.name }, this.file.catalog));
   }
 
   async listOrgs(p: Principal) {
@@ -227,8 +315,9 @@ export class Instance {
   async createOrg(p: Principal, input: { id: string; name: string; templateId: string; owner: { userId: string } | { displayName: string } }) {
     this.requireAdmin(p);
     if (!ORG_ID.test(input.id)) throw badRequest("organization id: lowercase letters, digits and dashes, at most 40 characters");
-    const template = this.builtInTemplates.get(input.templateId);
-    if (!template) throw badRequest(`unknown template ${input.templateId}`);
+    const template = await this.getTemplate(p, input.templateId).catch(() => {
+      throw badRequest(`unknown template ${input.templateId}`);
+    });
     const namespace = `agentown-o-${input.id}`;
     const created = await tx(this.db, async (c) => {
       if ((await c.query("SELECT 1 FROM organizations WHERE id=$1", [input.id])).rowCount) throw conflict("exists", "an organization with this id already exists");

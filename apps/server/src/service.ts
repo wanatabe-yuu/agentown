@@ -29,6 +29,7 @@ import {
   isTerminal,
 } from "@agentown/core";
 import type pg from "pg";
+import { z } from "zod";
 import type { AgentEventRow, EventBus } from "./bus.ts";
 import { type Db, type Queryable, tx } from "./db.ts";
 import { type ModelLister, normalizeBaseUrl, PROVIDER_INFO, PROVIDERS, type Provider, providerBaseUrl, providerInfo, WORKSPACE_ID_PATTERN } from "./providers.ts";
@@ -378,6 +379,99 @@ export class Service {
         });
       }
     });
+  }
+
+  // ---------------------------------------------------------------- organization structure
+
+  private requireOrgOwner(actor: Actor, what: string) {
+    // Profiles, roles and job templates mint permissions: only the owner shapes them.
+    if (!isOwner(actor)) throw deny(`${what} denied: only the organization's owner can change its structure`);
+  }
+
+  async getConfig(actor: Actor) {
+    this.requireOrgOwner(actor, "org.config.view");
+    const { rows } = await this.db.query("SELECT config, config_revision FROM organizations WHERE id=$1", [this.orgId]);
+    return { revision: rows[0].config_revision as number, doc: rows[0].config as Record<string, unknown> };
+  }
+
+  /**
+   * Replace the organization's structure document. Applies to new agents and new
+   * role assignments; grants already handed out are copies and stay as they are.
+   * `parse` validates the document against the install's runtime catalog.
+   */
+  async replaceConfig(actor: Actor, input: { revision: number; doc: Record<string, unknown> }, parse: (doc: Record<string, unknown>) => OrgConfig) {
+    this.requireOrgOwner(actor, "org.config.update");
+    const { organization: _o, runtimeCatalog: _r, format: _f, meta: _m, ...doc } = input.doc;
+    return this.withTx(async (ctx) => {
+      const { rows } = await ctx.c.query("SELECT config_revision FROM organizations WHERE id=$1 FOR UPDATE", [this.orgId]);
+      if (rows[0].config_revision !== input.revision) throw conflict("stale", "the organization was changed meanwhile; reload and try again");
+      let next: OrgConfig;
+      try {
+        next = parse(doc);
+      } catch (err) {
+        throw badRequest(err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message);
+      }
+      const departments = new Set(next.departments.map((d) => d.id));
+      const staffed = await ctx.c.query<{ d: string }>("SELECT DISTINCT department_id AS d FROM agents WHERE org_id=$1 AND lifecycle_state <> 'retired'", [this.orgId]);
+      for (const { d } of staffed.rows) if (!departments.has(d)) throw badRequest(`department ${d} still has agents: move or retire them first`);
+      const projects = new Set(next.projects.map((p) => p.id));
+      const open = await ctx.c.query<{ p: string }>(
+        "SELECT DISTINCT project_id AS p FROM tasks WHERE org_id=$1 AND project_id IS NOT NULL AND status NOT IN ('done','cancelled','failed')",
+        [this.orgId],
+      );
+      for (const { p } of open.rows) if (!projects.has(p)) throw badRequest(`project ${p} still has open tasks`);
+      const upd = await ctx.c.query<{ config_revision: number }>(
+        "UPDATE organizations SET config=$2, config_revision=config_revision+1 WHERE id=$1 RETURNING config_revision",
+        [this.orgId, JSON.stringify(doc)],
+      );
+      const revision = upd.rows[0]!.config_revision;
+      await this.audit(ctx.c, actor, "org.config.update", this.orgId, true, "organization owner", {
+        revision,
+        departments: next.departments.length,
+        projects: next.projects.length,
+        agentTemplates: next.agentTemplates.length,
+        policyProfiles: Object.keys(next.policyProfiles).length,
+        humanRoles: Object.keys(next.humanRoles).length,
+      });
+      await this.emit(ctx, { type: "org.config", payload: { revision } });
+      return { revision, doc };
+    });
+  }
+
+  /** This organization as a template: its document plus today's agent tree as the bootstrap. */
+  async asTemplateDoc(actor: Actor): Promise<Record<string, unknown>> {
+    this.requireOrgOwner(actor, "org.template.save");
+    const { doc } = await this.getConfig(actor);
+    const { rows } = await this.db.query<AgentRow>("SELECT * FROM agents WHERE org_id=$1 AND lifecycle_state <> 'retired' ORDER BY created_at", [this.orgId]);
+    const byId = new Map(rows.map((a) => [a.id, a]));
+    const ordered: AgentRow[] = [];
+    const placed = new Set<string>();
+    const place = (a: AgentRow) => {
+      if (placed.has(a.id)) return;
+      placed.add(a.id);
+      const boss = a.reports_to ? byId.get(a.reports_to) : undefined;
+      if (boss) place(boss); // managers first: the template format requires it
+      ordered.push(a);
+    };
+    rows.forEach(place);
+    for (const a of ordered) {
+      if (!this.config.agentTemplates.some((t) => t.id === a.template_id)) {
+        throw badRequest(`${a.display_name} uses job template ${a.template_id}, which this organization no longer has`);
+      }
+    }
+    // Ids and instructions stay behind: a template carries structure, never keys or prompts.
+    return {
+      ...doc,
+      bootstrap: {
+        agents: ordered.map((a) => ({
+          key: a.id,
+          displayName: a.display_name,
+          template: a.template_id,
+          department: a.department_id,
+          reportsTo: a.reports_to && byId.has(a.reports_to) ? a.reports_to : null,
+        })),
+      },
+    };
   }
 
   private template(id: string) {
@@ -1568,7 +1662,8 @@ export class Service {
     if (isOwner(actor)) return () => true;
     if (actor.kind === "human" && !(await this.userActive(actor.id))) return () => false;
     const policy = await this.loadPolicy();
-    return (e) => !!e.agentId && authorize(actor, "org.view", { agentId: e.agentId }, policy).allowed;
+    // Organization-level events (structure changed) concern every member; agent events need org.view.
+    return (e) => (e.type.startsWith("org.") && !e.agentId) || (!!e.agentId && authorize(actor, "org.view", { agentId: e.agentId }, policy).allowed);
   }
 
   async eventsAfter(actor: Actor, cursor: number, limit = 1000): Promise<AgentEventRow[]> {

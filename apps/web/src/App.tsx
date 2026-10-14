@@ -3,6 +3,7 @@ import { AdminDialog } from "./Admin.tsx";
 import { AgentPanel } from "./AgentPanel.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
 import { OfficeCanvas } from "./OfficeCanvas.tsx";
+import { OrgEditor } from "./OrgEditor.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
 import { UsersDialog } from "./Users.tsx";
 import { HttpError, api, setOrg } from "./api.ts";
@@ -130,6 +131,7 @@ function OrgApp({
 }) {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showOrg, setShowOrg] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [openTask, setOpenTask] = useState<string | null>(null);
@@ -158,6 +160,7 @@ function OrgApp({
   const onEvent = useCallback((e: AgentEvent) => {
     // Permissions may have changed: re-read what this person may do.
     if (STRUCTURAL.test(e.type)) reloadMe();
+    if (e.type === "org.config") setCatalog(null); // job templates changed: re-read the catalog
     if (e.type === "task.created" && e.agentId && e.payload.createdBy?.startsWith("agent:")) {
       const from = e.payload.createdBy.slice(6);
       if (from !== e.agentId) {
@@ -235,6 +238,11 @@ function OrgApp({
         {me.can["user.manage"] && (
           <button type="button" onClick={() => setShowUsers(true)}>
             Users
+          </button>
+        )}
+        {me.actor.owner && (
+          <button type="button" onClick={() => setShowOrg(true)}>
+            Organization
           </button>
         )}
         {account.user?.admin && (
@@ -333,6 +341,7 @@ function OrgApp({
       )}
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
       {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
+      {showOrg && <OrgEditor orgId={orgId} catalog={catalog} snapshot={snapshot} onClose={() => setShowOrg(false)} notify={notify} />}
       {showAdmin && (
         <AdminDialog
           account={account}

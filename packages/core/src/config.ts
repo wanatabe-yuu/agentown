@@ -99,6 +99,20 @@ export const orgConfigSchema = z
         for (const t of c.templates ?? []) if (!templates.has(t)) ctx.addIssue({ code: "custom", message: `profile ${name}: unknown template ${t}` });
       }
     }
+    const projects = new Set(cfg.projects.map((p) => p.id));
+    const scopeRefs = (where: string, scope: Scope) => {
+      if (scope.kind === "departments") for (const d of scope.ids) if (!departments.has(d)) ctx.addIssue({ code: "custom", message: `${where}: unknown department ${d}` });
+      if (scope.kind === "projects") for (const p of scope.ids) if (!projects.has(p)) ctx.addIssue({ code: "custom", message: `${where}: unknown project ${p}` });
+    };
+    for (const [name, caps] of Object.entries(cfg.policyProfiles)) for (const c of caps) scopeRefs(`profile ${name}`, c.scope);
+    for (const [name, role] of Object.entries(cfg.humanRoles)) for (const c of role.permissions) scopeRefs(`role ${name}`, c.scope);
+    for (const [label, list] of [["department", cfg.departments], ["project", cfg.projects], ["agent template", cfg.agentTemplates]] as const) {
+      const seen = new Set<string>();
+      for (const { id } of list) {
+        if (seen.has(id)) ctx.addIssue({ code: "custom", message: `duplicate ${label} id ${id}` });
+        seen.add(id);
+      }
+    }
     for (const [name, role] of Object.entries(cfg.humanRoles)) {
       for (const c of role.permissions) {
         if (!USER_SCOPE_KINDS.includes(c.scope.kind)) ctx.addIssue({ code: "custom", message: `role ${name}: ${c.action} scope must be org, departments, agents or projects` });

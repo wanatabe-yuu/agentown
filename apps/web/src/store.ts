@@ -4,7 +4,7 @@ import type { Agent, AgentEvent, Snapshot, Task } from "./types.ts";
 
 export type ConnStatus = "connecting" | "live" | "reconnecting" | "unauthorized";
 
-export const STRUCTURAL = /^(agent\.|task\.|run\.|grant\.|user\.|runtime\.generation|runtime\.desired|artifact\.)/;
+export const STRUCTURAL = /^(agent\.|task\.|run\.|grant\.|user\.|org\.|runtime\.generation|runtime\.desired|artifact\.)/;
 const HEARTBEAT_STALE_MS = 45_000;
 
 /**
@@ -56,6 +56,12 @@ export function useOffice(signedIn: boolean, onEvent?: (e: AgentEvent) => void) 
             snap.cursor,
             (e: AgentEvent) => {
               setSnapshot((s) => (s ? applyEvent(s, e) : s));
+              // The organization's structure changed: departments and projects come from the snapshot.
+              if (e.type === "org.config") {
+                void api<Snapshot>("GET", "/api/office/snapshot")
+                  .then((fresh) => setSnapshot((s) => (s ? { ...s, organization: fresh.organization, departments: fresh.departments, projects: fresh.projects } : s)))
+                  .catch(() => {});
+              }
               setFeed((f) => [e, ...f].slice(0, 80));
               if (STRUCTURAL.test(e.type)) scheduleRefresh();
               onEventRef.current?.(e);

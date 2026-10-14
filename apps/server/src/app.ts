@@ -112,6 +112,9 @@ const S = {
   }),
   updateOrg: z.object({ name: z.string().trim().min(1).max(80).optional(), ownerUserId: z.string().optional(), archived: z.boolean().optional() }),
   addMember: z.object({ userId: z.string() }),
+  orgConfig: z.object({ revision: z.number().int(), doc: z.record(z.string(), z.unknown()) }),
+  saveTemplate: z.object({ name: z.string().trim().min(1).max(80), description: z.string().max(500).default("") }),
+  importTemplate: z.object({ yaml: z.string().min(1).max(256 * 1024) }),
   createUser: z.object({ displayName: z.string().trim().min(1).max(60), roleId: z.string().nullable().optional() }),
   updateUser: z.object({ displayName: z.string().trim().min(1).max(60).optional(), disabled: z.boolean().optional(), roleId: z.string().optional() }),
   grantUser: z.object({
@@ -218,7 +221,20 @@ export async function buildApp(opts: AppOptions) {
   });
 
   // ---- instance admin: organizations and their templates
-  app.get("/api/templates", async (req) => ({ templates: instance.templates(principalOf(req)) }));
+  app.get("/api/templates", async (req) => ({ templates: await instance.listTemplates(principalOf(req)) }));
+  app.post("/api/templates", async (req, reply) => {
+    reply.status(201);
+    return instance.importTemplate(principalOf(req), parse(S.importTemplate, req.body).yaml);
+  });
+  app.get<{ Params: { id: string } }>("/api/templates/:id/export", async (req, reply) => {
+    const yaml = await instance.exportTemplate(principalOf(req), req.params.id);
+    reply.header("content-type", "text/yaml; charset=utf-8").header("content-disposition", `attachment; filename="${req.params.id.replace(/[^a-z0-9-]/gi, "")}.yaml"`);
+    return reply.send(yaml);
+  });
+  app.delete<{ Params: { id: string } }>("/api/templates/:id", async (req, reply) => {
+    await instance.deleteTemplate(principalOf(req), req.params.id);
+    return reply.status(204).send();
+  });
   app.get("/api/admin/orgs", async (req) => ({ orgs: await instance.listOrgs(principalOf(req)) }));
   app.get("/api/admin/users", async (req) => ({ users: await instance.listAccounts(principalOf(req)) }));
   app.post("/api/admin/orgs", async (req, reply) => {
@@ -238,7 +254,16 @@ export async function buildApp(opts: AppOptions) {
       req.svc = service;
       req.actor = actor;
     });
-    if (o.people) r.get("/me", async (req) => svcOf(req).me(actorOf(req)));
+    if (o.people) {
+      r.get("/me", async (req) => svcOf(req).me(actorOf(req)));
+      // The organization's structure (owner only), and saving it as a template.
+      r.get("/config", async (req) => svcOf(req).getConfig(actorOf(req)));
+      r.put("/config", async (req) => changed(await instance.updateOrgConfig(svcOf(req), actorOf(req), parse(S.orgConfig, req.body))));
+      r.post("/templates", async (req, reply) => {
+        reply.status(201);
+        return instance.saveOrgAsTemplate(principalOf(req), svcOf(req), actorOf(req), parse(S.saveTemplate, req.body));
+      });
+    }
 
   // ---- people and their permissions
   r.get("/roles", async (req) => {

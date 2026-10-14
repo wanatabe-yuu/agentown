@@ -648,3 +648,7 @@ textarea {
   gap: 4px 14px;
   align-items: center;
 }
+
+input.invalid {
+  outline: 2px solid var(--bad, #d33);
+}

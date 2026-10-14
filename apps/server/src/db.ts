@@ -311,6 +311,19 @@ const MIGRATIONS: string[] = [
   ALTER TABLE users DROP COLUMN role_id;
   ALTER INDEX users_one_owner RENAME TO users_one_admin;
   `,
+  `
+  -- Organization templates people saved or imported (built-ins ship as files).
+  -- Visible to their author and the instance admin only.
+  CREATE TABLE templates (
+    id text PRIMARY KEY,
+    name text NOT NULL,
+    description text NOT NULL DEFAULT '',
+    doc jsonb NOT NULL,
+    owner_user_id text NOT NULL REFERENCES users(id),
+    source_org_id text,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  `,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */
