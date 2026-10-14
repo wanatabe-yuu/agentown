@@ -1,0 +1,26 @@
+{
+  "name": "@agentown/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "render-manifests": "tsx src/tools/render-manifests.ts"
+  },
+  "dependencies": {
+    "@agentown/core": "workspace:*",
+    "@fastify/websocket": "11.3.4",
+    "@kubernetes/client-node": "1.1.3",
+    "fastify": "5.12.7",
+    "pg": "8.23.1",
+    "ws": "8.22.0",
+    "zod": "3.25.76",
+    "@fastify/static": "8.3.0",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1",
+    "@types/ws": "8.18.2"
+  }
+}

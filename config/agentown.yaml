@@ -1,0 +1,90 @@
+# Agentown organization config (authored by the human owner).
+# Agents cannot change this file through the API: templates and policy profiles
+# below are the complete set of runtime shapes and permission bundles that can
+# ever be instantiated. Contains no secrets.
+
+organization:
+  id: agentown
+  name: Agentown
+
+departments:
+  - { id: exec, name: Executive, color: "#c9a227" }
+  - { id: product, name: Product, color: "#8e6bbf" }
+  - { id: eng, name: Engineering, color: "#3d8bd9" }
+  - { id: ops, name: Operations, color: "#3fa37a" }
+
+projects:
+  - { id: website, name: Marketing website }
+
+runtimeCatalog:
+  # Deterministic adapter: runs the task's shell script. No model involved.
+  - id: script-v1
+    image: agentown/harness:0.1.0
+    imagePullPolicy: Never
+    harness: script
+    workspace: { size: 256Mi }
+    resources: { cpu: 250m, memory: 256Mi }
+  # LLM adapter (Anthropic Messages API + bash tool). Needs a Secret named
+  # `agentown-provider` with key ANTHROPIC_API_KEY in each department namespace.
+  - id: claude-v1
+    image: agentown/harness:0.1.0
+    imagePullPolicy: Never
+    harness: claude
+    providerSecret: agentown-provider
+    model: claude-opus-5-5
+    workspace: { size: 512Mi }
+    resources: { cpu: 500m, memory: 512Mi }
+
+policyProfiles:
+  ceo:
+    - { action: org.view, scope: org }
+    - { action: task.view, scope: org }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: descendants }
+    - { action: runtime.control, scope: descendants }
+    - { action: runtime.logs, scope: descendants }
+    - { action: agent.spawn, scope: team, templates: [leader-v1, po-v1, engineer-v1, qa-v1] }
+    # Can hand out (a subset of) team-scoped task rights to people in its tree.
+    - { action: permission.delegate, scope: descendants }
+    - { action: task.create, scope: descendants, delegable: true }
+    # Deliberately no runtime.exec: exec must be granted to explicit targets.
+
+  leader:
+    - { action: org.view, scope: team }
+    - { action: task.view, scope: team }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: direct-reports }
+    - { action: agent.spawn, scope: self, templates: [engineer-v1, qa-v1, engineer-claude-v1] }
+    - { action: runtime.control, scope: direct-reports }
+    - { action: runtime.logs, scope: direct-reports }
+    - { action: runtime.exec, scope: direct-reports }
+
+  po:
+    - { action: org.view, scope: org }
+    - { action: task.view, scope: { projects: [website] } }
+    - { action: task.create, scope: { projects: [website] } }
+    - { action: task.review, scope: { projects: [website] } }
+    # No runtime.* and no spawn: managing the product does not mean a shell on engineers' machines.
+
+  worker:
+    - { action: org.view, scope: self }
+    - { action: task.view, scope: self }
+    - { action: task.create, scope: self }
+    - { action: runtime.logs, scope: self }
+
+agentTemplates:
+  - { id: ceo-v1, jobRole: ceo, runtimePreset: script-v1, policyProfile: ceo }
+  - { id: leader-v1, jobRole: leader, runtimePreset: script-v1, policyProfile: leader }
+  - { id: po-v1, jobRole: po, runtimePreset: script-v1, policyProfile: po }
+  - { id: engineer-v1, jobRole: engineer, runtimePreset: script-v1, policyProfile: worker }
+  - { id: qa-v1, jobRole: qa, runtimePreset: script-v1, policyProfile: worker }
+  - { id: engineer-claude-v1, jobRole: engineer, runtimePreset: claude-v1, policyProfile: worker }
+
+bootstrap:
+  agents:
+    - { key: ceo, displayName: Ava, template: ceo-v1, department: exec }
+    - { key: po, displayName: Pham, template: po-v1, department: product, reportsTo: ceo }
+    - { key: lead-eng, displayName: Linh, template: leader-v1, department: eng, reportsTo: ceo }
+    - { key: lead-ops, displayName: Omar, template: leader-v1, department: ops, reportsTo: ceo }

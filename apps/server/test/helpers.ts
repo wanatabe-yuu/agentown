@@ -1,0 +1,107 @@
+import { readFileSync } from "node:fs";
+import { parseOrgConfig } from "@agentown/core";
+import { buildApp } from "../src/app.ts";
+import { EventBus } from "../src/bus.ts";
+import { createPool, migrate } from "../src/db.ts";
+import { RuntimeController } from "../src/runtime/controller.ts";
+import type { ExecStreams, PodInfo, RuntimeDriver, RuntimeSpec } from "../src/runtime/driver.ts";
+import { podName } from "../src/runtime/driver.ts";
+import { Service } from "../src/service.ts";
+
+/** In-memory driver: pods become Ready immediately. Records issued tokens so tests can act as runtimes. */
+export class FakeDriver implements RuntimeDriver {
+  readonly kind = "fake";
+  pods = new Map<string, PodInfo & { agentId: string; namespace: string }>();
+  tokens = new Map<string, string>();
+  identities = new Set<string>();
+
+  async listPods(namespace: string, agentId: string) {
+    return [...this.pods.values()].filter((p) => p.agentId === agentId && p.namespace === namespace);
+  }
+  async ensureIdentity(spec: RuntimeSpec, issueToken: () => Promise<string>) {
+    if (!this.identities.has(spec.agentId)) {
+      this.tokens.set(spec.agentId, await issueToken());
+      this.identities.add(spec.agentId);
+    }
+  }
+  async createPod(spec: RuntimeSpec) {
+    const name = podName(spec.agentId, spec.generation);
+    this.pods.set(name, {
+      name,
+      agentId: spec.agentId,
+      namespace: spec.namespace,
+      generation: spec.generation,
+      phase: "Running",
+      ready: true,
+      terminating: false,
+      restarts: 0,
+      waitingReason: null,
+      message: null,
+    });
+    return name;
+  }
+  async deletePod(_ns: string, name: string) {
+    this.pods.delete(name);
+  }
+  async teardown(_ns: string, agentId: string) {
+    this.identities.delete(agentId);
+  }
+  async exec(_ns: string, _pod: string, _cmd: string[], _s: ExecStreams) {
+    return { close: () => {} };
+  }
+}
+
+export async function setup() {
+  const url = process.env.DATABASE_URL_TEST ?? "postgres://agentown:agentown@127.0.0.1:5432/agentown_test";
+  const db = createPool(url);
+  await db.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
+  await migrate(db);
+  const config = parseOrgConfig(readFileSync(new URL("../../../config/agentown.yaml", import.meta.url), "utf8"));
+  const bus = new EventBus();
+  const service = new Service(db, config, bus);
+  const { ownerToken } = await service.bootstrap();
+  const driver = new FakeDriver();
+  const controller = new RuntimeController(service, driver, { apiUrlForRuntimes: "http://test" });
+  const { app, recheckTerminals } = await buildApp({ service, driver });
+  // Two passes: create pods, then observe them Ready.
+  const settle = async () => {
+    await controller.reconcileAll();
+    await controller.reconcileAll();
+  };
+  await settle();
+
+  const call = async (token: string, method: string, url: string, body?: unknown) => {
+    const res = await app.inject({
+      method: method as "GET",
+      url,
+      headers: { authorization: `Bearer ${token}` },
+      ...(body !== undefined ? { payload: body as object } : {}),
+    });
+    let json: any = null;
+    try {
+      json = res.json();
+    } catch {}
+    return { status: res.statusCode, body: json };
+  };
+
+  return {
+    db,
+    service,
+    driver,
+    controller,
+    settle,
+    app,
+    recheckTerminals,
+    owner: ownerToken!,
+    token: (agentId: string) => {
+      const t = driver.tokens.get(agentId);
+      if (!t) throw new Error(`no token for ${agentId}`);
+      return t;
+    },
+    call,
+    async close() {
+      await app.close();
+      await db.end();
+    },
+  };
+}

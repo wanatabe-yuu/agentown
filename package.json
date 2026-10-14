@@ -1,0 +1,30 @@
+{
+  "name": "agentown",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dev:server": "pnpm --filter @agentown/server dev",
+    "dev:web": "pnpm --filter @agentown/web dev",
+    "build:web": "pnpm --filter @agentown/web build",
+    "build:harness": "pnpm --filter @agentown/harness build"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "esbuild": "0.25.12",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
