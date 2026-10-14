@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { parseOrgConfig } from "@agentown/core";
 import { buildApp } from "../src/app.ts";
 import { EventBus } from "../src/bus.ts";
 import { createPool, migrate } from "../src/db.ts";
@@ -8,7 +7,7 @@ import type { ExecStreams, PodInfo, RuntimeDriver, RuntimeSpec } from "../src/ru
 import { llmEnv, podName } from "../src/runtime/driver.ts";
 import type { ModelLister } from "../src/providers.ts";
 import { SecretBox } from "../src/secrets.ts";
-import { Service } from "../src/service.ts";
+import { Instance } from "../src/instance.ts";
 
 /** In-memory driver: pods become Ready immediately. Records issued tokens so tests can act as runtimes. */
 export class FakeDriver implements RuntimeDriver {
@@ -64,7 +63,7 @@ export async function setup() {
   const db = createPool(url);
   await db.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
   await migrate(db);
-  const config = parseOrgConfig(readFileSync(new URL("../../../config/agentown.yaml", import.meta.url), "utf8"));
+  const configText = readFileSync(new URL("../../../config/agentown.yaml", import.meta.url), "utf8");
   const bus = new EventBus();
   // Fake provider: keys starting with "sk-test-" are valid; the suffix picks the model set.
   // "sk-test-orgwide-" keys are not scoped to a workspace and need one named on each request.
@@ -78,11 +77,12 @@ export async function setup() {
     }
     return apiKey.includes("small") ? ["claude-haiku-5-5"] : ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
   };
-  const service = new Service(db, config, bus, SecretBox.forTests(), modelLister);
-  const { ownerToken } = await service.bootstrap();
+  const instance = new Instance(db, configText, bus, SecretBox.forTests(), modelLister);
+  const { ownerToken } = await instance.bootstrap();
+  const service = await instance.org(instance.defaultOrgId);
   const driver = new FakeDriver();
-  const controller = new RuntimeController(service, driver, { apiUrlForRuntimes: "http://test" });
-  const { app, recheckTerminals } = await buildApp({ service, driver });
+  const controller = new RuntimeController(instance, driver, { apiUrlForRuntimes: "http://test" });
+  const { app, recheckTerminals } = await buildApp({ instance, driver });
   // Two passes: create pods, then observe them Ready.
   const settle = async () => {
     await controller.reconcileAll();
@@ -90,10 +90,12 @@ export async function setup() {
   };
   await settle();
 
+  // People act inside an organization: tests written against /api/… run in the default one.
+  const INSTANCE_ROUTES = /^\/api\/(session|orgs\/|admin\/|admin$|templates|instance\/)/;
   const call = async (token: string, method: string, url: string, body?: unknown) => {
     const res = await app.inject({
       method: method as "GET",
-      url,
+      url: url.startsWith("/api/") && !INSTANCE_ROUTES.test(url) ? `/api/orgs/${instance.defaultOrgId}/${url.slice(5)}` : url,
       headers: { authorization: `Bearer ${token}` },
       ...(body !== undefined ? { payload: body as object } : {}),
     });
@@ -106,6 +108,7 @@ export async function setup() {
 
   return {
     db,
+    instance,
     service,
     driver,
     controller,

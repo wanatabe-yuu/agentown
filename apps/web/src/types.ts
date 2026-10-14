@@ -88,8 +88,15 @@ export interface TaskDetail extends Task {
 
 export type Scope = { kind: string; ids?: string[] };
 
-/** The signed-in person and what they may do outside any one agent. */
+/** The signed-in account and the organizations it can open. */
+export interface Account {
+  user: { id: string; displayName: string; admin: boolean } | null;
+  orgs: Array<{ id: string; name: string; owner: boolean }>;
+}
+
+/** The signed-in person inside one organization, and what they may do outside any one agent. */
 export interface Me {
+  organization: { id: string; name: string };
   actor: { kind: string; id: string; owner?: boolean };
   user: User | null;
   can: Record<string, boolean>;

@@ -4,10 +4,10 @@ import { CredentialsDialog } from "./Credentials.tsx";
 import { OfficeCanvas } from "./OfficeCanvas.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
 import { UsersDialog } from "./Users.tsx";
-import { HttpError, api } from "./api.ts";
+import { HttpError, api, setOrg } from "./api.ts";
 import type { Flight } from "./office.ts";
 import { STRUCTURAL, useOffice } from "./store.ts";
-import type { AgentEvent, Catalog, Me } from "./types.ts";
+import type { Account, AgentEvent, Catalog, Me } from "./types.ts";
 import { Modal, StatusPill, ago } from "./ui.tsx";
 
 const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null) => string) => string> = {
@@ -37,10 +37,70 @@ try {
   localStorage.removeItem("agentown.token");
 } catch {}
 
+/** The organization in the URL (/o/<id>/…), if any. */
+function orgFromUrl(): string | null {
+  const m = /^\/o\/([a-z0-9-]+)/.exec(location.pathname);
+  return m ? m[1]! : null;
+}
+
+/** Signed-in account → pick an organization → the office of that organization. */
 export function App() {
   // undefined: still asking the server; null: signed out.
-  const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const [account, setAccount] = useState<Account | null | undefined>(undefined);
+  const [orgId, setOrgId] = useState<string | null>(orgFromUrl());
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<Account>("GET", "/api/me")
+      .then(setAccount)
+      .catch(() => setAccount(null));
+    const onPop = () => setOrgId(orgFromUrl());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  if (account === undefined) return <div className="center muted">Loading…</div>;
+  if (!account) {
+    return (
+      <Login
+        error={loginError}
+        onToken={(t) =>
+          api<Account>("POST", "/api/session", { token: t })
+            .then((a) => {
+              setLoginError(null);
+              setAccount(a);
+            })
+            .catch((e) => setLoginError(e instanceof HttpError && e.status === 401 ? "That token was rejected." : (e as Error).message))
+        }
+      />
+    );
+  }
+  const current = account.orgs.find((o) => o.id === orgId) ?? account.orgs[0];
+  const signOut = () => void api("DELETE", "/api/session").finally(() => setAccount(null));
+  if (!current) {
+    return (
+      <div className="center">
+        <div className="login">
+          <h1>No organization yet</h1>
+          <p className="muted">You are signed in as {account.user?.displayName}, but you do not belong to any organization. Ask your admin to add you.</p>
+          <button type="button" onClick={signOut}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    );
+  }
+  setOrg(current.id);
+  const switchOrg = (id: string) => {
+    history.pushState(null, "", `/o/${id}/`);
+    setOrgId(id);
+  };
+  // A new key per organization: every store, stream and scene starts fresh.
+  return <OrgApp key={current.id} account={account} orgId={current.id} onSwitch={switchOrg} onSignOut={signOut} onLost={() => setAccount(null)} />;
+}
+
+function OrgApp({ account, orgId, onSwitch, onSignOut, onLost }: { account: Account; orgId: string; onSwitch: (id: string) => void; onSignOut: () => void; onLost: () => void }) {
+  const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [showUsers, setShowUsers] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [openTask, setOpenTask] = useState<string | null>(null);
@@ -60,10 +120,10 @@ export function App() {
   }, []);
 
   const reloadMe = useCallback(() => {
-    api<Me>("GET", "/api/me")
+    api<Me>("GET", `/api/orgs/${orgId}/me`)
       .then(setMe)
-      .catch((e) => e instanceof HttpError && e.status === 401 && setMe(null));
-  }, []);
+      .catch((e) => e instanceof HttpError && (e.status === 401 || e.status === 404) && onLost());
+  }, [orgId]);
   useEffect(reloadMe, [reloadMe]);
 
   const onEvent = useCallback((e: AgentEvent) => {
@@ -84,7 +144,7 @@ export function App() {
     if (me && status === "live" && !catalog) api<Catalog>("GET", "/api/catalog").then(setCatalog).catch(() => {});
   }, [me, status, catalog]);
   useEffect(() => {
-    if (status === "unauthorized") setMe(null);
+    if (status === "unauthorized") onLost();
   }, [status]);
 
   // "Needs you": work this person asked for that is now waiting for review.
@@ -92,22 +152,7 @@ export function App() {
   const reviewTasks = useMemo(() => (snapshot?.tasks ?? []).filter((t) => t.status === "review" && t.createdBy === mine), [snapshot?.tasks, mine]);
   const needsOwner = useMemo(() => new Set(reviewTasks.flatMap((t) => (t.assigneeAgentId ? [t.assigneeAgentId] : []))), [reviewTasks]);
 
-  if (me === undefined) return <div className="center muted">Loading…</div>;
-  if (!me) {
-    return (
-      <Login
-        error={loginError}
-        onToken={(t) =>
-          api<Me>("POST", "/api/session", { token: t })
-            .then((m) => {
-              setLoginError(null);
-              setMe(m);
-            })
-            .catch((e) => setLoginError(e instanceof HttpError && e.status === 401 ? "That token was rejected." : (e as Error).message))
-        }
-      />
-    );
-  }
+  if (!me) return <div className="center muted">Loading…</div>;
   if (!snapshot) return <div className="center muted">Connecting to the office…</div>;
 
   const name = (id: string | null) => snapshot.agents.find((a) => a.id === id)?.displayName ?? id ?? "—";
@@ -121,7 +166,17 @@ export function App() {
           <span className="logo" aria-hidden>
             ▦
           </span>{" "}
-          {snapshot.organization.name}
+          {account.orgs.length > 1 ? (
+            <select className="org-switch" value={orgId} onChange={(e) => onSwitch(e.target.value)} aria-label="Organization">
+              {account.orgs.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            snapshot.organization.name
+          )}
         </div>
         <div className={`conn conn-${status}`} title={`event cursor ${snapshot.cursor}`}>
           {status === "live" ? "● live" : status === "reconnecting" ? "◌ reconnecting…" : "◌ connecting…"}
@@ -161,7 +216,7 @@ export function App() {
         <span className="muted small" title={me.actor.id}>
           {me.user?.displayName ?? me.actor.id}
         </span>
-        <button type="button" className="ghost" onClick={() => void api("DELETE", "/api/session").finally(() => setMe(null))}>
+        <button type="button" className="ghost" onClick={onSignOut}>
           Sign out
         </button>
       </header>

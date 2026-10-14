@@ -54,6 +54,7 @@ const TICKET_TTL_MS = 30_000;
 
 export interface AgentRow {
   id: string;
+  org_id: string;
   department_id: string;
   display_name: string;
   job_role: string;
@@ -169,6 +170,7 @@ export function isOwner(actor: Actor): boolean {
   return actor.kind === "human" && actor.owner;
 }
 
+/** A person as a member of one organization (account joined with membership). */
 export interface UserRow {
   id: string;
   display_name: string;
@@ -178,6 +180,12 @@ export interface UserRow {
   created_by: string;
   created_at: Date;
 }
+
+/** Members of $1; disabled when either the membership or the whole account is. */
+const MEMBERS_SQL = `
+  SELECT u.id, u.display_name, m.role_id, m.is_owner, COALESCE(m.disabled_at, u.disabled_at) AS disabled_at, m.created_by, m.created_at
+    FROM org_members m JOIN users u ON u.id = m.user_id
+   WHERE m.org_id = $1`;
 
 function toGrant(r: GrantRow): Grant {
   return {
@@ -207,6 +215,8 @@ export class Service {
     readonly bus: EventBus,
     readonly secrets: SecretBox,
     private readonly modelLister: ModelLister,
+    /** Every query this instance makes is confined to this organization. */
+    readonly orgId: string,
   ) {}
 
   // ---------------------------------------------------------------- plumbing
@@ -220,11 +230,12 @@ export class Service {
 
   private async emit(ctx: Ctx, e: EventInput): Promise<void> {
     const { rows } = await ctx.c.query(
-      `INSERT INTO agent_events(agent_id, task_id, run_id, type, payload) VALUES ($1,$2,$3,$4,$5)
+      `INSERT INTO agent_events(org_id, agent_id, task_id, run_id, type, payload) VALUES ($1,$2,$3,$4,$5,$6)
        RETURNING seq, at`,
-      [e.agentId ?? null, e.taskId ?? null, e.runId ?? null, e.type, JSON.stringify(sanitize(e.payload ?? {}))],
+      [this.orgId, e.agentId ?? null, e.taskId ?? null, e.runId ?? null, e.type, JSON.stringify(sanitize(e.payload ?? {}))],
     );
     ctx.events.push({
+      orgId: this.orgId,
       seq: Number(rows[0].seq),
       at: rows[0].at.toISOString(),
       agentId: e.agentId ?? null,
@@ -246,9 +257,10 @@ export class Service {
     revision?: number,
   ): Promise<void> {
     await q.query(
-      `INSERT INTO audit_events(actor, action, target, allowed, reason, policy_revision, detail)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      `INSERT INTO audit_events(org_id, actor, action, target, allowed, reason, policy_revision, detail)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [
+        this.orgId,
         typeof actor === "string" ? actor : actorRef(actor),
         action,
         target,
@@ -261,16 +273,17 @@ export class Service {
   }
 
   private async bumpRevision(q: Queryable): Promise<void> {
-    await q.query("UPDATE organizations SET policy_revision = policy_revision + 1");
+    await q.query("UPDATE organizations SET policy_revision = policy_revision + 1 WHERE id=$1", [this.orgId]);
   }
 
   async loadPolicy(q: Queryable = this.db): Promise<LoadedPolicy> {
     // Sequential on purpose: q may be a single transaction client.
     const agents = await q.query<{ id: string; department_id: string; reports_to: string | null; lifecycle_state: AgentNode["lifecycleState"] }>(
-      "SELECT id, department_id, reports_to, lifecycle_state FROM agents",
+      "SELECT id, department_id, reports_to, lifecycle_state FROM agents WHERE org_id=$1",
+      [this.orgId],
     );
-    const grants = await q.query<GrantRow>("SELECT * FROM grants WHERE revoked_at IS NULL");
-    const org = await q.query<{ policy_revision: string }>("SELECT policy_revision FROM organizations LIMIT 1");
+    const grants = await q.query<GrantRow>("SELECT * FROM grants WHERE org_id=$1 AND revoked_at IS NULL", [this.orgId]);
+    const org = await q.query<{ policy_revision: string }>("SELECT policy_revision FROM organizations WHERE id=$1", [this.orgId]);
     return {
       graph: new OrgGraph(
         agents.rows.map((a) => ({
@@ -312,24 +325,7 @@ export class Service {
     return policy;
   }
 
-  // ---------------------------------------------------------------- auth
-
-  async authenticate(token: string | undefined): Promise<Actor | null> {
-    if (!token) return null;
-    const { rows } = await this.db.query<{ principal_kind: string; principal_id: string; is_owner: boolean | null; disabled_at: Date | null }>(
-      `SELECT t.principal_kind, t.principal_id, u.is_owner, u.disabled_at
-         FROM tokens t LEFT JOIN users u ON t.principal_kind = 'human' AND u.id = t.principal_id
-        WHERE t.hash = $1 AND t.revoked_at IS NULL`,
-      [sha256(token)],
-    );
-    const r = rows[0];
-    if (!r) return null;
-    if (r.principal_kind === "human") {
-      if (r.is_owner === null || r.disabled_at) return null;
-      return { kind: "human", id: r.principal_id, owner: r.is_owner };
-    }
-    return { kind: "agent", id: r.principal_id };
-  }
+  // ---------------------------------------------------------------- tokens
 
   async issueToken(q: Queryable, kind: "human" | "agent", principalId: string, label: string, rotate: boolean): Promise<string> {
     if (rotate) {
@@ -357,30 +353,11 @@ export class Service {
 
   // ---------------------------------------------------------------- bootstrap
 
-  /** Idempotently load the owner-authored config. Returns a fresh owner token only on first boot. */
-  async bootstrap(opts: { ownerToken?: string } = {}): Promise<{ ownerToken: string | null }> {
-    return this.withTx(async (ctx) => {
-      const { c } = ctx;
-      const cfg = this.config;
-      await c.query(
-        `INSERT INTO organizations(id, name) VALUES ($1,$2) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
-        [cfg.organization.id, cfg.organization.name],
-      );
-      for (const d of cfg.departments) {
-        await c.query(
-          `INSERT INTO departments(id, name, color) VALUES ($1,$2,$3)
-           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, color = EXCLUDED.color`,
-          [d.id, d.name, d.color],
-        );
-      }
-      for (const p of cfg.projects) {
-        await c.query(`INSERT INTO projects(id, name) VALUES ($1,$2) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`, [
-          p.id,
-          p.name,
-        ]);
-      }
-      for (const a of cfg.bootstrap.agents) {
-        const exists = await c.query("SELECT 1 FROM agents WHERE id = $1", [a.key]);
+  /** Create the config's bootstrap agents that do not exist yet (ids are the config keys). */
+  async seedBootstrapAgents(): Promise<void> {
+    await this.withTx(async (ctx) => {
+      for (const a of this.config.bootstrap.agents) {
+        const exists = await ctx.c.query("SELECT 1 FROM agents WHERE id = $1", [a.key]);
         if (exists.rowCount) continue;
         await this.insertAgent(ctx, {
           id: a.key,
@@ -392,19 +369,6 @@ export class Service {
           spawnKey: null,
         });
       }
-      let ownerToken: string | null = null;
-      const owners = await c.query("SELECT 1 FROM tokens WHERE principal_kind='human' AND principal_id='owner' AND revoked_at IS NULL");
-      if (!owners.rowCount) {
-        if (opts.ownerToken) {
-          await c.query("INSERT INTO tokens(hash, principal_kind, principal_id, label) VALUES ($1,'human','owner','bootstrap')", [
-            sha256(opts.ownerToken),
-          ]);
-          ownerToken = opts.ownerToken;
-        } else {
-          ownerToken = await this.issueToken(c, "human", "owner", "bootstrap", false);
-        }
-      }
-      return { ownerToken };
     });
   }
 
@@ -430,11 +394,11 @@ export class Service {
   ): Promise<void> {
     const { template, preset, profile } = this.template(a.templateId);
     const cfg = a.config ?? {};
-    const seat = await ctx.c.query<{ n: string }>("SELECT count(*) AS n FROM agents WHERE department_id = $1", [a.departmentId]);
+    const seat = await ctx.c.query<{ n: string }>("SELECT count(*) AS n FROM agents WHERE org_id = $1 AND department_id = $2", [this.orgId, a.departmentId]);
     await ctx.c.query(
       `INSERT INTO agents(id, department_id, display_name, job_role, template_id, reports_to, lifecycle_state,
-         desired_runtime, created_by, spawn_key, seat, credential_id, model, effort, instructions, max_turns)
-       VALUES ($1,$2,$3,$4,$5,$6,'provisioning','running',$7,$8,$9,$10,$11,$12,$13,$14)`,
+         desired_runtime, created_by, spawn_key, seat, credential_id, model, effort, instructions, max_turns, org_id)
+       VALUES ($1,$2,$3,$4,$5,$6,'provisioning','running',$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         a.id,
         a.departmentId,
@@ -450,6 +414,7 @@ export class Service {
         cfg.effort ?? null,
         cfg.instructions ?? "",
         cfg.maxTurns ?? 40,
+        this.orgId,
       ],
     );
     await ctx.c.query(
@@ -460,8 +425,8 @@ export class Service {
     // the spawner can only pick templates its own agent.spawn grant lists.
     for (const cap of profile) {
       await ctx.c.query(
-        `INSERT INTO grants(id, principal_id, action, scope, constraints, delegable, issuer)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        `INSERT INTO grants(id, principal_id, action, scope, constraints, delegable, issuer, org_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [
           newId("g"),
           a.id,
@@ -470,6 +435,7 @@ export class Service {
           JSON.stringify({ ...(cap.templates ? { templates: cap.templates } : {}), ...(cap.repos ? { repos: cap.repos } : {}) }),
           cap.delegable,
           `template:${template.id}`,
+          this.orgId,
         ],
       );
     }
@@ -484,13 +450,16 @@ export class Service {
   // ---------------------------------------------------------------- agents
 
   async getAgentRow(id: string, q: Queryable = this.db): Promise<AgentRow> {
-    const { rows } = await q.query<AgentRow>("SELECT * FROM agents WHERE id = $1", [id]);
+    const { rows } = await q.query<AgentRow>("SELECT * FROM agents WHERE id = $1 AND org_id = $2", [id, this.orgId]);
     if (!rows[0]) throw notFound("agent");
     return rows[0];
   }
 
   async getRuntimeRow(id: string, q: Queryable = this.db): Promise<RuntimeRow> {
-    const { rows } = await q.query<RuntimeRow>("SELECT * FROM agent_runtimes WHERE agent_id = $1", [id]);
+    const { rows } = await q.query<RuntimeRow>(
+      "SELECT r.* FROM agent_runtimes r JOIN agents a ON a.id = r.agent_id WHERE r.agent_id = $1 AND a.org_id = $2",
+      [id, this.orgId],
+    );
     if (!rows[0]) throw notFound("runtime");
     return rows[0];
   }
@@ -509,7 +478,7 @@ export class Service {
     this.template(input.templateId);
     const spawnKey = input.idempotencyKey ? `${actorRef(actor)}:${input.idempotencyKey}` : null;
     if (spawnKey) {
-      const { rows } = await this.db.query<AgentRow>("SELECT * FROM agents WHERE spawn_key = $1", [spawnKey]);
+      const { rows } = await this.db.query<AgentRow>("SELECT * FROM agents WHERE org_id = $1 AND spawn_key = $2", [this.orgId, spawnKey]);
       if (rows[0]) {
         if (rows[0].template_id !== input.templateId || rows[0].reports_to !== input.reportsToAgentId) {
           throw conflict("idempotency_mismatch", "idempotency key reused with different parameters");
@@ -601,8 +570,8 @@ export class Service {
   async listAgents(actor: Actor) {
     const policy = await this.loadPolicy();
     const [{ rows: agents }, { rows: runtimes }] = await Promise.all([
-      this.db.query<AgentRow>("SELECT * FROM agents ORDER BY created_at"),
-      this.db.query<RuntimeRow>("SELECT * FROM agent_runtimes"),
+      this.db.query<AgentRow>("SELECT * FROM agents WHERE org_id=$1 ORDER BY created_at", [this.orgId]),
+      this.db.query<RuntimeRow>("SELECT r.* FROM agent_runtimes r JOIN agents a ON a.id = r.agent_id WHERE a.org_id=$1", [this.orgId]),
     ]);
     const rt = new Map(runtimes.map((r) => [r.agent_id, r]));
     return agents
@@ -625,9 +594,7 @@ export class Service {
       .filter((t) => authorize(actor, "agent.spawn", { agentId: id, templateId: t.id }, policy).allowed)
       .map((t) => t.id);
     can["agent.spawn"] = spawnTemplates.length > 0;
-    const cred = agent.config.credentialId
-      ? (await this.db.query<CredentialRow>("SELECT * FROM credentials WHERE id=$1", [agent.config.credentialId])).rows[0]
-      : undefined;
+    const cred = agent.config.credentialId ? await this.getCredentialRow(agent.config.credentialId).catch(() => undefined) : undefined;
     return { ...agent, grants, can, spawnTemplates, credential: cred ? this.presentCredential(cred) : null };
   }
 
@@ -753,9 +720,12 @@ export class Service {
 
   /** What the harness needs per run (non-secret). The API key reaches the runtime separately. */
   async runConfig(a: AgentRow, q: Queryable = this.db) {
-    const preset = this.config.runtimeCatalog.find((p) => p.id === this.template(a.template_id).preset.id)!;
+    // The runtime's own preset, never the template: templates can be edited or removed while agents run.
+    const rt = await this.getRuntimeRow(a.id, q);
+    const preset = this.config.runtimeCatalog.find((p) => p.id === rt.preset_id);
+    if (!preset) throw conflict("preset_gone", `runtime preset ${rt.preset_id} is no longer in the catalog`);
     const provider = a.credential_id
-      ? ((await q.query<{ provider: Provider }>("SELECT provider FROM credentials WHERE id=$1", [a.credential_id])).rows[0]?.provider ?? null)
+      ? ((await q.query<{ provider: Provider }>("SELECT provider FROM credentials WHERE id=$1 AND org_id=$2", [a.credential_id, this.orgId])).rows[0]?.provider ?? null)
       : null;
     return {
       harness: preset.harness,
@@ -788,7 +758,7 @@ export class Service {
   }
 
   private async getCredentialRow(id: string, q: Queryable = this.db): Promise<CredentialRow> {
-    const { rows } = await q.query<CredentialRow>("SELECT * FROM credentials WHERE id=$1", [id]);
+    const { rows } = await q.query<CredentialRow>("SELECT * FROM credentials WHERE id=$1 AND org_id=$2", [id, this.orgId]);
     if (!rows[0]) throw notFound("credential");
     return rows[0];
   }
@@ -825,7 +795,8 @@ export class Service {
       throw deny("listing credentials requires credential.manage or an agent.configure grant");
     }
     const { rows } = await this.db.query<CredentialRow>(
-      `SELECT * FROM credentials ${manages ? "" : "WHERE revoked_at IS NULL"} ORDER BY created_at`,
+      `SELECT * FROM credentials WHERE org_id=$1 ${manages ? "" : "AND revoked_at IS NULL"} ORDER BY created_at`,
+      [this.orgId],
     );
     return rows.map((r) => this.presentCredential(r));
   }
@@ -865,8 +836,8 @@ export class Service {
     return this.withTx(async (ctx) => {
       const id = newId("k");
       await ctx.c.query(
-        `INSERT INTO credentials(id, name, provider, ciphertext, key_hint, workspace_id, base_url, models, departments, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        `INSERT INTO credentials(id, name, provider, ciphertext, key_hint, workspace_id, base_url, models, departments, created_by, org_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           id,
           input.name.slice(0, 60),
@@ -878,6 +849,7 @@ export class Service {
           models,
           input.departments?.length ? input.departments : null,
           actorRef(actor),
+          this.orgId,
         ],
       );
       await this.emit(ctx, { type: "credential.created", payload: { credentialId: id, name: input.name, models: models.length } });
@@ -890,7 +862,7 @@ export class Service {
     const cred = await this.getCredentialRow(id);
     if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
     const models = await this.discoverModels(cred.provider, this.secrets.open(cred.ciphertext), cred.workspace_id, cred.base_url);
-    await this.db.query("UPDATE credentials SET models=$2, models_refreshed_at=now() WHERE id=$1", [id, models]);
+    await this.db.query("UPDATE credentials SET models=$2, models_refreshed_at=now() WHERE id=$1 AND org_id=$3", [id, models, this.orgId]);
     return this.presentCredential(await this.getCredentialRow(id));
   }
 
@@ -899,7 +871,7 @@ export class Service {
     await this.requireCredentialManage(actor, "credential.revoke", id);
     await this.withTx(async (ctx) => {
       await this.getCredentialRow(id, ctx.c);
-      await ctx.c.query("UPDATE credentials SET revoked_at=now(), revision=revision+1 WHERE id=$1 AND revoked_at IS NULL", [id]);
+      await ctx.c.query("UPDATE credentials SET revoked_at=now(), revision=revision+1 WHERE id=$1 AND org_id=$2 AND revoked_at IS NULL", [id, this.orgId]);
       await this.emit(ctx, { type: "credential.revoked", payload: { credentialId: id } });
     });
   }
@@ -1003,8 +975,8 @@ export class Service {
       if (!d.allowed) throw deny(`permission.delegate denied: ${d.reason}`);
       const id = newId("g");
       await ctx.c.query(
-        `INSERT INTO grants(id, principal_id, action, scope, constraints, delegable, issuer, parent_grant_id, expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        `INSERT INTO grants(id, principal_id, action, scope, constraints, delegable, issuer, parent_grant_id, expires_at, org_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           id,
           proposed.principalId,
@@ -1015,6 +987,7 @@ export class Service {
           isOwner(actor) ? "owner" : principalOf(actor),
           d.parentGrantId,
           input.expiresAt ?? null,
+          this.orgId,
         ],
       );
       await this.bumpRevision(ctx.c);
@@ -1025,7 +998,7 @@ export class Service {
 
   async revokeGrant(actor: Actor, grantId: string) {
     await this.withTx(async (ctx) => {
-      const { rows } = await ctx.c.query<GrantRow>("SELECT * FROM grants WHERE id=$1", [grantId]);
+      const { rows } = await ctx.c.query<GrantRow>("SELECT * FROM grants WHERE id=$1 AND org_id=$2", [grantId, this.orgId]);
       const g = rows[0];
       if (!g) throw notFound("grant");
       const allowed = isOwner(actor) || g.issuer === principalOf(actor);
@@ -1042,7 +1015,7 @@ export class Service {
   // ---------------------------------------------------------------- tasks
 
   private async getTaskRow(id: string, q: Queryable = this.db, lock = false): Promise<TaskRow> {
-    const { rows } = await q.query<TaskRow>(`SELECT * FROM tasks WHERE id=$1 ${lock ? "FOR UPDATE" : ""}`, [id]);
+    const { rows } = await q.query<TaskRow>(`SELECT * FROM tasks WHERE id=$1 AND org_id=$2 ${lock ? "FOR UPDATE" : ""}`, [id, this.orgId]);
     if (!rows[0]) throw notFound("task");
     return rows[0];
   }
@@ -1133,7 +1106,7 @@ export class Service {
     const spec = this.validateSpec(input.spec);
     const key = input.idempotencyKey ? `${actorRef(actor)}:${input.idempotencyKey}` : null;
     if (key) {
-      const { rows } = await this.db.query<TaskRow>("SELECT * FROM tasks WHERE idempotency_key=$1", [key]);
+      const { rows } = await this.db.query<TaskRow>("SELECT * FROM tasks WHERE org_id=$1 AND idempotency_key=$2", [this.orgId, key]);
       if (rows[0]) return { task: this.presentTask(rows[0]), existing: true };
     }
     const id = await this.withTx(async (ctx) => {
@@ -1158,8 +1131,8 @@ export class Service {
       const id = newId("t");
       await ctx.c.query(
         `INSERT INTO tasks(id, project_id, parent_task_id, title, description, acceptance_criteria, spec, status,
-           assignee_agent_id, created_by, requires_review, input_task_ids, idempotency_key)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+           assignee_agent_id, created_by, requires_review, input_task_ids, idempotency_key, org_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           id,
           input.projectId ?? null,
@@ -1174,6 +1147,7 @@ export class Service {
           input.requiresReview ?? actor.kind === "human",
           input.inputTaskIds ?? [],
           key,
+          this.orgId,
         ],
       );
       if (assignee) {
@@ -1194,11 +1168,11 @@ export class Service {
     const policy = await this.loadPolicy();
     const shared = await this.sharedTaskIds(actor);
     const params: unknown[] = [];
-    const where: string[] = [];
+    const where: string[] = [`org_id = $${params.push(this.orgId)}`];
     if (filter.assignee) where.push(`assignee_agent_id = $${params.push(filter.assignee)}`);
     if (filter.status) where.push(`status = $${params.push(filter.status)}`);
     const { rows } = await this.db.query<TaskRow>(
-      `SELECT * FROM tasks ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC LIMIT 500`,
+      `SELECT * FROM tasks WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT 500`,
       params,
     );
     return rows.filter((t) => this.canViewTask(actor, t, policy, shared)).map((t) => this.presentTask(t));
@@ -1521,7 +1495,9 @@ export class Service {
   async sweepLeases(): Promise<number> {
     return this.withTx(async (ctx) => {
       const { rows } = await ctx.c.query<{ id: string; task_id: string }>(
-        "UPDATE task_runs SET status='lost', finished_at=now(), summary='lease expired' WHERE status='running' AND lease_expires_at < now() RETURNING id, task_id",
+        `UPDATE task_runs SET status='lost', finished_at=now(), summary='lease expired'
+          WHERE status='running' AND lease_expires_at < now() AND agent_id IN (SELECT id FROM agents WHERE org_id=$1) RETURNING id, task_id`,
+        [this.orgId],
       );
       for (const r of rows) await this.requeueAfterLostRun(ctx, r.task_id, r.id, "lease expired");
       return rows.length;
@@ -1564,20 +1540,16 @@ export class Service {
   // ---------------------------------------------------------------- office snapshot & events
 
   async snapshot(actor: Actor) {
-    const { rows } = await this.db.query<{ seq: string | null }>("SELECT max(seq) AS seq FROM agent_events");
+    // Event sequence numbers are global; the cursor is the newest one this org has.
+    const { rows } = await this.db.query<{ seq: string | null }>("SELECT max(seq) AS seq FROM agent_events WHERE org_id=$1", [this.orgId]);
     const cursor = Number(rows[0]?.seq ?? 0);
-    const [agents, tasks, departments, projects] = await Promise.all([
-      this.listAgents(actor),
-      this.listTasks(actor),
-      this.db.query("SELECT id, name, color FROM departments ORDER BY id"),
-      this.db.query("SELECT id, name FROM projects ORDER BY id"),
-    ]);
+    const [agents, tasks] = await Promise.all([this.listAgents(actor), this.listTasks(actor)]);
     return {
       cursor,
       organization: this.config.organization,
       me: actor,
-      departments: this.config.departments.map((d) => departments.rows.find((r) => r.id === d.id) ?? d),
-      projects: projects.rows,
+      departments: this.config.departments,
+      projects: this.config.projects,
       agents,
       tasks,
       serverTime: new Date().toISOString(),
@@ -1593,12 +1565,13 @@ export class Service {
 
   async eventsAfter(actor: Actor, cursor: number, limit = 1000): Promise<AgentEventRow[]> {
     const { rows } = await this.db.query(
-      "SELECT seq, at, agent_id, task_id, run_id, type, payload FROM agent_events WHERE seq > $1 ORDER BY seq LIMIT $2",
-      [cursor, limit],
+      "SELECT seq, at, agent_id, task_id, run_id, type, payload FROM agent_events WHERE org_id = $3 AND seq > $1 ORDER BY seq LIMIT $2",
+      [cursor, limit, this.orgId],
     );
     const visible = await this.visibleFilter(actor);
     return rows
       .map((r) => ({
+        orgId: this.orgId,
         seq: Number(r.seq),
         at: r.at.toISOString(),
         agentId: r.agent_id,
@@ -1612,7 +1585,7 @@ export class Service {
 
   async listAudit(actor: Actor, after: number) {
     await this.require(actor, "audit.view", {});
-    const { rows } = await this.db.query("SELECT * FROM audit_events WHERE id > $1 ORDER BY id DESC LIMIT 300", [after]);
+    const { rows } = await this.db.query("SELECT * FROM audit_events WHERE org_id = $2 AND id > $1 ORDER BY id DESC LIMIT 300", [after, this.orgId]);
     return rows.map((r) => ({ ...r, id: Number(r.id), policy_revision: r.policy_revision === null ? null : Number(r.policy_revision) }));
   }
 
@@ -1630,8 +1603,8 @@ export class Service {
   // ---------------------------------------------------------------- people
 
   async userActive(id: string, q: Queryable = this.db): Promise<boolean> {
-    const { rows } = await q.query("SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL", [id]);
-    return !!rows[0];
+    const { rows } = await q.query(`${MEMBERS_SQL} AND u.id = $2`, [this.orgId, id]);
+    return !!rows[0] && !rows[0].disabled_at;
   }
 
   /** Who am I and what may I do at the organization level: drives which controls the UI shows. */
@@ -1639,12 +1612,13 @@ export class Service {
     const policy = await this.loadPolicy();
     const user =
       actor.kind === "human"
-        ? (await this.db.query<UserRow>("SELECT * FROM users WHERE id=$1", [actor.id])).rows.map((u) => this.presentUser(u, []))[0] ?? null
+        ? (await this.db.query<UserRow>(`${MEMBERS_SQL} AND u.id = $2`, [this.orgId, actor.id])).rows.map((u) => this.presentUser(u, []))[0] ?? null
         : null;
     const can: Partial<Record<Action, boolean>> = {};
     for (const a of ORG_ACTIONS) can[a] = authorize(actor, a, {}, policy).allowed;
-    const agents = (await this.db.query<{ id: string }>("SELECT id FROM agents WHERE lifecycle_state <> 'retired' ORDER BY id")).rows;
+    const agents = (await this.db.query<{ id: string }>("SELECT id FROM agents WHERE org_id=$1 AND lifecycle_state <> 'retired' ORDER BY id", [this.orgId])).rows;
     return {
+      organization: this.config.organization,
       actor,
       user,
       can,
@@ -1677,12 +1651,12 @@ export class Service {
 
   async listUsers(actor: Actor) {
     const policy = await this.require(actor, "user.manage", {});
-    const { rows } = await this.db.query<UserRow>("SELECT * FROM users ORDER BY is_owner DESC, created_at");
+    const { rows } = await this.db.query<UserRow>(`${MEMBERS_SQL} ORDER BY m.is_owner DESC, m.created_at`, [this.orgId]);
     return rows.map((u) => this.presentUser(u, policy.grants.filter((g) => g.principalId === `user:${u.id}` && isGrantEffective(g, policy))));
   }
 
   private async getUserRow(id: string, q: Queryable = this.db): Promise<UserRow> {
-    const { rows } = await q.query<UserRow>("SELECT * FROM users WHERE id=$1", [id]);
+    const { rows } = await q.query<UserRow>(`${MEMBERS_SQL} AND u.id = $2`, [this.orgId, id]);
     if (!rows[0]) throw notFound("user");
     return rows[0];
   }
@@ -1715,9 +1689,9 @@ export class Service {
     }
     const id = newId("g");
     await ctx.c.query(
-      `INSERT INTO grants(id, principal_id, action, scope, constraints, delegable, issuer, parent_grant_id, expires_at)
-       VALUES ($1,$2,$3,$4,$5,false,$6,NULL,NULL)`,
-      [id, `user:${userId}`, p.action, JSON.stringify(p.scope), JSON.stringify(p.constraints), isOwner(actor) ? "owner" : principalOf(actor)],
+      `INSERT INTO grants(id, principal_id, action, scope, constraints, delegable, issuer, parent_grant_id, expires_at, org_id)
+       VALUES ($1,$2,$3,$4,$5,false,$6,NULL,NULL,$7)`,
+      [id, `user:${userId}`, p.action, JSON.stringify(p.scope), JSON.stringify(p.constraints), isOwner(actor) ? "owner" : principalOf(actor), this.orgId],
     );
     await this.audit(ctx.c, actor, "user.grant", userId, true, d.reason, { grantId: id, ...p }, policy.revision);
     return id;
@@ -1728,12 +1702,12 @@ export class Service {
     const role = this.config.humanRoles[roleId];
     if (!role) throw badRequest(`unknown role ${roleId}`);
     if (replace) {
-      await ctx.c.query("UPDATE grants SET revoked_at=now(), revision=revision+1 WHERE principal_id=$1 AND revoked_at IS NULL", [`user:${userId}`]);
+      await ctx.c.query("UPDATE grants SET revoked_at=now(), revision=revision+1 WHERE org_id=$1 AND principal_id=$2 AND revoked_at IS NULL", [this.orgId, `user:${userId}`]);
     }
     for (const c of role.permissions) {
       await this.insertUserGrant(ctx, actor, policy, userId, { action: c.action, scope: c.scope, constraints: capConstraints(c) });
     }
-    await ctx.c.query("UPDATE users SET role_id=$2 WHERE id=$1", [userId, roleId]);
+    await ctx.c.query("UPDATE org_members SET role_id=$3 WHERE org_id=$1 AND user_id=$2", [this.orgId, userId, roleId]);
   }
 
   /** Invite a person. The token is returned once; only its hash is stored. */
@@ -1742,6 +1716,7 @@ export class Service {
       const policy = await this.require(actor, "user.manage", {}, { q: ctx.c, auditAs: "user.create", detail: input });
       const id = newId("u");
       await ctx.c.query("INSERT INTO users(id, display_name, created_by) VALUES ($1,$2,$3)", [id, input.displayName, actorRef(actor)]);
+      await ctx.c.query("INSERT INTO org_members(org_id, user_id, created_by) VALUES ($1,$2,$3)", [this.orgId, id, actorRef(actor)]);
       if (input.roleId) await this.applyRole(ctx, actor, policy, id, input.roleId, false);
       const token = await this.issueToken(ctx.c, "human", id, "invite", true);
       await this.bumpRevision(ctx.c);
@@ -1759,9 +1734,16 @@ export class Service {
     return this.withTx(async (ctx) => {
       const u = await this.getUserRow(id, ctx.c);
       const policy = await this.requireUserManage(actor, u, ctx, "user.update", input);
-      if (input.displayName) await ctx.c.query("UPDATE users SET display_name=$2 WHERE id=$1", [id, input.displayName]);
+      if (input.displayName) {
+        await this.requireOnlyHere(ctx.c, id, "rename");
+        await ctx.c.query("UPDATE users SET display_name=$2 WHERE id=$1", [id, input.displayName]);
+      }
       if (input.disabled !== undefined) {
-        await ctx.c.query("UPDATE users SET disabled_at = CASE WHEN $2 THEN COALESCE(disabled_at, now()) ELSE NULL END WHERE id=$1", [id, input.disabled]);
+        // Disabling here only closes this organization; the account and other memberships are untouched.
+        await ctx.c.query(
+          "UPDATE org_members SET disabled_at = CASE WHEN $3 THEN COALESCE(disabled_at, now()) ELSE NULL END WHERE org_id=$1 AND user_id=$2",
+          [this.orgId, id, input.disabled],
+        );
       }
       if (input.roleId) await this.applyRole(ctx, actor, policy, id, input.roleId, true);
       await this.bumpRevision(ctx.c);
@@ -1774,6 +1756,7 @@ export class Service {
   async resetUserToken(actor: Actor, id: string) {
     return this.withTx(async (ctx) => {
       await this.requireUserManage(actor, await this.getUserRow(id, ctx.c), ctx, "user.token");
+      await this.requireOnlyHere(ctx.c, id, "issue a new token for");
       return { token: await this.issueToken(ctx.c, "human", id, "reset", true) };
     });
   }
@@ -1791,10 +1774,35 @@ export class Service {
   async revokeUserGrant(actor: Actor, id: string, grantId: string) {
     await this.withTx(async (ctx) => {
       await this.requireUserManage(actor, await this.getUserRow(id, ctx.c), ctx, "user.revoke", { grantId });
-      const r = await ctx.c.query("UPDATE grants SET revoked_at=now(), revision=revision+1 WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL", [grantId, `user:${id}`]);
+      const r = await ctx.c.query(
+        "UPDATE grants SET revoked_at=now(), revision=revision+1 WHERE id=$1 AND principal_id=$2 AND org_id=$3 AND revoked_at IS NULL",
+        [grantId, `user:${id}`, this.orgId],
+      );
       if (!r.rowCount) throw notFound("permission");
       await this.bumpRevision(ctx.c);
       await this.emit(ctx, { type: "user.updated", payload: { userId: id } });
+    });
+  }
+
+  /**
+   * The account is shared across organizations: one org's user managers may only
+   * change it (name, token) when the person belongs to no other organization.
+   * Otherwise an admin of org A could take over someone's access to org B.
+   */
+  private async requireOnlyHere(q: Queryable, userId: string, what: string) {
+    const { rows } = await q.query("SELECT 1 FROM org_members WHERE user_id=$1 AND org_id <> $2 LIMIT 1", [userId, this.orgId]);
+    if (rows[0]) throw deny(`cannot ${what} a person who also belongs to another organization; ask the instance admin`);
+  }
+
+  /** Add an existing account to this organization, with no permissions yet. */
+  async addMember(actor: Actor, userId: string) {
+    return this.withTx(async (ctx) => {
+      await this.require(actor, "user.manage", {}, { q: ctx.c, auditAs: "user.add", detail: { user: userId } });
+      const { rows } = await ctx.c.query("SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL", [userId]);
+      if (!rows[0]) throw notFound("user");
+      await ctx.c.query("INSERT INTO org_members(org_id, user_id, created_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [this.orgId, userId, actorRef(actor)]);
+      await this.emit(ctx, { type: "user.updated", payload: { userId } });
+      return this.presentUserById(userId, ctx.c);
     });
   }
 
@@ -1811,9 +1819,9 @@ export class Service {
       const id = newId("ts");
       const ticket = newSecret();
       await ctx.c.query(
-        `INSERT INTO terminal_sessions(id, actor, agent_id, generation, ticket_hash, ticket_expires_at)
-         VALUES ($1,$2,$3,$4,$5, now() + make_interval(secs => $6))`,
-        [id, actorRef(actor), agentId, rt.generation, sha256(ticket), TICKET_TTL_MS / 1000],
+        `INSERT INTO terminal_sessions(id, actor, agent_id, generation, ticket_hash, ticket_expires_at, org_id)
+         VALUES ($1,$2,$3,$4,$5, now() + make_interval(secs => $6), $7)`,
+        [id, actorRef(actor), agentId, rt.generation, sha256(ticket), TICKET_TTL_MS / 1000, this.orgId],
       );
       await this.emit(ctx, { type: "terminal.opened", agentId, payload: { sessionId: id, actor: actorRef(actor), generation: rt.generation } });
       return { sessionId: id, ticket, generation: rt.generation };
@@ -1824,12 +1832,12 @@ export class Service {
   async attachTerminal(sessionId: string, ticket: string) {
     // Redeeming burns the ticket even if the re-check below fails.
     const { rows } = await this.db.query(
-      "UPDATE terminal_sessions SET ticket_hash=NULL, attached_at=now() WHERE id=$1 AND ticket_hash=$2 AND ticket_expires_at > now() AND closed_at IS NULL RETURNING *",
-      [sessionId, sha256(ticket)],
+      "UPDATE terminal_sessions SET ticket_hash=NULL, attached_at=now() WHERE id=$1 AND ticket_hash=$2 AND org_id=$3 AND ticket_expires_at > now() AND closed_at IS NULL RETURNING *",
+      [sessionId, sha256(ticket), this.orgId],
     );
     const s = rows[0];
     if (!s) throw deny("invalid or expired terminal ticket");
-    const actor = this.parseActorRef(s.actor);
+    const actor = await this.parseActorRef(s.actor);
     const reason = await this.terminalStillAllowed(actor, s.agent_id, s.generation, this.db);
     if (reason) {
       await this.closeTerminal(sessionId, reason);
@@ -1840,10 +1848,12 @@ export class Service {
     return { agentId: s.agent_id as string, namespace: rt.namespace, pod: rt.workload_ref!, generation: s.generation as number };
   }
 
-  parseActorRef(ref: string): Actor {
+  /** Rebuild an actor from its audit reference; a person's owner flag is read from their current membership. */
+  async parseActorRef(ref: string): Promise<Actor> {
     const [kind, id] = ref.split(":") as [string, string];
-    // The owner row is seeded with id "owner" and is the only one (users_one_owner).
-    return kind === "human" ? { kind: "human", id, owner: id === "owner" } : { kind: "agent", id };
+    if (kind !== "human") return { kind: "agent", id };
+    const { rows } = await this.db.query("SELECT is_owner FROM org_members WHERE org_id=$1 AND user_id=$2", [this.orgId, id]);
+    return { kind: "human", id, owner: !!rows[0]?.is_owner };
   }
 
   private async terminalStillAllowed(actor: Actor, agentId: string, generation: number, q: Queryable): Promise<string | null> {
@@ -1862,7 +1872,7 @@ export class Service {
 
   async closeTerminal(id: string, reason: string) {
     await this.withTx(async (ctx) => {
-      const { rows } = await ctx.c.query("SELECT agent_id, actor FROM terminal_sessions WHERE id=$1 AND closed_at IS NULL", [id]);
+      const { rows } = await ctx.c.query("SELECT agent_id, actor FROM terminal_sessions WHERE id=$1 AND org_id=$2 AND closed_at IS NULL", [id, this.orgId]);
       if (!rows[0]) return;
       await this.closeTerminalRow(ctx.c, id, reason);
       await this.audit(ctx.c, rows[0].actor, "terminal.close", rows[0].agent_id, true, reason, { sessionId: id });
@@ -1872,10 +1882,13 @@ export class Service {
 
   /** Sessions that must be terminated after a policy/graph/runtime change. */
   async terminalsToRevoke(): Promise<Array<{ id: string; reason: string }>> {
-    const { rows } = await this.db.query("SELECT id, actor, agent_id, generation FROM terminal_sessions WHERE closed_at IS NULL AND attached_at IS NOT NULL");
+    const { rows } = await this.db.query(
+      "SELECT id, actor, agent_id, generation FROM terminal_sessions WHERE org_id=$1 AND closed_at IS NULL AND attached_at IS NOT NULL",
+      [this.orgId],
+    );
     const out: Array<{ id: string; reason: string }> = [];
     for (const s of rows) {
-      const reason = await this.terminalStillAllowed(this.parseActorRef(s.actor), s.agent_id, s.generation, this.db);
+      const reason = await this.terminalStillAllowed(await this.parseActorRef(s.actor), s.agent_id, s.generation, this.db);
       if (reason) out.push({ id: s.id, reason });
     }
     return out;

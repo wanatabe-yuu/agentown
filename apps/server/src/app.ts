@@ -3,16 +3,21 @@ import { PassThrough } from "node:stream";
 import { ACTIONS, type Actor, EFFORTS, WORK_STATES } from "@agentown/core";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
-import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { PROVIDERS } from "./providers.ts";
 import type { RuntimeDriver } from "./runtime/driver.ts";
+import type { Instance, Principal } from "./instance.ts";
 import type { Service } from "./service.ts";
 import { ApiError, badRequest } from "./util.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
+    /** Who the token belongs to. */
+    principal: Principal | null;
+    /** That principal as the organization in the URL (or the agent's own org) sees it. */
     actor: Actor | null;
+    svc: Service | null;
   }
 }
 
@@ -139,8 +144,17 @@ function actorOf(req: FastifyRequest): Actor {
   return req.actor;
 }
 
+function principalOf(req: FastifyRequest): Principal {
+  if (!req.principal) throw new ApiError(401, "unauthenticated", "missing or invalid bearer token");
+  return req.principal;
+}
+
+function svcOf(req: FastifyRequest): Service {
+  return req.svc!;
+}
+
 export interface AppOptions {
-  service: Service;
+  instance: Instance;
   driver: RuntimeDriver | null;
   webDist?: string;
   logger?: boolean;
@@ -148,17 +162,19 @@ export interface AppOptions {
 }
 
 export async function buildApp(opts: AppOptions) {
-  const { service, driver } = opts;
+  const { instance, driver } = opts;
   const app = Fastify({ logger: opts.logger ? { level: "info" } : false, bodyLimit: 4 * 1024 * 1024 });
   await app.register(fastifyWebsocket);
 
+  app.decorateRequest("principal", null);
   app.decorateRequest("actor", null);
+  app.decorateRequest("svc", null);
   app.addHook("onRequest", async (req) => {
     const h = req.headers.authorization;
-    if (h?.startsWith("Bearer ")) req.actor = await service.authenticate(h.slice(7).trim());
+    if (h?.startsWith("Bearer ")) req.principal = await instance.authenticate(h.slice(7).trim());
     else {
       const cookie = readCookie(req, SESSION_COOKIE);
-      if (cookie && sameOrigin(req)) req.actor = await service.authenticate(cookie);
+      if (cookie && sameOrigin(req)) req.principal = await instance.authenticate(cookie);
     }
   });
 
@@ -178,127 +194,137 @@ export async function buildApp(opts: AppOptions) {
     return v;
   };
 
+  // ---- instance level: who am I, which organizations, browser session
   app.get("/healthz", async () => ({ ok: true }));
-  app.get("/api/me", async (req) => service.me(actorOf(req)));
-
-  // ---- browser session: trade a token for an HttpOnly cookie
+  app.get("/api/me", async (req) => instance.me(principalOf(req)));
   app.post("/api/session", async (req, reply) => {
     const { token } = parse(S.session, req.body);
-    const actor = await service.authenticate(token);
-    if (!actor || actor.kind !== "human") throw new ApiError(401, "unauthenticated", "invalid or disabled token");
+    const p = await instance.authenticate(token);
+    if (!p || p.kind !== "human") throw new ApiError(401, "unauthenticated", "invalid or disabled token");
     reply.header("set-cookie", sessionCookie(req, token, SESSION_MAX_AGE));
-    return service.me(actor);
+    return instance.me(p);
   });
   app.delete("/api/session", async (req, reply) => {
     reply.header("set-cookie", sessionCookie(req, "", 0));
     return reply.status(204).send();
   });
 
+  // ---- organization level. People use /api/orgs/<id>/…; agent runtimes keep
+  // using /api/… and are confined to their own organization by their token.
+  const orgRoutes = async (r: FastifyInstance, o: { people: boolean }) => {
+    r.addHook("preHandler", async (req) => {
+      const { orgId } = req.params as { orgId?: string };
+      const { service, actor } = await instance.resolve(principalOf(req), orgId);
+      req.svc = service;
+      req.actor = actor;
+    });
+    if (o.people) r.get("/me", async (req) => svcOf(req).me(actorOf(req)));
+
   // ---- people and their permissions
-  app.get("/api/roles", async (req) => {
+  r.get("/roles", async (req) => {
     actorOf(req);
-    return { roles: service.roles() };
+    return { roles: svcOf(req).roles() };
   });
-  app.get("/api/users", async (req) => ({ users: await service.listUsers(actorOf(req)) }));
-  app.post("/api/users", async (req, reply) => {
+  r.get("/users", async (req) => ({ users: await svcOf(req).listUsers(actorOf(req)) }));
+  r.post("/users", async (req, reply) => {
     reply.status(201);
-    return changed(await service.createUser(actorOf(req), parse(S.createUser, req.body)));
+    return changed(await svcOf(req).createUser(actorOf(req), parse(S.createUser, req.body)));
   });
-  app.patch<{ Params: { id: string } }>("/api/users/:id", async (req) =>
-    changed(await service.updateUser(actorOf(req), req.params.id, parse(S.updateUser, req.body))),
+  r.patch<{ Params: { id: string } }>("/users/:id", async (req) =>
+    changed(await svcOf(req).updateUser(actorOf(req), req.params.id, parse(S.updateUser, req.body))),
   );
-  app.post<{ Params: { id: string } }>("/api/users/:id/token", async (req) => service.resetUserToken(actorOf(req), req.params.id));
-  app.post<{ Params: { id: string } }>("/api/users/:id/grants", async (req, reply) => {
+  r.post<{ Params: { id: string } }>("/users/:id/token", async (req) => svcOf(req).resetUserToken(actorOf(req), req.params.id));
+  r.post<{ Params: { id: string } }>("/users/:id/grants", async (req, reply) => {
     reply.status(201);
-    return changed(await service.grantUser(actorOf(req), req.params.id, parse(S.grantUser, req.body)));
+    return changed(await svcOf(req).grantUser(actorOf(req), req.params.id, parse(S.grantUser, req.body)));
   });
-  app.delete<{ Params: { id: string; gid: string } }>("/api/users/:id/grants/:gid", async (req, reply) => {
-    await service.revokeUserGrant(actorOf(req), req.params.id, req.params.gid);
+  r.delete<{ Params: { id: string; gid: string } }>("/users/:id/grants/:gid", async (req, reply) => {
+    await svcOf(req).revokeUserGrant(actorOf(req), req.params.id, req.params.gid);
     changed(null);
     return reply.status(204).send();
   });
-  app.get("/api/catalog", async (req) => service.catalog(actorOf(req)));
-  app.get("/api/office/snapshot", async (req) => service.snapshot(actorOf(req)));
+  r.get("/catalog", async (req) => svcOf(req).catalog(actorOf(req)));
+  r.get("/office/snapshot", async (req) => svcOf(req).snapshot(actorOf(req)));
 
   // ---- agents
-  app.get("/api/agents", async (req) => ({ agents: await service.listAgents(actorOf(req)) }));
-  app.post("/api/agents", async (req, reply) => {
-    const out = await service.spawn(actorOf(req), parse(S.spawn, req.body));
+  r.get("/agents", async (req) => ({ agents: await svcOf(req).listAgents(actorOf(req)) }));
+  r.post("/agents", async (req, reply) => {
+    const out = await svcOf(req).spawn(actorOf(req), parse(S.spawn, req.body));
     reply.status(out.existing ? 200 : 202);
     return changed(out);
   });
-  app.get<{ Params: { id: string } }>("/api/agents/:id", async (req) => service.getAgent(actorOf(req), req.params.id));
-  app.patch<{ Params: { id: string } }>("/api/agents/:id", async (req) =>
-    changed(await service.updateAgent(actorOf(req), req.params.id, parse(S.updateAgent, req.body))),
+  r.get<{ Params: { id: string } }>("/agents/:id", async (req) => svcOf(req).getAgent(actorOf(req), req.params.id));
+  r.patch<{ Params: { id: string } }>("/agents/:id", async (req) =>
+    changed(await svcOf(req).updateAgent(actorOf(req), req.params.id, parse(S.updateAgent, req.body))),
   );
-  app.post<{ Params: { id: string } }>("/api/agents/:id/pause", async (req) => changed(await service.setIntake(actorOf(req), req.params.id, false)));
-  app.post<{ Params: { id: string } }>("/api/agents/:id/resume", async (req) => changed(await service.setIntake(actorOf(req), req.params.id, true)));
+  r.post<{ Params: { id: string } }>("/agents/:id/pause", async (req) => changed(await svcOf(req).setIntake(actorOf(req), req.params.id, false)));
+  r.post<{ Params: { id: string } }>("/agents/:id/resume", async (req) => changed(await svcOf(req).setIntake(actorOf(req), req.params.id, true)));
   for (const op of ["start", "stop", "restart"] as const) {
-    app.post<{ Params: { id: string } }>(`/api/agents/:id/runtime/${op}`, async (req, reply) => {
+    r.post<{ Params: { id: string } }>(`/agents/:id/runtime/${op}`, async (req, reply) => {
       reply.status(202);
-      return changed(await service.setRuntime(actorOf(req), req.params.id, op));
+      return changed(await svcOf(req).setRuntime(actorOf(req), req.params.id, op));
     });
   }
-  app.post<{ Params: { id: string } }>("/api/agents/:id/retire", async (req) =>
-    changed(await service.retire(actorOf(req), req.params.id, parse(S.retire, req.body).purgeWorkspace)),
+  r.post<{ Params: { id: string } }>("/agents/:id/retire", async (req) =>
+    changed(await svcOf(req).retire(actorOf(req), req.params.id, parse(S.retire, req.body).purgeWorkspace)),
   );
-  app.get<{ Params: { id: string }; Querystring: { after?: string } }>("/api/agents/:id/logs", async (req) => ({
-    lines: await service.logs(actorOf(req), req.params.id, Number(req.query.after ?? 0)),
+  r.get<{ Params: { id: string }; Querystring: { after?: string } }>("/agents/:id/logs", async (req) => ({
+    lines: await svcOf(req).logs(actorOf(req), req.params.id, Number(req.query.after ?? 0)),
   }));
 
-  app.put<{ Params: { id: string } }>("/api/agents/:id/config", async (req) =>
-    changed(await service.configureAgent(actorOf(req), req.params.id, parse(S.agentConfig, req.body))),
+  r.put<{ Params: { id: string } }>("/agents/:id/config", async (req) =>
+    changed(await svcOf(req).configureAgent(actorOf(req), req.params.id, parse(S.agentConfig, req.body))),
   );
 
   // ---- credentials (credential.manage; the key is write-only)
-  app.get("/api/credentials", async (req) => ({ credentials: await service.listCredentials(actorOf(req)) }));
-  app.post("/api/credentials", async (req, reply) => {
+  r.get("/credentials", async (req) => ({ credentials: await svcOf(req).listCredentials(actorOf(req)) }));
+  r.post("/credentials", async (req, reply) => {
     reply.status(201);
-    return service.createCredential(actorOf(req), parse(S.credential, req.body));
+    return svcOf(req).createCredential(actorOf(req), parse(S.credential, req.body));
   });
-  app.post<{ Params: { id: string } }>("/api/credentials/:id/refresh-models", async (req) =>
-    service.refreshCredentialModels(actorOf(req), req.params.id),
+  r.post<{ Params: { id: string } }>("/credentials/:id/refresh-models", async (req) =>
+    svcOf(req).refreshCredentialModels(actorOf(req), req.params.id),
   );
-  app.delete<{ Params: { id: string } }>("/api/credentials/:id", async (req, reply) => {
-    await service.revokeCredential(actorOf(req), req.params.id);
+  r.delete<{ Params: { id: string } }>("/credentials/:id", async (req, reply) => {
+    await svcOf(req).revokeCredential(actorOf(req), req.params.id);
     changed(null);
     return reply.status(204).send();
   });
 
   // ---- grants
-  app.post("/api/grants", async (req, reply) => {
+  r.post("/grants", async (req, reply) => {
     reply.status(201);
-    return changed(await service.delegate(actorOf(req), parse(S.delegate, req.body)));
+    return changed(await svcOf(req).delegate(actorOf(req), parse(S.delegate, req.body)));
   });
-  app.delete<{ Params: { id: string } }>("/api/grants/:id", async (req, reply) => {
-    await service.revokeGrant(actorOf(req), req.params.id);
+  r.delete<{ Params: { id: string } }>("/grants/:id", async (req, reply) => {
+    await svcOf(req).revokeGrant(actorOf(req), req.params.id);
     changed(null);
     return reply.status(204).send();
   });
 
   // ---- tasks
-  app.get<{ Querystring: { assignee?: string; status?: string } }>("/api/tasks", async (req) => ({
-    tasks: await service.listTasks(actorOf(req), req.query),
+  r.get<{ Querystring: { assignee?: string; status?: string } }>("/tasks", async (req) => ({
+    tasks: await svcOf(req).listTasks(actorOf(req), req.query),
   }));
-  app.post("/api/tasks", async (req, reply) => {
-    const out = await service.createTask(actorOf(req), parse(S.createTask, req.body));
+  r.post("/tasks", async (req, reply) => {
+    const out = await svcOf(req).createTask(actorOf(req), parse(S.createTask, req.body));
     reply.status(out.existing ? 200 : 201);
     return out;
   });
-  app.get<{ Params: { id: string } }>("/api/tasks/:id", async (req) => service.getTask(actorOf(req), req.params.id));
-  app.post<{ Params: { id: string } }>("/api/tasks/:id/assign", async (req) =>
-    service.assignTask(actorOf(req), req.params.id, parse(S.assign, req.body).assigneeAgentId),
+  r.get<{ Params: { id: string } }>("/tasks/:id", async (req) => svcOf(req).getTask(actorOf(req), req.params.id));
+  r.post<{ Params: { id: string } }>("/tasks/:id/assign", async (req) =>
+    svcOf(req).assignTask(actorOf(req), req.params.id, parse(S.assign, req.body).assigneeAgentId),
   );
-  app.post<{ Params: { id: string } }>("/api/tasks/:id/cancel", async (req) =>
-    service.cancelTask(actorOf(req), req.params.id, parse(S.cancel, req.body).reason),
+  r.post<{ Params: { id: string } }>("/tasks/:id/cancel", async (req) =>
+    svcOf(req).cancelTask(actorOf(req), req.params.id, parse(S.cancel, req.body).reason),
   );
-  app.post<{ Params: { id: string } }>("/api/tasks/:id/retry", async (req) => service.retryTask(actorOf(req), req.params.id));
-  app.post<{ Params: { id: string } }>("/api/tasks/:id/review", async (req) => {
+  r.post<{ Params: { id: string } }>("/tasks/:id/retry", async (req) => svcOf(req).retryTask(actorOf(req), req.params.id));
+  r.post<{ Params: { id: string } }>("/tasks/:id/review", async (req) => {
     const b = parse(S.review, req.body);
-    return service.reviewTask(actorOf(req), req.params.id, b.decision, b.note);
+    return svcOf(req).reviewTask(actorOf(req), req.params.id, b.decision, b.note);
   });
-  app.get<{ Params: { id: string } }>("/api/artifacts/:id", async (req, reply) => {
-    const a = await service.getArtifact(actorOf(req), req.params.id);
+  r.get<{ Params: { id: string } }>("/artifacts/:id", async (req, reply) => {
+    const a = await svcOf(req).getArtifact(actorOf(req), req.params.id);
     reply.header("content-type", a.contentType).header("x-content-sha256", a.sha256);
     // Artifacts are agent-produced: never let the browser render them as our origin.
     reply.header("content-security-policy", "sandbox").header("x-content-type-options", "nosniff");
@@ -307,46 +333,46 @@ export async function buildApp(opts: AppOptions) {
   });
 
   // ---- harness-facing (agent token + runtime generation)
-  app.post("/api/runtime/heartbeat", async (req) => service.heartbeat(actorOf(req), parse(S.heartbeat, req.body)));
-  app.post("/api/runs/claim", async (req, reply) => {
-    const out = await service.claim(actorOf(req), parse(S.claim, req.body).generation);
+  r.post("/runtime/heartbeat", async (req) => svcOf(req).heartbeat(actorOf(req), parse(S.heartbeat, req.body)));
+  r.post("/runs/claim", async (req, reply) => {
+    const out = await svcOf(req).claim(actorOf(req), parse(S.claim, req.body).generation);
     if (!out) return reply.status(204).send();
     return out;
   });
-  app.post<{ Params: { id: string } }>("/api/runs/:id/heartbeat", async (req) =>
-    service.runHeartbeat(actorOf(req), req.params.id, parse(S.gen, req.body).generation),
+  r.post<{ Params: { id: string } }>("/runs/:id/heartbeat", async (req) =>
+    svcOf(req).runHeartbeat(actorOf(req), req.params.id, parse(S.gen, req.body).generation),
   );
-  app.post<{ Params: { id: string } }>("/api/runs/:id/logs", async (req, reply) => {
+  r.post<{ Params: { id: string } }>("/runs/:id/logs", async (req, reply) => {
     const b = parse(S.runLogs, req.body);
-    await service.runLogs(actorOf(req), req.params.id, b.generation, b.lines);
+    await svcOf(req).runLogs(actorOf(req), req.params.id, b.generation, b.lines);
     return reply.status(204).send();
   });
-  app.post<{ Params: { id: string } }>("/api/runs/:id/events", async (req, reply) => {
+  r.post<{ Params: { id: string } }>("/runs/:id/events", async (req, reply) => {
     const b = parse(S.runEvent, req.body);
-    await service.runEvent(actorOf(req), req.params.id, b.generation, b);
+    await svcOf(req).runEvent(actorOf(req), req.params.id, b.generation, b);
     return reply.status(204).send();
   });
-  app.post<{ Params: { id: string } }>("/api/runs/:id/artifacts", async (req, reply) => {
+  r.post<{ Params: { id: string } }>("/runs/:id/artifacts", async (req, reply) => {
     const b = parse(S.artifact, req.body);
     reply.status(201);
-    return service.uploadArtifact(actorOf(req), req.params.id, b.generation, {
+    return svcOf(req).uploadArtifact(actorOf(req), req.params.id, b.generation, {
       name: b.name,
       contentType: b.contentType,
       content: Buffer.from(b.contentBase64, "base64"),
     });
   });
-  app.post<{ Params: { id: string } }>("/api/runs/:id/complete", async (req) => {
+  r.post<{ Params: { id: string } }>("/runs/:id/complete", async (req) => {
     const b = parse(S.complete, req.body);
-    return service.completeRun(actorOf(req), req.params.id, b.generation, b);
+    return svcOf(req).completeRun(actorOf(req), req.params.id, b.generation, b);
   });
 
   // ---- audit
-  app.get<{ Querystring: { after?: string } }>("/api/audit", async (req) => ({
-    events: await service.listAudit(actorOf(req), Number(req.query.after ?? 0)),
+  r.get<{ Querystring: { after?: string } }>("/audit", async (req) => ({
+    events: await svcOf(req).listAudit(actorOf(req), Number(req.query.after ?? 0)),
   }));
 
   // ---- events (SSE). Client: GET snapshot -> cursor -> GET /api/events?after=cursor.
-  app.get<{ Querystring: { after?: string } }>("/api/events", async (req, reply) => {
+  r.get<{ Querystring: { after?: string } }>("/events", async (req, reply) => {
     const actor = actorOf(req);
     let cursor = Number(req.query.after ?? req.headers["last-event-id"] ?? 0);
     reply.hijack();
@@ -357,7 +383,7 @@ export async function buildApp(opts: AppOptions) {
       connection: "keep-alive",
       "x-accel-buffering": "no",
     });
-    let visible = await service.visibleFilter(actor);
+    let visible = await svcOf(req).visibleFilter(actor);
     const queue: Array<Parameters<typeof visible>[0]> = [];
     let replaying = true;
     const write = (e: Parameters<typeof visible>[0]) => {
@@ -365,13 +391,15 @@ export async function buildApp(opts: AppOptions) {
       cursor = e.seq;
       res.write(`id: ${e.seq}\nevent: agent-event\ndata: ${JSON.stringify(e)}\n\n`);
     };
-    const unsubscribe = service.bus.subscribe((e) => (replaying ? queue.push(e) : write(e)));
-    for (const e of await service.eventsAfter(actor, cursor, 5000)) write(e);
+    const svc = svcOf(req);
+    // Other organizations' events never reach this stream, whatever the policy says.
+    const unsubscribe = svc.bus.subscribe((e) => e.orgId === svc.orgId && (replaying ? queue.push(e) : write(e)));
+    for (const e of await svcOf(req).eventsAfter(actor, cursor, 5000)) write(e);
     replaying = false;
     for (const e of queue.splice(0)) write(e);
     const ping = setInterval(() => res.write(`: ping ${Date.now()}\n\n`), 15000);
     const refresh = setInterval(async () => {
-      visible = await service.visibleFilter(actor).catch(() => visible);
+      visible = await svcOf(req).visibleFilter(actor).catch(() => visible);
     }, 10000);
     req.raw.on("close", () => {
       unsubscribe();
@@ -382,11 +410,22 @@ export async function buildApp(opts: AppOptions) {
 
   // ---- terminal: POST mints a one-time ticket (header auth); the WebSocket redeems it.
   const terminals = new Map<string, (reason: string) => void>();
-  app.post<{ Params: { id: string } }>("/api/agents/:id/terminal-sessions", async (req, reply) => {
-    if (!driver) throw new ApiError(501, "no_runtime", "no runtime driver configured");
+  r.post<{ Params: { id: string } }>("/agents/:id/terminal-sessions", async (req, reply) => {
+    if (!opts.driver) throw new ApiError(501, "no_runtime", "no runtime driver configured");
     reply.status(201);
-    return service.openTerminal(actorOf(req), req.params.id);
+    return svcOf(req).openTerminal(actorOf(req), req.params.id);
   });
+  };
+  await app.register(orgRoutes, { prefix: "/api", people: false });
+  await app.register(orgRoutes, { prefix: "/api/orgs/:orgId", people: true });
+
+  // ---- terminal: the WebSocket redeems the one-time ticket (the ticket names the org).
+  const terminals = new Map<string, (reason: string) => void>();
+  async function terminalService(sid: string): Promise<Service> {
+    const { rows } = await instance.db.query<{ org_id: string }>("SELECT org_id FROM terminal_sessions WHERE id=$1", [sid]);
+    if (!rows[0]) throw new ApiError(403, "forbidden", "invalid or expired terminal ticket");
+    return instance.org(rows[0].org_id, { includeArchived: true });
+  }
   app.get<{ Params: { sid: string }; Querystring: { ticket?: string } }>(
     "/api/terminal-sessions/:sid/attach",
     { websocket: true },
@@ -394,7 +433,7 @@ export async function buildApp(opts: AppOptions) {
       const sid = req.params.sid;
       let target: Awaited<ReturnType<Service["attachTerminal"]>>;
       try {
-        target = await service.attachTerminal(sid, req.query.ticket ?? "");
+        target = await (await terminalService(sid)).attachTerminal(sid, req.query.ticket ?? "");
       } catch (err) {
         socket.send(JSON.stringify({ type: "exit", reason: (err as Error).message }));
         socket.close(4403, "denied");
@@ -413,7 +452,7 @@ export async function buildApp(opts: AppOptions) {
         } catch {}
         socket.close();
         exec?.close();
-        void service.closeTerminal(sid, reason);
+        void terminalService(sid).then((s) => s.closeTerminal(sid, reason)).catch(() => {});
       };
       terminals.set(sid, close);
       stdout.on("data", (d: Buffer) => socket.send(JSON.stringify({ type: "output", data: d.toString("utf8") })));
@@ -444,10 +483,10 @@ export async function buildApp(opts: AppOptions) {
 
   /** Close every live terminal whose actor lost runtime.exec or whose runtime generation changed. */
   async function recheckTerminals() {
-    for (const { id, reason } of await service.terminalsToRevoke()) {
+    for (const { id, orgId, reason } of await instance.terminalsToRevoke()) {
       const close = terminals.get(id);
       if (close) close(reason);
-      else await service.closeTerminal(id, reason);
+      else await (await instance.org(orgId, { includeArchived: true })).closeTerminal(id, reason);
     }
   }
 

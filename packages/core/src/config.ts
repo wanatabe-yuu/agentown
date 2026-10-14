@@ -121,3 +121,20 @@ export type OrgConfig = z.infer<typeof orgConfigSchema>;
 export function parseOrgConfig(text: string): OrgConfig {
   return orgConfigSchema.parse(parseYaml(text));
 }
+
+/**
+ * The install config file holds the runtime catalog (allowed images: install-level,
+ * never editable from the API) plus the first organization. An organization's own
+ * structure document is the rest, kept in the author's format so it can be edited,
+ * exported and imported as a template.
+ */
+export function splitInstanceConfig(text: string) {
+  const config = parseOrgConfig(text); // validate the whole file first
+  const { organization, runtimeCatalog, ...doc } = parseYaml(text) as Record<string, unknown>;
+  return { config, catalog: runtimeCatalog, organization: config.organization, doc };
+}
+
+/** Validate an organization's document against the install's runtime catalog. */
+export function orgConfigFrom(doc: unknown, organization: { id: string; name: string }, catalog: unknown): OrgConfig {
+  return orgConfigSchema.parse({ ...(doc as Record<string, unknown>), organization, runtimeCatalog: catalog });
+}

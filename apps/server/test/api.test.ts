@@ -615,7 +615,8 @@ describe("people and their permissions", () => {
   it("disabling a person or resetting the token locks the old token out", async () => {
     const a = await invite("viewer");
     expect((await env.call(env.owner, "PATCH", `/api/users/${a.user.id}`, { disabled: true })).status).toBe(200);
-    expect((await env.call(a.token, "GET", "/api/me")).status).toBe(401);
+    // Disabled here: this organization is gone for them; the account itself still signs in.
+    expect((await env.call(a.token, "GET", "/api/me")).status).toBe(404);
     await env.call(env.owner, "PATCH", `/api/users/${a.user.id}`, { disabled: false });
     expect((await env.call(a.token, "GET", "/api/me")).status).toBe(200);
     const reset = await env.call(env.owner, "POST", `/api/users/${a.user.id}/token`);
@@ -630,10 +631,10 @@ describe("people and their permissions", () => {
     expect(set).toMatch(/HttpOnly/);
     expect(set).toMatch(/SameSite=Strict/);
     const cookie = set.split(";")[0]!;
-    const me = await env.app.inject({ method: "GET", url: "/api/me", headers: { cookie } });
+    const me = await env.app.inject({ method: "GET", url: "/api/orgs/agentown/me", headers: { cookie } });
     expect(me.json().can["user.manage"]).toBe(true);
     // A cookie-carrying write from another origin is not authenticated.
-    const cross = await env.app.inject({ method: "POST", url: "/api/agents/lead-eng/pause", headers: { cookie, origin: "https://evil.example", host: "localhost" } });
+    const cross = await env.app.inject({ method: "POST", url: "/api/orgs/agentown/agents/lead-eng/pause", headers: { cookie, origin: "https://evil.example", host: "localhost" } });
     expect(cross.statusCode).toBe(401);
     expect((await env.app.inject({ method: "POST", url: "/api/session", payload: { token: "aho_nope" } })).statusCode).toBe(401);
     const out = await env.app.inject({ method: "DELETE", url: "/api/session" });

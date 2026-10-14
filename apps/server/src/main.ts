@@ -1,7 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseOrgConfig } from "@agentown/core";
 import { buildApp } from "./app.ts";
 import { EventBus } from "./bus.ts";
 import { createPool, migrate } from "./db.ts";
@@ -11,21 +10,21 @@ import { DockerDriver } from "./runtime/docker.ts";
 import { KubernetesDriver } from "./runtime/kubernetes.ts";
 import { listModels } from "./providers.ts";
 import { SecretBox } from "./secrets.ts";
-import { Service } from "./service.ts";
+import { Instance } from "./instance.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const env = process.env;
 // Release installs keep mutable state outside the read-only release directory.
 const stateDir = env.AGENTOWN_STATE_DIR ?? resolve(root, ".agentown");
 
-const config = parseOrgConfig(readFileSync(env.AGENTOWN_CONFIG ?? resolve(root, "config/agentown.yaml"), "utf8"));
+const configText = readFileSync(env.AGENTOWN_CONFIG ?? resolve(root, "config/agentown.yaml"), "utf8");
 const db = createPool(env.DATABASE_URL ?? "postgres://agentown:agentown@127.0.0.1:5432/agentown");
 await migrate(db);
 
 const bus = new EventBus();
 const secrets = SecretBox.fromEnvOrFile(env.AGENTOWN_SECRET_KEY, resolve(stateDir, "secret-key"));
-const service = new Service(db, config, bus, secrets, listModels);
-const { ownerToken } = await service.bootstrap({ ownerToken: env.AGENTOWN_OWNER_TOKEN });
+const instance = new Instance(db, configText, bus, secrets, listModels);
+const { ownerToken } = await instance.bootstrap({ ownerToken: env.AGENTOWN_OWNER_TOKEN });
 if (ownerToken && !env.AGENTOWN_OWNER_TOKEN) {
   mkdirSync(stateDir, { recursive: true });
   writeFileSync(resolve(stateDir, "owner-token"), `${ownerToken}\n`, { mode: 0o600 });
@@ -39,7 +38,7 @@ else if (driverKind === "docker") driver = new DockerDriver(resolve(stateDir, "r
 else if (driverKind !== "none") throw new Error(`unknown AGENTOWN_RUNTIME_DRIVER ${driverKind}`);
 
 const controller = driver
-  ? new RuntimeController(service, driver, {
+  ? new RuntimeController(instance, driver, {
       apiUrlForRuntimes:
         env.AGENTOWN_RUNTIME_API_URL ?? (driverKind === "docker" ? "http://host.docker.internal:8080" : "http://172.17.0.1:8080"),
       log: (msg, extra) => console.log(`[controller] ${msg}`, extra ?? ""),
@@ -47,7 +46,7 @@ const controller = driver
   : null;
 
 const { app, recheckTerminals } = await buildApp({
-  service,
+  instance,
   driver,
   webDist: env.AGENTOWN_WEB_DIST ?? resolve(root, "apps/web/dist"),
   logger: env.AGENTOWN_LOG === "1",
@@ -62,7 +61,7 @@ bus.subscribe((e) => {
 setInterval(() => void recheckTerminals().catch(() => {}), 5000);
 
 if (controller) controller.start();
-else setInterval(() => void service.sweepLeases().catch(() => {}), 5000);
+else setInterval(() => void instance.sweepLeases().catch(() => {}), 5000);
 
 const port = Number(env.PORT ?? 8080);
 await app.listen({ port, host: env.HOST ?? "0.0.0.0" });

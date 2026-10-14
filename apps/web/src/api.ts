@@ -13,8 +13,23 @@ export class HttpError extends Error {
   }
 }
 
+/** Install-level routes; everything else under /api/ runs in the chosen organization. */
+const INSTANCE = /^\/api\/(me|session|admin|templates|orgs)(\/|$|\?)/;
+let orgBase: string | null = null;
+
+/** Point org routes at this organization (`/api/x` → `/api/orgs/<id>/x`). */
+export function setOrg(id: string | null) {
+  orgBase = id ? `/api/orgs/${encodeURIComponent(id)}` : null;
+}
+
+/** Plain /api/me is the account; the org-level one is written out as /api/orgs/<id>/me. */
+export function orgPath(path: string): string {
+  if (!orgBase || !path.startsWith("/api/") || INSTANCE.test(path)) return path;
+  return orgBase + path.slice(4);
+}
+
 export async function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(orgPath(path), {
     method,
     headers: body !== undefined ? { "content-type": "application/json" } : {},
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -33,14 +48,14 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
 }
 
 export async function fetchBlob(path: string): Promise<Blob> {
-  const res = await fetch(path);
+  const res = await fetch(orgPath(path));
   if (!res.ok) throw new HttpError(res.status, `HTTP ${res.status}`);
   return res.blob();
 }
 
 /** SSE over fetch. Resolves when the stream ends; the caller reconnects from a fresh snapshot. */
 export async function streamEvents(after: number, onEvent: (e: any) => void, signal: AbortSignal): Promise<void> {
-  const res = await fetch(`/api/events?after=${after}`, {
+  const res = await fetch(orgPath(`/api/events?after=${after}`), {
     headers: { accept: "text/event-stream" },
     signal,
   });

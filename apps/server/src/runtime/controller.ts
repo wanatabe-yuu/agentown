@@ -1,4 +1,5 @@
-import type { Service, AgentRow, RuntimeRow } from "../service.ts";
+import type { Instance } from "../instance.ts";
+import type { AgentRow, RuntimeRow, Service } from "../service.ts";
 import type { PodInfo, RuntimeDriver, RuntimeLlm, RuntimeSpec } from "./driver.ts";
 
 const FATAL_WAITING = new Set([
@@ -27,7 +28,7 @@ export class RuntimeController {
   private kick = false;
 
   constructor(
-    private readonly service: Service,
+    private readonly instance: Instance,
     private readonly driver: RuntimeDriver,
     private readonly opts: ControllerOptions,
   ) {}
@@ -54,17 +55,19 @@ export class RuntimeController {
     try {
       do {
         this.kick = false;
-        const { rows: agents } = await this.service.db.query<AgentRow>("SELECT * FROM agents ORDER BY created_at");
-        const { rows: runtimes } = await this.service.db.query<RuntimeRow>("SELECT * FROM agent_runtimes");
+        const { rows: agents } = await this.instance.db.query<AgentRow>("SELECT * FROM agents ORDER BY created_at");
+        const { rows: runtimes } = await this.instance.db.query<RuntimeRow>("SELECT * FROM agent_runtimes");
         const byId = new Map(runtimes.map((r) => [r.agent_id, r]));
         for (const a of agents) {
           const rt = byId.get(a.id);
           if (!rt) continue;
+          // Archived organizations still get reconciled: that is what stops their runtimes.
+          const service = await this.instance.org(a.org_id, { includeArchived: true });
           try {
-            await this.reconcile(a, rt);
+            await this.reconcile(service, a, rt);
           } catch (err) {
             this.opts.log?.("reconcile failed", { agentId: a.id, err: String(err) });
-            await this.service.recordObservation(a.id, {
+            await service.recordObservation(a.id, {
               state: "unknown",
               detail: `controller error: ${String((err as Error).message ?? err).slice(0, 200)}`,
               workloadRef: rt.workload_ref,
@@ -73,7 +76,7 @@ export class RuntimeController {
             });
           }
         }
-        await this.service.sweepLeases();
+        await this.instance.sweepLeases();
       } while (this.kick);
     } finally {
       this.running = false;
@@ -81,7 +84,7 @@ export class RuntimeController {
   }
 
   private spec(a: AgentRow, rt: RuntimeRow, generation: number, llm: RuntimeLlm | null): RuntimeSpec {
-    const preset = this.service.config.runtimeCatalog.find((p) => p.id === rt.preset_id);
+    const preset = this.instance.runtimeCatalog.find((p) => p.id === rt.preset_id);
     if (!preset) throw new Error(`preset ${rt.preset_id} no longer in catalog`);
     return {
       agentId: a.id,
@@ -96,14 +99,16 @@ export class RuntimeController {
     };
   }
 
-  async reconcile(a: AgentRow, rt: RuntimeRow): Promise<void> {
+  async reconcile(service: Service, a: AgentRow, rt: RuntimeRow): Promise<void> {
+    const observe = (generation: number, state: string, detail: string | null, workloadRef: string | null, ready: boolean) =>
+      service.recordObservation(a.id, { state, detail, workloadRef, generation, ready });
     const pods = await this.driver.listPods(rt.namespace, a.id);
     const wantRunning = a.desired_runtime === "running" && a.lifecycle_state !== "retired";
 
     if (!wantRunning) {
       for (const p of pods) if (!p.terminating) await this.driver.deletePod(rt.namespace, p.name);
       if (a.lifecycle_state === "retired") await this.driver.teardown(rt.namespace, a.id, rt.storage_ref === null);
-      await this.observe(a.id, rt.generation, pods.length ? "pending" : "stopped", pods.length ? "stopping" : null, null, false);
+      await observe(rt.generation, pods.length ? "pending" : "stopped", pods.length ? "stopping" : null, null, false);
       return;
     }
 
@@ -118,29 +123,29 @@ export class RuntimeController {
     const vanished = !current && rt.ready_generation === generation; // was ready, now gone (deleted, node lost...)
     if (deadPod || vanished) {
       if (current) await this.driver.deletePod(rt.namespace, current.name);
-      generation = await this.service.controllerBumpGeneration(a.id, deadPod ? `pod ${current!.phase.toLowerCase()}` : "pod disappeared");
+      generation = await service.controllerBumpGeneration(a.id, deadPod ? `pod ${current!.phase.toLowerCase()}` : "pod disappeared");
       current = undefined;
     }
 
     if (!current) {
       if (rt.observed_state === "failed" && rt.generation === generation) return; // wait for an explicit retry
-      const cred = await this.service.runtimeCredential(a.id);
+      const cred = await service.runtimeCredential(a.id);
       const spec = this.spec(a, rt, generation, cred.llm);
-      await this.driver.ensureIdentity(spec, () => this.service.issueAgentToken(a.id));
+      await this.driver.ensureIdentity(spec, () => service.issueAgentToken(a.id));
       const name = await this.driver.createPod(spec);
-      await this.service.markSecretApplied(a.id, generation, cred.rev);
+      await service.markSecretApplied(a.id, generation, cred.rev);
       this.opts.log?.("created runtime", { agentId: a.id, pod: name, generation });
-      await this.observe(a.id, generation, "pending", "creating", name, false);
+      await observe(generation, "pending", "creating", name, false);
       return;
     }
 
     // The agent's key changed (new key, rotation, revocation): give it a fresh
     // runtime holding the right secret — but never pull the rug mid-run.
-    const preset = this.service.config.runtimeCatalog.find((p) => p.id === rt.preset_id);
+    const preset = this.instance.runtimeCatalog.find((p) => p.id === rt.preset_id);
     if (preset?.harness !== "script") {
-      const want = await this.service.desiredSecretRev(a);
-      if (want !== (rt.applied_secret_rev ?? "none") && !(await this.service.hasRunningRun(a.id))) {
-        await this.service.controllerBumpGeneration(a.id, "API credential changed");
+      const want = await service.desiredSecretRev(a);
+      if (want !== (rt.applied_secret_rev ?? "none") && !(await service.hasRunningRun(a.id))) {
+        await service.controllerBumpGeneration(a.id, "API credential changed");
         this.kick = true;
         return;
       }
@@ -151,12 +156,9 @@ export class RuntimeController {
       // Provisioning failure: report it and stop retrying until someone asks (POST runtime/start).
       await this.driver.deletePod(rt.namespace, current.name);
     }
-    await this.observe(a.id, generation, state, detail, current.name, state === "running");
+    await observe(generation, state, detail, current.name, state === "running");
   }
 
-  private async observe(agentId: string, generation: number, state: string, detail: string | null, workloadRef: string | null, ready: boolean) {
-    await this.service.recordObservation(agentId, { state, detail, workloadRef, generation, ready });
-  }
 }
 
 export function classify(p: PodInfo): { state: string; detail: string | null } {
