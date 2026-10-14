@@ -13,7 +13,7 @@ import type { Flight } from "./office3d/scene.ts";
 const Office3D = lazy(() => import("./office3d/Office3D.tsx"));
 import { STRUCTURAL, useOffice } from "./store.ts";
 import type { Account, AgentEvent, Catalog, Me } from "./types.ts";
-import { Modal, StatusPill, ago } from "./ui.tsx";
+import { Menu, type MenuItem, Modal, StatusPill, ago } from "./ui.tsx";
 
 const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null) => string) => string> = {
   "agent.spawned": (e, n) => `${n(e.agentId)} joined as ${e.payload.jobRole}${e.payload.reportsTo ? ` under ${n(e.payload.reportsTo)}` : ""}`,
@@ -192,6 +192,15 @@ function OrgApp({
   if (!me) return <div className="center muted">Loading…</div>;
   if (!snapshot) return <div className="center muted">Connecting to the office…</div>;
 
+  // Everything an owner or admin manages lives in one menu, so the bar stays calm.
+  const manageItems: MenuItem[] = [
+    ...(me.actor.owner ? [{ label: "Organization", hint: "departments, jobs, permissions, templates", onSelect: () => setShowOrg(true) }] : []),
+    ...(me.can["user.manage"] ? [{ label: "People", hint: "invite, roles, permissions", onSelect: () => setShowUsers(true) }] : []),
+    ...(me.can["credential.manage"] ? [{ label: "API keys", hint: "LLM providers for agents", onSelect: () => setShowKeys(true) }] : []),
+    ...(me.can["org.design"] ? [{ label: "Art", hint: "3D models and textures", onSelect: () => setShowAssets(true) }] : []),
+    ...(me.can["audit.view"] ? [{ label: "Audit log", hint: "who did what, allowed or denied", onSelect: () => setShowAudit(true) }] : []),
+    ...(account.user?.admin ? [{ label: "All organizations", hint: "instance admin", onSelect: () => setShowAdmin(true) }] : []),
+  ];
   const name = (id: string | null) => snapshot.agents.find((a) => a.id === id)?.displayName ?? id ?? "—";
   const active = snapshot.agents.filter((a) => a.lifecycleState !== "retired");
   const working = active.filter((a) => ["thinking", "executing", "waiting"].includes(effectiveWork(a))).length;
@@ -202,7 +211,7 @@ function OrgApp({
         <div className="brand">
           <span className="logo" aria-hidden>
             ▦
-          </span>{" "}
+          </span>
           {account.orgs.length > 1 ? (
             <select className="org-switch" value={orgId} onChange={(e) => onSwitch(e.target.value)} aria-label="Organization">
               {account.orgs.map((o) => (
@@ -212,14 +221,15 @@ function OrgApp({
               ))}
             </select>
           ) : (
-            snapshot.organization.name
+            <span className="org-name">{snapshot.organization.name}</span>
           )}
         </div>
         <div className={`conn conn-${status}`} title={`event cursor ${snapshot.cursor}`}>
-          {status === "live" ? "● live" : status === "reconnecting" ? "◌ reconnecting…" : "◌ connecting…"}
+          <span className="dot" aria-hidden />
+          {status === "live" ? "Live" : status === "reconnecting" ? "Reconnecting…" : "Connecting…"}
         </div>
-        <div className="stats muted">
-          {active.length} agents · {working} working
+        <div className="stats">
+          <b>{active.length}</b> agents · <b>{working}</b> working
         </div>
         <div className="spacer" />
         <div className="seg-toggle" role="group" aria-label="View">
@@ -232,45 +242,30 @@ function OrgApp({
         </div>
         {me.taskTargets.length > 0 && (
           <button type="button" className="primary" onClick={() => setNewTaskFor(null)}>
-            New task
+            + New task
           </button>
         )}
-        {me.can["credential.manage"] && (
-          <button type="button" onClick={() => setShowKeys(true)}>
-            API keys
-          </button>
-        )}
-        {me.can["user.manage"] && (
-          <button type="button" onClick={() => setShowUsers(true)}>
-            Users
-          </button>
-        )}
-        {me.actor.owner && (
-          <button type="button" onClick={() => setShowOrg(true)}>
-            Organization
-          </button>
-        )}
-        {me.can["org.design"] && (
-          <button type="button" onClick={() => setShowAssets(true)}>
-            Art
-          </button>
-        )}
-        {account.user?.admin && (
-          <button type="button" onClick={() => setShowAdmin(true)}>
-            Organizations
-          </button>
-        )}
-        {me.can["audit.view"] && (
-          <button type="button" onClick={() => setShowAudit(true)}>
-            Audit
-          </button>
-        )}
-        <span className="muted small" title={me.actor.id}>
-          {me.user?.displayName ?? me.actor.id}
-        </span>
-        <button type="button" className="ghost" onClick={onSignOut}>
-          Sign out
-        </button>
+        {manageItems.length > 0 && <Menu label="Manage" trigger={<>Manage ▾</>} items={manageItems} />}
+        <Menu
+          label="Account"
+          trigger={
+            <span className="who">
+              <span className="avatar-sm" aria-hidden>
+                {(me.user?.displayName ?? me.actor.id).slice(0, 1).toUpperCase()}
+              </span>
+              <span className="who-name">{me.user?.displayName ?? me.actor.id}</span>
+            </span>
+          }
+          header={
+            <>
+              <b>{me.user?.displayName ?? me.actor.id}</b>
+              <small>
+                {[me.actor.owner ? "Owner" : "Member", account.user?.admin ? "Instance admin" : null].filter(Boolean).join(" · ")} of {snapshot.organization.name}
+              </small>
+            </>
+          }
+          items={[{ label: "Sign out", onSelect: onSignOut, danger: true }]}
+        />
       </header>
 
       <main className="main">

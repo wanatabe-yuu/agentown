@@ -114,6 +114,7 @@ export default function Office3D(props: Props) {
     const el = wrap.current!;
     let renderer: THREE.WebGLRenderer;
     try {
+      if (!document.createElement("canvas").getContext("webgl2")) throw new Error("no WebGL 2");
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     } catch {
       setFailed(true);
@@ -513,30 +514,46 @@ export default function Office3D(props: Props) {
   );
 }
 
-/** Without WebGL: the same people, as a list by department. */
+/** Without WebGL: the same people, by department, and how to turn the 3D office on. */
 function NoWebGL({ snapshot, workOf, onSelect }: Props) {
   return (
     <div className="office-canvas no-webgl">
-      <p className="muted">The 3D office needs WebGL, which this browser has turned off. Here is everyone by department:</p>
-      {snapshot.departments.map((d) => (
-        <section key={d.id}>
-          <h3 style={{ color: d.color }}>{d.name}</h3>
-          <ul className="task-list">
-            {snapshot.agents
-              .filter((a) => a.departmentId === d.id && a.lifecycleState !== "retired")
-              .map((a) => (
-                <li key={a.id}>
-                  <button type="button" className="task-row" onClick={() => onSelect(a.id)}>
-                    <span className="task-title">{a.displayName}</span>
-                    <span className="muted small">
+      <div className="notice">
+        <div>
+          <b>The 3D office cannot start in this browser.</b>
+          <p className="muted small">
+            It needs WebGL 2. Turn on hardware acceleration (Chrome/Edge: Settings → System → “Use graphics acceleration when available”), then reload. Everyone is listed
+            below meanwhile.
+          </p>
+        </div>
+        <button type="button" onClick={() => location.reload()}>
+          Try again
+        </button>
+      </div>
+      <div className="dept-cards">
+        {snapshot.departments.map((d) => {
+          const people = snapshot.agents.filter((a) => a.departmentId === d.id && a.lifecycleState !== "retired");
+          if (!people.length) return null;
+          return (
+            <section key={d.id} className="dept-card" style={{ "--dept": d.color } as React.CSSProperties}>
+              <h3>{d.name}</h3>
+              {people.map((a) => (
+                <button key={a.id} type="button" className="person" onClick={() => onSelect(a.id)}>
+                  <span className="avatar-sm" aria-hidden>
+                    {a.displayName.slice(0, 1)}
+                  </span>
+                  <span>
+                    <b>{a.displayName}</b>
+                    <small className="muted">
                       {a.jobRole} · {workOf(a)}
-                    </span>
-                  </button>
-                </li>
+                    </small>
+                  </span>
+                </button>
               ))}
-          </ul>
-        </section>
-      ))}
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }
