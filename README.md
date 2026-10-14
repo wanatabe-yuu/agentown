@@ -25,7 +25,7 @@ See [`cli/README.md`](cli/README.md).
 curl -fsSL https://agentown.site/install.sh | sudo bash
 ```
 
-Both paths use the same installer. It needs Ubuntu 24.04 on x86_64, installs the latest release built by GitHub Actions, verifies its Sigstore signature and checksums before installing anything, and runs the `agentown` service (k3s, PostgreSQL, Node 22). Running it again upgrades. Details in [`docs/GCP.md`](docs/GCP.md).
+Both paths use the same installer. It needs Ubuntu 24.04 on x86_64, installs the latest release built by GitHub Actions, verifies its Sigstore signature and checksums before installing anything, and runs the `agentown` service (k3s, PostgreSQL, Node 24). Running it again upgrades. Details in [`docs/GCP.md`](docs/GCP.md).
 
 ## Status (v0.1)
 
@@ -70,7 +70,7 @@ scripts/           dev-k3s.sh, dev-server.sh, demo.sh, verify-k8s-guardrails.sh,
 
 ## Run from source (Linux, Docker driver)
 
-Requirements: Node 22, pnpm, Docker, PostgreSQL 16.
+Requirements: Node 24, pnpm, Docker, PostgreSQL 16.
 
 ```bash
 pnpm install

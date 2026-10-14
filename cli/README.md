@@ -78,7 +78,7 @@ To upgrade, set `version` (or keep `latest`) and run `agentownctl up`. Nodes rem
 
 ## What happens on the server
 
-`up` runs the same signed installer as the one-line install: it verifies the release's Sigstore signature and checksums, installs Node 22, PostgreSQL and k3s, and runs the `agentown` systemd service. On the server itself the host tool is also called `agentownctl` (`status`, `logs`, `token`, `upgrade`, `rollback`, `kubectl`); see the [docs](https://agentown.site/docs/).
+`up` runs the same signed installer as the one-line install: it verifies the release's Sigstore signature and checksums, installs Node 24, PostgreSQL and k3s, and runs the `agentown` systemd service. On the server itself the host tool is also called `agentownctl` (`status`, `logs`, `token`, `upgrade`, `rollback`, `kubectl`); see the [docs](https://agentown.site/docs/).
 
 ## Develop
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-time setup of a fresh Ubuntu 24.04 GCP VM as the Agentown host:
-# Docker, Node 22 + pnpm, PostgreSQL 16, k3s (server). Idempotent; run as root:
+# Docker, Node 24 + pnpm, PostgreSQL 16, k3s (server). Idempotent; run as root:
 #
 #   sudo bash deploy/gcp/setup-vm.sh
 #
@@ -22,9 +22,9 @@ if ! command -v docker >/dev/null; then
   usermod -aG docker "$USER_NAME" || true
 fi
 
-# Node 22 + pnpm
-if ! command -v node >/dev/null || ! node -v | grep -q '^v22'; then
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+# Node 24 + pnpm
+if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 24 ]; then
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
   apt-get install -y -q nodejs
 fi
 corepack enable && corepack prepare pnpm@10 --activate

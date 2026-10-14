@@ -40,10 +40,10 @@ const runtimePresetSchema = z.object({
    * nodes labelled agentown.io/pool=dedicated (tainted so nothing else lands there).
    */
   placement: z.enum(["shared", "dedicated-node"]).default("shared"),
-  workspace: z.object({ size: z.string().default("1Gi") }).default({}),
+  workspace: z.object({ size: z.string().default("1Gi") }).prefault({}),
   resources: z
     .object({ cpu: z.string().default("500m"), memory: z.string().default("512Mi") })
-    .default({}),
+    .prefault({}),
 });
 export type RuntimePreset = z.infer<typeof runtimePresetSchema>;
 

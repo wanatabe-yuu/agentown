@@ -7,18 +7,18 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
-    "build": "esbuild src/main.ts src/tools/render-manifests.ts --bundle --platform=node --target=node22 --format=esm --outdir=dist --out-extension:.js=.mjs --external:pg-native --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build": "esbuild src/main.ts src/tools/render-manifests.ts --bundle --platform=node --target=node24 --format=esm --outdir=dist --out-extension:.js=.mjs --external:pg-native --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "render-manifests": "tsx src/tools/render-manifests.ts"
   },
   "dependencies": {
     "@agentown/core": "workspace:*",
     "@fastify/websocket": "11.3.4",
-    "@kubernetes/client-node": "1.1.3",
+    "@kubernetes/client-node": "2.0.0",
     "fastify": "5.12.7",
     "pg": "8.23.1",
     "ws": "8.22.0",
-    "zod": "3.25.76",
-    "@fastify/static": "8.3.0",
+    "zod": "4.6.5",
+    "@fastify/static": "10.1.5",
     "yaml": "2.9.1",
     "@anthropic-ai/sdk": "0.133.0"
   },

@@ -11,7 +11,7 @@
 #   AGENTOWN_DRIVER=kubernetes    runtime driver: kubernetes (k3s on this host, default) or docker
 #   AGENTOWN_REPO=owner/name      GitHub repository to install from (default wanatabe-yuu/Agentown)
 #
-# What it does: installs Node 22, PostgreSQL, k3s (or Docker), verifies the
+# What it does: installs Node 24, PostgreSQL, k3s (or Docker), verifies the
 # release's Sigstore signature and checksums, unpacks it to /opt/agentown,
 # loads the agent runtime image, applies the cluster guard rails, and runs the
 # server as the `agentown` systemd service on port 8080. Port 8080 must stay
@@ -48,11 +48,11 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q ca-certificates curl gnupg git jq openssl postgresql iproute2 >/dev/null
 
-if ! command -v node >/dev/null || ! node -v | grep -q '^v22\.'; then
-  say "Installing Node.js 22 (NodeSource apt repository)"
+if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 24 ]; then
+  say "Installing Node.js 24 (NodeSource apt repository)"
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
   apt-get update -q && apt-get install -y -q nodejs >/dev/null
 fi
 
