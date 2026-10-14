@@ -41,7 +41,7 @@ done
 
 if command -v cosign >/dev/null 2>&1; then
   cosign verify-blob --bundle "$tmp/SHA256SUMS.sigstore.json" \
-    --certificate-identity-regexp "^https://github\.com/$REPO/\.github/workflows/release\.yml@refs/(tags/v|heads/main\$)" \
+    --certificate-identity-regexp "^https://github\.com/(?i:$REPO)/\.github/workflows/release\.yml@refs/(tags/v|heads/main\$)" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     "$tmp/SHA256SUMS" >/dev/null 2>&1 || die "SHA256SUMS is not signed by $REPO's release workflow"
   signed="signature and checksum verified"

@@ -26,7 +26,7 @@ COSIGN_VERSION="v3.0.6"
 COSIGN_SHA256="c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74" # cosign-linux-amd64
 # Only releases built by this repository's release workflow, from a v* tag or
 # from main (manual "Run workflow"), are accepted.
-SIGNER_IDENTITY="(?i)^https://github\\.com/${REPO//./\\.}/\\.github/workflows/release\\.yml@refs/(tags/v|heads/main$)"
+SIGNER_IDENTITY="^https://github\\.com/(?i:${REPO//./\\.})/\\.github/workflows/release\\.yml@refs/(tags/v|heads/main$)"
 SIGNER_ISSUER="https://token.actions.githubusercontent.com"
 
 PREFIX=/opt/agentown

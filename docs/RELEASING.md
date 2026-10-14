@@ -57,7 +57,7 @@ gh attestation verify "agentown-$TAG.tar.gz" --repo wanatabe-yuu/Agentown
 
 # 2) Signature + checksums, exactly as install.sh does it
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp '^https://github\.com/wanatabe-yuu/Agentown/\.github/workflows/release\.yml@refs/(tags/v|heads/main$)' \
+  --certificate-identity-regexp '^https://github\.com/(?i:wanatabe-yuu/agentown)/\.github/workflows/release\.yml@refs/(tags/v|heads/main$)' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum -c SHA256SUMS
 ```

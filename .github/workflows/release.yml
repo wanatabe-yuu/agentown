@@ -107,7 +107,7 @@ jobs:
         working-directory: dist-release
         run: |
           cosign verify-blob --bundle SHA256SUMS.sigstore.json \
-            --certificate-identity-regexp "(?i)^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@refs/(tags/v|heads/main$)" \
+            --certificate-identity-regexp "^https://github\.com/(?i:${GITHUB_REPOSITORY})/\.github/workflows/release\.yml@refs/(tags/v|heads/main$)" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             SHA256SUMS
 
