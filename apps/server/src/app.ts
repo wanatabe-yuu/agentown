@@ -38,6 +38,7 @@ const S = {
     name: z.string().min(1).max(60),
     provider: z.enum(["anthropic"]).default("anthropic"),
     apiKey: z.string().min(8).max(500),
+    workspaceId: z.string().trim().max(120).nullable().optional(),
     departments: z.array(z.string()).nullable().default(null),
   }),
   spawn: z.object({

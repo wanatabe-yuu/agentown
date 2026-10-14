@@ -11,6 +11,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
   const [rows, setRows] = useState<Credential[] | null>(null);
   const [name, setName] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [workspaceId, setWorkspaceId] = useState("");
   const [departments, setDepartments] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => api<{ credentials: Credential[] }>("GET", "/api/credentials").then((r) => setRows(r.credentials)), []);
@@ -20,10 +21,11 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
     e.preventDefault();
     setBusy(true);
     try {
-      const c = await api<Credential>("POST", "/api/credentials", { name, apiKey, departments: departments.length ? departments : null });
+      const c = await api<Credential>("POST", "/api/credentials", { name, apiKey, workspaceId: workspaceId.trim() || null, departments: departments.length ? departments : null });
       notify(`Key "${c.name}" saved — ${c.models.length} models available`, "info");
       setName("");
       setApiKey("");
+      setWorkspaceId("");
       setDepartments([]);
       await load();
     } catch (err) {
@@ -73,6 +75,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
                 </td>
                 <td>
                   <code>{c.keyHint}</code>
+                  {c.workspaceId && <div className="muted small">{c.workspaceId}</div>}
                 </td>
                 <td className="small">{c.departments?.join(", ") ?? "all"}</td>
                 <td className="small">{c.models.join(", ")}</td>
@@ -109,6 +112,10 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
         <label>
           Anthropic API key (checked against the provider; the model list comes from the key)
           <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-ant-…" required autoComplete="off" />
+        </label>
+        <label>
+          Workspace ID (only for a key created at the organization level, not inside a workspace)
+          <input value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder="wrkspc_… (optional)" maxLength={120} autoComplete="off" />
         </label>
         <fieldset className="seg">
           <legend>Usable by departments (none = all)</legend>

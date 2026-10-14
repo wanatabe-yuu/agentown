@@ -41,6 +41,7 @@ export interface Credential {
   name: string;
   provider: string;
   keyHint: string;
+  workspaceId: string | null;
   models: string[];
   departments: string[] | null;
   revision: number;

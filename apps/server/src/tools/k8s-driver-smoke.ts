@@ -23,6 +23,7 @@ const spec = {
   displayName: "Smoke",
   jobRole: "engineer",
   providerKey: "sk-smoke-not-a-real-key",
+  providerWorkspaceId: "wrkspc_smoke",
 };
 let issued = 0;
 await driver.ensureIdentity(spec, async () => {

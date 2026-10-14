@@ -24,7 +24,9 @@ export class ClaudeAdapter implements Adapter {
     private readonly identity: { agentId: string; displayName: string; jobRole: string },
   ) {
     // Reads ANTHROPIC_API_KEY: this agent's own key, mounted from its per-agent secret.
-    this.client = new Anthropic();
+    // A key made at the organization level (not inside a workspace) must name its workspace on every request.
+    const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID;
+    this.client = new Anthropic(workspaceId ? { defaultHeaders: { "anthropic-workspace-id": workspaceId } } : {});
   }
 
   async run(ctx: RunContext): Promise<RunResult> {

@@ -27,7 +27,7 @@ import {
 import type pg from "pg";
 import type { AgentEventRow, EventBus } from "./bus.ts";
 import { type Db, type Queryable, tx } from "./db.ts";
-import { type ModelLister, PROVIDERS, type Provider } from "./providers.ts";
+import { type ModelLister, PROVIDERS, type Provider, WORKSPACE_ID_PATTERN } from "./providers.ts";
 import type { SecretBox } from "./secrets.ts";
 import {
   ApiError,
@@ -78,6 +78,7 @@ interface CredentialRow {
   provider: Provider;
   ciphertext: Buffer;
   key_hint: string;
+  workspace_id: string | null;
   models: string[];
   departments: string[] | null;
   revision: number;
@@ -742,6 +743,7 @@ export class Service {
       name: r.name,
       provider: r.provider,
       keyHint: `…${r.key_hint}`,
+      workspaceId: r.workspace_id,
       models: r.models,
       departments: r.departments,
       revision: r.revision,
@@ -767,13 +769,19 @@ export class Service {
     throw deny(`${action} denied: credentials are managed by the owner`);
   }
 
-  private async discoverModels(provider: Provider, apiKey: string): Promise<string[]> {
+  private async discoverModels(provider: Provider, apiKey: string, workspaceId: string | null): Promise<string[]> {
     try {
-      const models = await this.modelLister(provider, apiKey);
+      const models = await this.modelLister(provider, apiKey, workspaceId);
       if (!models.length) throw new Error("key works but lists no models");
       return models;
     } catch (err) {
-      throw badRequest(`provider rejected the key: ${redactLine(String((err as Error).message ?? err)).slice(0, 200)}`);
+      const message = String((err as Error).message ?? err);
+      if (!workspaceId && /not scoped to a workspace|anthropic-workspace-id/i.test(message)) {
+        throw badRequest(
+          "this API key belongs to the organization, not to a workspace: enter the ID of the workspace to use (wrkspc_…, Anthropic Console → Settings → Workspaces), or create the key inside a workspace",
+        );
+      }
+      throw badRequest(`provider rejected the key: ${redactLine(message).slice(0, 200)}`);
     }
   }
 
@@ -790,18 +798,33 @@ export class Service {
     return rows.map((r) => this.presentCredential(r));
   }
 
-  async createCredential(actor: Actor, input: { name: string; provider: Provider; apiKey: string; departments: string[] | null }) {
+  async createCredential(
+    actor: Actor,
+    input: { name: string; provider: Provider; apiKey: string; workspaceId?: string | null; departments: string[] | null },
+  ) {
     await this.requireOwner(actor, "credential.create", input.name);
     if (!PROVIDERS.includes(input.provider)) throw badRequest("unsupported provider");
     for (const d of input.departments ?? []) if (!this.config.departments.some((x) => x.id === d)) throw badRequest(`unknown department ${d}`);
     const apiKey = input.apiKey.trim();
-    const models = await this.discoverModels(input.provider, apiKey);
+    const workspaceId = input.workspaceId?.trim() || null;
+    if (workspaceId && !WORKSPACE_ID_PATTERN.test(workspaceId)) throw badRequest("workspace ID must look like wrkspc_…");
+    const models = await this.discoverModels(input.provider, apiKey, workspaceId);
     return this.withTx(async (ctx) => {
       const id = newId("k");
       await ctx.c.query(
-        `INSERT INTO credentials(id, name, provider, ciphertext, key_hint, models, departments, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [id, input.name.slice(0, 60), input.provider, this.secrets.seal(apiKey), apiKey.slice(-4), models, input.departments?.length ? input.departments : null, actorRef(actor)],
+        `INSERT INTO credentials(id, name, provider, ciphertext, key_hint, workspace_id, models, departments, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [
+          id,
+          input.name.slice(0, 60),
+          input.provider,
+          this.secrets.seal(apiKey),
+          apiKey.slice(-4),
+          workspaceId,
+          models,
+          input.departments?.length ? input.departments : null,
+          actorRef(actor),
+        ],
       );
       await this.emit(ctx, { type: "credential.created", payload: { credentialId: id, name: input.name, models: models.length } });
       return this.presentCredential(await this.getCredentialRow(id, ctx.c));
@@ -812,7 +835,7 @@ export class Service {
     await this.requireOwner(actor, "credential.refresh", id);
     const cred = await this.getCredentialRow(id);
     if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
-    const models = await this.discoverModels(cred.provider, this.secrets.open(cred.ciphertext));
+    const models = await this.discoverModels(cred.provider, this.secrets.open(cred.ciphertext), cred.workspace_id);
     await this.db.query("UPDATE credentials SET models=$2, models_refreshed_at=now() WHERE id=$1", [id, models]);
     return this.presentCredential(await this.getCredentialRow(id));
   }
@@ -874,12 +897,12 @@ export class Service {
   }
 
   /** Controller-side: the key the agent's runtime should hold now, tagged with a revision. */
-  async runtimeCredential(agentId: string): Promise<{ rev: string; apiKey: string | null }> {
+  async runtimeCredential(agentId: string): Promise<{ rev: string; apiKey: string | null; workspaceId: string | null }> {
     const a = await this.getAgentRow(agentId);
-    if (!a.credential_id) return { rev: "none", apiKey: null };
+    if (!a.credential_id) return { rev: "none", apiKey: null, workspaceId: null };
     const cred = await this.getCredentialRow(a.credential_id);
-    if (cred.revoked_at) return { rev: `${cred.id}:revoked`, apiKey: null };
-    return { rev: `${cred.id}:${cred.revision}`, apiKey: this.secrets.open(cred.ciphertext) };
+    if (cred.revoked_at) return { rev: `${cred.id}:revoked`, apiKey: null, workspaceId: null };
+    return { rev: `${cred.id}:${cred.revision}`, apiKey: this.secrets.open(cred.ciphertext), workspaceId: cred.workspace_id };
   }
 
   async desiredSecretRev(a: AgentRow): Promise<string> {

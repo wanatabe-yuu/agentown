@@ -13,6 +13,8 @@ export interface RuntimeSpec {
   jobRole: string;
   /** Plaintext provider key for this agent only (null = none). Delivered as a per-agent secret. */
   providerKey: string | null;
+  /** Sent as the anthropic-workspace-id header when the key is not scoped to a workspace. */
+  providerWorkspaceId: string | null;
 }
 
 export interface PodInfo {
