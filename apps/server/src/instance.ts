@@ -1,10 +1,20 @@
-import { type Actor, orgConfigFrom, splitInstanceConfig } from "@agentown/core";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { type Actor, orgConfigFrom, parseTemplate, splitInstanceConfig, type TemplateMeta } from "@agentown/core";
 import type { EventBus } from "./bus.ts";
 import { type Db, tx } from "./db.ts";
 import type { ModelLister } from "./providers.ts";
 import type { SecretBox } from "./secrets.ts";
 import { Service } from "./service.ts";
-import { badRequest, notFound, sha256 } from "./util.ts";
+import { badRequest, conflict, deny, newId, notFound, sha256 } from "./util.ts";
+
+const ORG_ID = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
+
+export interface OrgTemplate {
+  meta: TemplateMeta;
+  doc: Record<string, unknown>;
+  builtIn: boolean;
+}
 
 /** Who a token belongs to, before any organization is chosen. */
 export type Principal = { kind: "human"; id: string; admin: boolean } | { kind: "agent"; id: string; orgId: string };
@@ -17,6 +27,8 @@ export type Principal = { kind: "human"; id: string; admin: boolean } | { kind: 
 export class Instance {
   private readonly cache = new Map<string, { revision: number; name: string; service: Service }>();
   private readonly file: ReturnType<typeof splitInstanceConfig>;
+  /** Built-in organization templates: the config file's own org ("company") plus templatesDir/*.yaml. */
+  readonly builtInTemplates = new Map<string, OrgTemplate>();
 
   constructor(
     readonly db: Db,
@@ -24,8 +36,19 @@ export class Instance {
     readonly bus: EventBus,
     readonly secrets: SecretBox,
     private readonly modelLister: ModelLister,
+    templatesDir?: string,
   ) {
     this.file = splitInstanceConfig(configText);
+    const { organization, doc } = this.file;
+    this.builtInTemplates.set("company", {
+      meta: { id: "company", name: "Company", description: `The ${organization.name} organization this install shipped with.` },
+      doc,
+      builtIn: true,
+    });
+    for (const f of templatesDir ? readdirSync(templatesDir).filter((n) => n.endsWith(".yaml")).sort() : []) {
+      const t = parseTemplate(readFileSync(join(templatesDir!, f), "utf8"), this.file.catalog);
+      this.builtInTemplates.set(t.meta.id, { ...t, builtIn: true });
+    }
   }
 
   /** Allowed runtime presets (images): from the install file only. */
@@ -58,8 +81,8 @@ export class Instance {
 
   /** The Service of one organization, rebuilt whenever its document changes. Archived orgs are not found. */
   async org(orgId: string, opts: { includeArchived?: boolean } = {}): Promise<Service> {
-    const { rows } = await this.db.query<{ name: string; config: unknown; config_revision: number; archived_at: Date | null }>(
-      "SELECT name, config, config_revision, archived_at FROM organizations WHERE id=$1",
+    const { rows } = await this.db.query<{ name: string; config: unknown; config_revision: number; archived_at: Date | null; runtime_namespace: string | null }>(
+      "SELECT name, config, config_revision, archived_at, runtime_namespace FROM organizations WHERE id=$1",
       [orgId],
     );
     const o = rows[0];
@@ -67,7 +90,7 @@ export class Instance {
     const hit = this.cache.get(orgId);
     if (hit && hit.revision === o.config_revision && hit.name === o.name) return hit.service;
     const config = orgConfigFrom(o.config, { id: orgId, name: o.name }, this.file.catalog);
-    const service = new Service(this.db, config, this.bus, this.secrets, this.modelLister, orgId);
+    const service = new Service(this.db, config, this.bus, this.secrets, this.modelLister, orgId, o.runtime_namespace);
     this.cache.set(orgId, { revision: o.config_revision, name: o.name, service });
     return service;
   }
@@ -144,6 +167,120 @@ export class Instance {
     }
     const any = service ?? (await this.org(organization.id));
     return { ownerToken: await any.issueToken(this.db, "human", "owner", "bootstrap", false) };
+  }
+
+  // ---------------------------------------------------------------- instance admin
+
+  private requireAdmin(p: Principal): void {
+    if (p.kind !== "human" || !p.admin) throw deny("only the instance admin can manage organizations");
+  }
+
+  private async auditInstance(p: Principal, action: string, target: string, detail: Record<string, unknown>, orgId: string | null = null) {
+    await this.db.query("INSERT INTO audit_events(org_id, actor, action, target, allowed, reason, detail) VALUES ($1,$2,$3,$4,true,'instance admin',$5)", [
+      orgId,
+      `${p.kind}:${p.id}`,
+      action,
+      target,
+      JSON.stringify(detail),
+    ]);
+  }
+
+  templates(p: Principal) {
+    this.requireAdmin(p);
+    return [...this.builtInTemplates.values()].map((t) => ({ ...t.meta, builtIn: t.builtIn, departments: (t.doc.departments as Array<{ name: string }>).map((d) => d.name) }));
+  }
+
+  async listOrgs(p: Principal) {
+    this.requireAdmin(p);
+    const { rows } = await this.db.query(
+      `SELECT o.id, o.name, o.template_id, o.created_at, o.archived_at, o.runtime_namespace,
+              (SELECT json_build_object('id', u.id, 'displayName', u.display_name) FROM org_members m JOIN users u ON u.id = m.user_id
+                WHERE m.org_id = o.id AND m.is_owner) AS owner,
+              (SELECT count(*)::int FROM agents a WHERE a.org_id = o.id AND a.lifecycle_state <> 'retired') AS agents,
+              (SELECT count(*)::int FROM org_members m WHERE m.org_id = o.id) AS members
+         FROM organizations o ORDER BY o.created_at`,
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      templateId: r.template_id,
+      createdAt: r.created_at.toISOString(),
+      archivedAt: r.archived_at?.toISOString() ?? null,
+      runtimeNamespace: r.runtime_namespace,
+      owner: r.owner,
+      agents: r.agents,
+      members: r.members,
+    }));
+  }
+
+  /** Accounts on the install, so an existing person can be made an org's owner. */
+  async listAccounts(p: Principal) {
+    this.requireAdmin(p);
+    const { rows } = await this.db.query("SELECT id, display_name, is_admin, disabled_at FROM users ORDER BY is_admin DESC, display_name");
+    return rows.map((r) => ({ id: r.id, displayName: r.display_name, admin: r.is_admin, disabled: !!r.disabled_at }));
+  }
+
+  /**
+   * New organization from a template, in its own Kubernetes namespace. The owner
+   * is an existing account or a new person, whose token is returned once.
+   */
+  async createOrg(p: Principal, input: { id: string; name: string; templateId: string; owner: { userId: string } | { displayName: string } }) {
+    this.requireAdmin(p);
+    if (!ORG_ID.test(input.id)) throw badRequest("organization id: lowercase letters, digits and dashes, at most 40 characters");
+    const template = this.builtInTemplates.get(input.templateId);
+    if (!template) throw badRequest(`unknown template ${input.templateId}`);
+    const namespace = `agentown-o-${input.id}`;
+    const created = await tx(this.db, async (c) => {
+      if ((await c.query("SELECT 1 FROM organizations WHERE id=$1", [input.id])).rowCount) throw conflict("exists", "an organization with this id already exists");
+      if ((await c.query("SELECT 1 FROM agent_runtimes WHERE namespace=$1 LIMIT 1", [namespace])).rowCount) throw conflict("namespace_taken", `namespace ${namespace} is in use`);
+      await c.query(
+        "INSERT INTO organizations(id, name, config, template_id, created_by, runtime_namespace) VALUES ($1,$2,$3,$4,$5,$6)",
+        [input.id, input.name, JSON.stringify(template.doc), template.meta.id, `human:${p.id}`, namespace],
+      );
+      let ownerId: string;
+      const newPerson = !("userId" in input.owner);
+      if ("userId" in input.owner) {
+        ownerId = input.owner.userId;
+        if (!(await c.query("SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL", [ownerId])).rowCount) throw notFound("user");
+      } else {
+        ownerId = newId("u");
+        await c.query("INSERT INTO users(id, display_name, created_by) VALUES ($1,$2,$3)", [ownerId, input.owner.displayName, `human:${p.id}`]);
+      }
+      await c.query("INSERT INTO org_members(org_id, user_id, is_owner, created_by) VALUES ($1,$2,true,$3)", [input.id, ownerId, `human:${p.id}`]);
+      return { ownerId, newPerson };
+    });
+    const service = await this.org(input.id);
+    await service.seedBootstrapAgents({ freshIds: true });
+    const token = created.newPerson ? await service.issueToken(this.db, "human", created.ownerId, "invite", true) : null;
+    await this.auditInstance(p, "org.create", input.id, { templateId: input.templateId, owner: created.ownerId }, input.id);
+    return { org: (await this.listOrgs(p)).find((o) => o.id === input.id)!, ownerToken: token };
+  }
+
+  /** Rename, change the owner, archive (stops every runtime; members get "not found") or restore. */
+  async updateOrg(p: Principal, id: string, input: { name?: string; ownerUserId?: string; archived?: boolean }) {
+    this.requireAdmin(p);
+    await tx(this.db, async (c) => {
+      if (!(await c.query("SELECT 1 FROM organizations WHERE id=$1 FOR UPDATE", [id])).rowCount) throw notFound("organization");
+      if (input.name) await c.query("UPDATE organizations SET name=$2 WHERE id=$1", [id, input.name]);
+      if (input.ownerUserId) {
+        if (!(await c.query("SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL", [input.ownerUserId])).rowCount) throw notFound("user");
+        await c.query("UPDATE org_members SET is_owner=false WHERE org_id=$1 AND is_owner", [id]);
+        await c.query(
+          `INSERT INTO org_members(org_id, user_id, is_owner, created_by) VALUES ($1,$2,true,$3)
+           ON CONFLICT (org_id, user_id) DO UPDATE SET is_owner=true, disabled_at=NULL`,
+          [id, input.ownerUserId, `human:${p.id}`],
+        );
+      }
+      if (input.archived === true) {
+        await c.query("UPDATE organizations SET archived_at=COALESCE(archived_at, now()) WHERE id=$1", [id]);
+        await c.query("UPDATE agents SET desired_runtime='stopped' WHERE org_id=$1 AND lifecycle_state <> 'retired'", [id]);
+      } else if (input.archived === false) {
+        await c.query("UPDATE organizations SET archived_at=NULL WHERE id=$1", [id]);
+        await c.query("UPDATE agents SET desired_runtime='running' WHERE org_id=$1 AND lifecycle_state <> 'retired'", [id]);
+      }
+    });
+    await this.auditInstance(p, "org.update", id, input, id);
+    return (await this.listOrgs(p)).find((o) => o.id === id)!;
   }
 
   /** Open terminals that must close, across all organizations. */

@@ -1,0 +1,77 @@
+# Organization template: a manufacturing plant. Runtime presets (script-v1,
+# claude-v1) come from the install's runtime catalog.
+format: agentown.template/v1
+meta:
+  id: factory
+  name: Factory
+  description: A plant manager over production, quality, maintenance and logistics lines.
+
+departments:
+  - { id: management, name: Plant management, color: "#c9a227" }
+  - { id: production, name: Production, color: "#d9733d" }
+  - { id: quality, name: Quality, color: "#3fa37a" }
+  - { id: maintenance, name: Maintenance, color: "#6b7bbf" }
+  - { id: logistics, name: Logistics, color: "#3d8bd9" }
+
+projects:
+  - { id: line-a, name: Line A }
+  - { id: line-b, name: Line B }
+
+policyProfiles:
+  plant-manager:
+    - { action: org.view, scope: org }
+    - { action: task.view, scope: org }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: descendants }
+    - { action: runtime.control, scope: descendants }
+    - { action: runtime.logs, scope: descendants }
+    - { action: agent.configure, scope: descendants }
+    - { action: agent.spawn, scope: team, templates: [supervisor-v1, operator-v1, inspector-v1, technician-v1, planner-claude-v1] }
+  supervisor:
+    - { action: org.view, scope: team }
+    - { action: task.view, scope: team }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: direct-reports }
+    - { action: agent.spawn, scope: self, templates: [operator-v1, inspector-v1, technician-v1, planner-claude-v1] }
+    - { action: runtime.control, scope: direct-reports }
+    - { action: runtime.logs, scope: direct-reports }
+    - { action: runtime.exec, scope: direct-reports }
+    - { action: agent.configure, scope: direct-reports }
+  worker:
+    - { action: org.view, scope: self }
+    - { action: task.view, scope: self }
+    - { action: task.create, scope: self }
+    - { action: runtime.logs, scope: self }
+
+agentTemplates:
+  - { id: plant-manager-v1, jobRole: plant-manager, runtimePreset: script-v1, policyProfile: plant-manager }
+  - { id: supervisor-v1, jobRole: supervisor, runtimePreset: script-v1, policyProfile: supervisor }
+  - { id: operator-v1, jobRole: operator, runtimePreset: script-v1, policyProfile: worker }
+  - { id: inspector-v1, jobRole: inspector, runtimePreset: script-v1, policyProfile: worker }
+  - { id: technician-v1, jobRole: technician, runtimePreset: script-v1, policyProfile: worker }
+  - { id: planner-claude-v1, jobRole: planner, runtimePreset: claude-v1, policyProfile: worker }
+
+humanRoles:
+  shift-lead:
+    name: Shift lead
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: { departments: [production, quality] } }
+      - { action: task.create, scope: { departments: [production, quality] } }
+      - { action: task.review, scope: { departments: [production, quality] } }
+      - { action: runtime.control, scope: { departments: [production] } }
+  viewer:
+    name: Viewer
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: org }
+
+bootstrap:
+  agents:
+    - { key: plant-manager, displayName: Mira, template: plant-manager-v1, department: management }
+    - { key: production-lead, displayName: Tuan, template: supervisor-v1, department: production, reportsTo: plant-manager }
+    - { key: quality-lead, displayName: Hana, template: supervisor-v1, department: quality, reportsTo: plant-manager }
+    - { key: maintenance-lead, displayName: Diego, template: supervisor-v1, department: maintenance, reportsTo: plant-manager }
+    - { key: logistics-lead, displayName: Lan, template: supervisor-v1, department: logistics, reportsTo: plant-manager }

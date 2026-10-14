@@ -217,6 +217,8 @@ export class Service {
     private readonly modelLister: ModelLister,
     /** Every query this instance makes is confined to this organization. */
     readonly orgId: string,
+    /** Kubernetes namespace for this org's new runtimes; null = one per department (orgs from before multi-org). */
+    readonly runtimeNamespace: string | null = null,
   ) {}
 
   // ---------------------------------------------------------------- plumbing
@@ -353,18 +355,24 @@ export class Service {
 
   // ---------------------------------------------------------------- bootstrap
 
-  /** Create the config's bootstrap agents that do not exist yet (ids are the config keys). */
-  async seedBootstrapAgents(): Promise<void> {
+  /**
+   * Create the config's bootstrap agents that do not exist yet. The first org
+   * keeps the config keys as ids (as before multi-org); orgs made from a template
+   * get fresh ids, since every org's template would otherwise say "ceo".
+   */
+  async seedBootstrapAgents(opts: { freshIds?: boolean } = {}): Promise<void> {
     await this.withTx(async (ctx) => {
+      const ids = new Map(this.config.bootstrap.agents.map((a) => [a.key, opts.freshIds ? newId("a", 4) : a.key]));
       for (const a of this.config.bootstrap.agents) {
-        const exists = await ctx.c.query("SELECT 1 FROM agents WHERE id = $1", [a.key]);
+        const id = ids.get(a.key)!;
+        const exists = await ctx.c.query("SELECT 1 FROM agents WHERE id = $1", [id]);
         if (exists.rowCount) continue;
         await this.insertAgent(ctx, {
-          id: a.key,
+          id,
           templateId: a.template,
           displayName: a.displayName,
           departmentId: a.department,
-          reportsTo: a.reportsTo,
+          reportsTo: a.reportsTo ? ids.get(a.reportsTo)! : null,
           createdBy: "owner:config",
           spawnKey: null,
         });
@@ -419,7 +427,7 @@ export class Service {
     );
     await ctx.c.query(
       `INSERT INTO agent_runtimes(agent_id, preset_id, namespace, storage_ref) VALUES ($1,$2,$3,$4)`,
-      [a.id, preset.id, namespaceFor(a.departmentId), `agent-${a.id}-workspace`],
+      [a.id, preset.id, this.runtimeNamespace ?? namespaceFor(a.departmentId), `agent-${a.id}-workspace`],
     );
     // Template grants were approved by the owner when they authored the config;
     // the spawner can only pick templates its own agent.spawn grant lists.

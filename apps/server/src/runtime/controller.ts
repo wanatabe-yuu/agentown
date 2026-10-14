@@ -1,6 +1,6 @@
 import type { Instance } from "../instance.ts";
 import type { AgentRow, RuntimeRow, Service } from "../service.ts";
-import type { PodInfo, RuntimeDriver, RuntimeLlm, RuntimeSpec } from "./driver.ts";
+import { NamespaceNotReady, type PodInfo, type RuntimeDriver, type RuntimeLlm, type RuntimeSpec } from "./driver.ts";
 
 const FATAL_WAITING = new Set([
   "ErrImagePull",
@@ -66,10 +66,11 @@ export class RuntimeController {
           try {
             await this.reconcile(service, a, rt);
           } catch (err) {
-            this.opts.log?.("reconcile failed", { agentId: a.id, err: String(err) });
+            const waiting = err instanceof NamespaceNotReady;
+            if (!waiting) this.opts.log?.("reconcile failed", { agentId: a.id, err: String(err) });
             await service.recordObservation(a.id, {
-              state: "unknown",
-              detail: `controller error: ${String((err as Error).message ?? err).slice(0, 200)}`,
+              state: waiting ? "pending" : "unknown",
+              detail: waiting ? "waiting for cluster provisioning" : `controller error: ${String((err as Error).message ?? err).slice(0, 200)}`,
               workloadRef: rt.workload_ref,
               generation: rt.generation,
               ready: false,

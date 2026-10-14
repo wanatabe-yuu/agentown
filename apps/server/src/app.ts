@@ -104,6 +104,14 @@ const S = {
   cancel: z.object({ reason: z.string().max(500).default("") }).prefault({}),
   review: z.object({ decision: z.enum(["approve", "reject"]), note: z.string().max(2000).default("") }),
   session: z.object({ token: z.string().min(1).max(200) }),
+  createOrg: z.object({
+    id: z.string(),
+    name: z.string().trim().min(1).max(80),
+    templateId: z.string(),
+    owner: z.union([z.object({ userId: z.string() }), z.object({ displayName: z.string().trim().min(1).max(60) })]),
+  }),
+  updateOrg: z.object({ name: z.string().trim().min(1).max(80).optional(), ownerUserId: z.string().optional(), archived: z.boolean().optional() }),
+  addMember: z.object({ userId: z.string() }),
   createUser: z.object({ displayName: z.string().trim().min(1).max(60), roleId: z.string().nullable().optional() }),
   updateUser: z.object({ displayName: z.string().trim().min(1).max(60).optional(), disabled: z.boolean().optional(), roleId: z.string().optional() }),
   grantUser: z.object({
@@ -209,6 +217,18 @@ export async function buildApp(opts: AppOptions) {
     return reply.status(204).send();
   });
 
+  // ---- instance admin: organizations and their templates
+  app.get("/api/templates", async (req) => ({ templates: instance.templates(principalOf(req)) }));
+  app.get("/api/admin/orgs", async (req) => ({ orgs: await instance.listOrgs(principalOf(req)) }));
+  app.get("/api/admin/users", async (req) => ({ users: await instance.listAccounts(principalOf(req)) }));
+  app.post("/api/admin/orgs", async (req, reply) => {
+    reply.status(201);
+    return changed(await instance.createOrg(principalOf(req), parse(S.createOrg, req.body)));
+  });
+  app.patch<{ Params: { id: string } }>("/api/admin/orgs/:id", async (req) =>
+    changed(await instance.updateOrg(principalOf(req), req.params.id, parse(S.updateOrg, req.body))),
+  );
+
   // ---- organization level. People use /api/orgs/<id>/…; agent runtimes keep
   // using /api/… and are confined to their own organization by their token.
   const orgRoutes = async (r: FastifyInstance, o: { people: boolean }) => {
@@ -226,6 +246,7 @@ export async function buildApp(opts: AppOptions) {
     return { roles: svcOf(req).roles() };
   });
   r.get("/users", async (req) => ({ users: await svcOf(req).listUsers(actorOf(req)) }));
+  r.post("/users/members", async (req) => changed(await svcOf(req).addMember(actorOf(req), parse(S.addMember, req.body).userId)));
   r.post("/users", async (req, reply) => {
     reply.status(201);
     return changed(await svcOf(req).createUser(actorOf(req), parse(S.createUser, req.body)));

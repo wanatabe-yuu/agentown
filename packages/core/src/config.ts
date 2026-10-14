@@ -138,3 +138,25 @@ export function splitInstanceConfig(text: string) {
 export function orgConfigFrom(doc: unknown, organization: { id: string; name: string }, catalog: unknown): OrgConfig {
   return orgConfigSchema.parse({ ...(doc as Record<string, unknown>), organization, runtimeCatalog: catalog });
 }
+
+const templateMetaSchema = z.object({
+  format: z.literal("agentown.template/v1"),
+  meta: z.object({ id: idSchema, name: z.string().min(1).max(80), description: z.string().max(500).default("") }),
+});
+export type TemplateMeta = z.infer<typeof templateMetaSchema>["meta"];
+
+/**
+ * An organization template: the same structure document an organization keeps
+ * (departments, projects, agent templates, policy profiles, role presets,
+ * bootstrap agents) plus a format tag and meta. Templates are untrusted input
+ * (imported files, a future marketplace), so parsing is bounded.
+ */
+export function parseTemplate(text: string, catalog: unknown): { meta: TemplateMeta; doc: Record<string, unknown> } {
+  if (text.length > 256 * 1024) throw new Error("template too large (256 KB max)");
+  const raw = parseYaml(text, { maxAliasCount: 50 }) as Record<string, unknown>;
+  if (!raw || typeof raw !== "object") throw new Error("template must be a YAML mapping");
+  const { meta } = templateMetaSchema.parse(raw);
+  const { format: _f, meta: _m, organization: _o, runtimeCatalog: _r, ...doc } = raw;
+  orgConfigFrom(doc, { id: meta.id, name: meta.name }, catalog); // throws on any structural problem
+  return { meta, doc };
+}

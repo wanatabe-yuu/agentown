@@ -77,7 +77,7 @@ export async function setup() {
     }
     return apiKey.includes("small") ? ["claude-haiku-5-5"] : ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
   };
-  const instance = new Instance(db, configText, bus, SecretBox.forTests(), modelLister);
+  const instance = new Instance(db, configText, bus, SecretBox.forTests(), modelLister, new URL("../../../config/templates", import.meta.url).pathname);
   const { ownerToken } = await instance.bootstrap();
   const service = await instance.org(instance.defaultOrgId);
   const driver = new FakeDriver();

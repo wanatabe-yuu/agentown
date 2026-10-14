@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AdminDialog } from "./Admin.tsx";
 import { AgentPanel } from "./AgentPanel.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
 import { OfficeCanvas } from "./OfficeCanvas.tsx";
@@ -50,10 +51,13 @@ export function App() {
   const [orgId, setOrgId] = useState<string | null>(orgFromUrl());
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const reloadAccount = useCallback(() => {
     api<Account>("GET", "/api/me")
       .then(setAccount)
       .catch(() => setAccount(null));
+  }, []);
+  useEffect(() => {
+    reloadAccount();
     const onPop = () => setOrgId(orgFromUrl());
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -96,11 +100,36 @@ export function App() {
     setOrgId(id);
   };
   // A new key per organization: every store, stream and scene starts fresh.
-  return <OrgApp key={current.id} account={account} orgId={current.id} onSwitch={switchOrg} onSignOut={signOut} onLost={() => setAccount(null)} />;
+  return (
+    <OrgApp
+      key={current.id}
+      account={account}
+      orgId={current.id}
+      onSwitch={switchOrg}
+      onSignOut={signOut}
+      onLost={() => setAccount(null)}
+      onAccountChanged={reloadAccount}
+    />
+  );
 }
 
-function OrgApp({ account, orgId, onSwitch, onSignOut, onLost }: { account: Account; orgId: string; onSwitch: (id: string) => void; onSignOut: () => void; onLost: () => void }) {
+function OrgApp({
+  account,
+  orgId,
+  onSwitch,
+  onSignOut,
+  onLost,
+  onAccountChanged,
+}: {
+  account: Account;
+  orgId: string;
+  onSwitch: (id: string) => void;
+  onSignOut: () => void;
+  onLost: () => void;
+  onAccountChanged: () => void;
+}) {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const [showAdmin, setShowAdmin] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [openTask, setOpenTask] = useState<string | null>(null);
@@ -208,6 +237,11 @@ function OrgApp({ account, orgId, onSwitch, onSignOut, onLost }: { account: Acco
             Users
           </button>
         )}
+        {account.user?.admin && (
+          <button type="button" onClick={() => setShowAdmin(true)}>
+            Organizations
+          </button>
+        )}
         {me.can["audit.view"] && (
           <button type="button" onClick={() => setShowAudit(true)}>
             Audit
@@ -299,6 +333,18 @@ function OrgApp({ account, orgId, onSwitch, onSignOut, onLost }: { account: Acco
       )}
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
       {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
+      {showAdmin && (
+        <AdminDialog
+          account={account}
+          onClose={() => setShowAdmin(false)}
+          onChanged={onAccountChanged}
+          onOpen={(id) => {
+            setShowAdmin(false);
+            onSwitch(id);
+          }}
+          notify={notify}
+        />
+      )}
       {showUsers && <UsersDialog me={me} catalog={catalog} snapshot={snapshot} onClose={() => setShowUsers(false)} notify={notify} />}
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (

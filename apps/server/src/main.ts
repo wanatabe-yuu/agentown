@@ -23,7 +23,7 @@ await migrate(db);
 
 const bus = new EventBus();
 const secrets = SecretBox.fromEnvOrFile(env.AGENTOWN_SECRET_KEY, resolve(stateDir, "secret-key"));
-const instance = new Instance(db, configText, bus, secrets, listModels);
+const instance = new Instance(db, configText, bus, secrets, listModels, env.AGENTOWN_TEMPLATES ?? resolve(root, "config/templates"));
 const { ownerToken } = await instance.bootstrap({ ownerToken: env.AGENTOWN_OWNER_TOKEN });
 if (ownerToken && !env.AGENTOWN_OWNER_TOKEN) {
   mkdirSync(stateDir, { recursive: true });

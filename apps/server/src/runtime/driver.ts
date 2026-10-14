@@ -74,6 +74,13 @@ export interface RuntimeDriver {
   exec(namespace: string, pod: string, command: string[], streams: ExecStreams): Promise<{ close: () => void }>;
 }
 
+/** The runtime's namespace does not exist (or grants us nothing) yet: the cluster provisioner has not run. */
+export class NamespaceNotReady extends Error {
+  constructor(readonly namespace: string) {
+    super(`namespace ${namespace} is not provisioned yet`);
+  }
+}
+
 export function podName(agentId: string, generation: number): string {
   return `agent-${agentId}-g${generation}`;
 }

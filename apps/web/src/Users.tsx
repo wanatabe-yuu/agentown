@@ -35,6 +35,7 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
   const [name, setName] = useState("");
   const [roleId, setRoleId] = useState("");
   const [issued, setIssued] = useState<{ who: string; token: string } | null>(null);
+  const [existing, setExisting] = useState("");
 
   const load = useCallback(() => api<{ users: User[] }>("GET", "/api/users").then((r) => setUsers(r.users)), []);
   useEffect(() => {
@@ -139,6 +140,22 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
       {open && users?.find((u) => u.id === open) && (
         <UserPermissions user={users.find((u) => u.id === open)!} roles={roles} catalog={catalog} snapshot={snapshot} run={run} />
       )}
+
+      <form
+        className="form"
+        style={{ marginTop: 16 }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void run(() => api("POST", "/api/users/members", { userId: existing.trim() }).then(() => setExisting("")));
+        }}
+      >
+        <h3>Add someone from another organization</h3>
+        <p className="muted small">They keep their account and sign-in; here they start with no permissions. Their user id is shown under their name in the other organization.</p>
+        <div className="form-row">
+          <input value={existing} onChange={(e) => setExisting(e.target.value)} placeholder="u-…" required className="mono" aria-label="User id" />
+          <button type="submit">Add</button>
+        </div>
+      </form>
 
       <form className="form" onSubmit={invite} style={{ marginTop: 16 }}>
         <h3>Invite someone</h3>
