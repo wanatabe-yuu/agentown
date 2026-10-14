@@ -23,7 +23,7 @@
     "check": "tsc -p tsconfig.json --noEmit && vitest run"
   },
   "devDependencies": {
-    "@types/node": "24.19.0",
+    "@types/node": "26.6.5",
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
