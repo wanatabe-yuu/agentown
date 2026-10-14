@@ -2,7 +2,7 @@
 # Install or upgrade Agentown on a fresh Ubuntu 24.04 (x86_64) host, from a
 # signed GitHub release. One command, as root:
 #
-#   curl -fsSL https://agentown.site/install.sh | sudo bash
+#   curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo bash
 #
 # Re-running it upgrades to the latest release and keeps config, data and keys.
 #
@@ -36,7 +36,7 @@ LIB=/usr/local/lib/agentown
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-[ "$(id -u)" = 0 ] || die "run as root: curl -fsSL https://agentown.site/install.sh | sudo bash"
+[ "$(id -u)" = 0 ] || die "run as root: curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo bash"
 [ "$(uname -m)" = x86_64 ] || die "only x86_64 hosts are supported (the agent image is built for linux/amd64)"
 command -v apt-get >/dev/null && command -v systemctl >/dev/null || die "needs a Debian/Ubuntu host with systemd"
 case "$DRIVER" in kubernetes|docker) ;; *) die "AGENTOWN_DRIVER must be kubernetes or docker" ;; esac
@@ -258,7 +258,7 @@ Agentown $TAG is running (driver: $DRIVER).
 
   Owner token:   sudo agentownctl token
   Status / logs: agentownctl status | sudo agentownctl logs
-  Upgrade:       curl -fsSL https://agentown.site/install.sh | sudo bash
+  Upgrade:       curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo bash
 
 Open the UI from your own machine through an SSH tunnel (keep port 8080 closed):
   ssh -L 8080:localhost:8080 ${SUDO_USER:-$(logname 2>/dev/null || echo you)}@<this host>

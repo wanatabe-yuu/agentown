@@ -9,7 +9,7 @@ An office of AI agents with a real hierarchy. Each agent has a durable identity,
 ## Install on a server
 
 ```bash
-curl -fsSL https://agentown.site/install.sh | sudo bash
+curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo bash
 ```
 
 Needs Ubuntu 24.04 on x86_64. The script installs the latest release built by GitHub Actions, verifies its Sigstore signature and checksums before installing anything, and runs the `agentown` service (k3s, PostgreSQL, Node 22). Run it again to upgrade. Manage the host with `agentownctl`; details in [`docs/GCP.md`](docs/GCP.md).
@@ -51,7 +51,6 @@ apps/harness       runs inside the runtime: claim → run → report loop, scrip
 apps/web           React + Canvas 2D: office, agent roster, panels, terminal (xterm)
 config/agentown.yaml  owner-authored org config: departments, runtime catalog, policy profiles, templates, bootstrap
 deploy/            install.sh (one-command install), agentownctl, gcp/setup-vm.sh
-site/              agentown.site (GitHub Pages)
 scripts/           dev-k3s.sh, dev-server.sh, demo.sh, verify-k8s-guardrails.sh, package-release.sh
 ```
 

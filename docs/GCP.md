@@ -48,7 +48,7 @@ gcloud compute ssh agentown-1 --zone=$ZONE -- -L 8080:localhost:8080
 SSH into the VM and run a single command:
 
 ```bash
-curl -fsSL https://agentown.site/install.sh | sudo bash
+curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo bash
 ```
 
 The script downloads the latest release built by GitHub Actions, verifies the Sigstore signature and checksum (see [RELEASING.md](RELEASING.md)), installs Node 22, PostgreSQL, and k3s, loads the agent image into k3s, applies the guard rails (RBAC, Pod Security, admission policy, NetworkPolicy), and then runs the server as the `agentown` systemd service. The script can be rerun safely; rerunning it performs an upgrade.
@@ -68,7 +68,7 @@ sudo agentownctl upgrade    # latest release, or: upgrade v0.2.0
 sudo agentownctl rollback   # go back to the previous release (does not roll back the DB schema)
 ```
 
-Optional variables: `AGENTOWN_VERSION=v0.1.0` to install a pinned release, `AGENTOWN_DRIVER=docker` to use Docker instead of k3s (for example `curl -fsSL https://agentown.site/install.sh | sudo AGENTOWN_DRIVER=docker bash`).
+Optional variables: `AGENTOWN_VERSION=v0.1.0` to install a pinned release, `AGENTOWN_DRIVER=docker` to use Docker instead of k3s (for example `curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo AGENTOWN_DRIVER=docker bash`).
 
 **Back up `/var/lib/agentown/secret-key`.** The API keys stored in the DB are encrypted with this key; lose the key and you lose the API keys.
 

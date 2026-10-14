@@ -12,12 +12,13 @@
 | File | Contents |
 |---|---|
 | `agentown-<tag>.tar.gz` | bundled server (`server/main.mjs`), web UI, `config/agentown.yaml`, `install.sh`, `bin/agentownctl` |
+| `install.sh` | the installer, also published on its own so `releases/latest/download/install.sh` always points at the newest one |
 | `agentown-harness-<tag>-amd64.tar.gz` | agent runtime image (`docker save`), loaded straight into k3s' containerd or Docker |
 | `agentown-<tag>.sbom.cdx.json` | CycloneDX SBOM of the repository (from the lockfile) |
 | `SHA256SUMS` | checksums of all the files above |
 | `SHA256SUMS.sigstore.json` | keyless Sigstore signature of `SHA256SUMS` |
 
-Hosts install or upgrade with `curl -fsSL https://agentown.site/install.sh | sudo bash`, or `sudo agentownctl upgrade`. See [GCP.md](GCP.md).
+Hosts install or upgrade with `curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo bash`, or `sudo agentownctl upgrade`. See [GCP.md](GCP.md).
 
 To try a release build locally: `scripts/package-release.sh v0.1.0 out/` (needs Docker). Skip the image build with `AGENTOWN_SKIP_IMAGE=1`.
 
@@ -37,7 +38,7 @@ To try a release build locally: `scripts/package-release.sh v0.1.0 out/` (needs 
 
 Remaining gaps to be aware of:
 
-- `curl … install.sh | sudo bash` trusts TLS and the `agentown.site` page (GitHub Pages, built from `main`). If you need more, download `install.sh` from the Release page, verify it as shown below, and run it then. From the second install on, `agentownctl upgrade` uses the `install.sh` inside the already-verified release instead of fetching it from the website.
+- `curl … install.sh | sudo bash` trusts TLS and GitHub for the installer itself: the script that does the verifying is not verified before it runs. If you need more, download `install.sh` and `SHA256SUMS*` from the Release page, verify them as shown below, and run it then. `install.sh` is listed in the signed `SHA256SUMS`. From the second install on, `agentownctl upgrade` uses the `install.sh` inside the already-verified release.
 - NodeSource, Docker and k3s are installed through their official channels: apt repositories with GPG signatures, and the k3s installer checks the binary's SHA-256. Agentown does not pin these.
 - The runtime image is built for `linux/amd64` only.
 - Turn on **branch protection** for `main` and **tag protection** (a ruleset) for `v*`: anyone who can push a tag can produce a validly signed release.
@@ -57,15 +58,3 @@ cosign verify-blob --bundle SHA256SUMS.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum -c SHA256SUMS
 ```
-
-## agentown.site
-
-The `.github/workflows/site.yml` workflow publishes `site/` together with `deploy/install.sh` (as `/install.sh`) to GitHub Pages whenever they change on `main`. One-time setup:
-
-1. Repository **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-2. **Settings → Pages → Custom domain**: `agentown.site`, then enable **Enforce HTTPS** once the certificate has been issued.
-3. DNS for `agentown.site` at your domain registrar:
-   - `A @` → `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`
-   - `AAAA @` → `2606:50c0:8000::153`, `2606:50c0:8001::153`, `2606:50c0:8002::153`, `2606:50c0:8003::153`
-   - `CNAME www` → `wanatabe-yuu.github.io`
-4. **Verify the domain** in your GitHub account settings (Pages → Verified domains) so nobody else can claim `agentown.site` on Pages.
