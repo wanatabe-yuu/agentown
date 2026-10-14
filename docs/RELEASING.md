@@ -34,6 +34,7 @@ To try a release build locally: `scripts/package-release.sh v0.1.0 out/` (needs 
 | Not knowing which commit a build came from | Every file has a SLSA build-provenance attestation (`actions/attest-build-provenance`) recording the repository, commit, workflow and runner. `VERSION` inside the tarball records the commit. |
 | A third-party action compromised and its tag moved | Every GitHub Action is pinned to a commit SHA (the tag is noted in a comment). Dependabot opens PRs for new versions. |
 | The `node:24-alpine` base image changed | `apps/harness/Dockerfile` pins it by digest. Dependabot (`docker` ecosystem) bumps the digest. |
+| A freshly published dependency release that turns out malicious or broken | Dependabot only proposes releases at least 14 days old (`cooldown`). Node majors (`node` image, `@types/node`) are not proposed; they are upgraded by hand across CI, installers and the agent image. |
 | npm dependencies changing silently | `pnpm install --frozen-lockfile` in CI and release. Only `esbuild` may run install scripts (`onlyBuiltDependencies`). |
 | A poisoned CI cache reaching a signed build | The release job uses no dependency cache. |
 | The workflow token being abused | Default permissions are `contents: read`. Only the release job gets `contents: write`, `id-token: write`, `attestations: write`. `actions/checkout` runs with `persist-credentials: false`. |
