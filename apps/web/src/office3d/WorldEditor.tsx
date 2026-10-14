@@ -1,3 +1,5 @@
+import { requestId } from "../requestId.ts";
+import { chatInstructionTemplate } from "@agentown/core";
 import { BEHAVIORS, CHARACTERS, checkWorld, SHAPES, type World, worldSchema } from "@agentown/core/world";
 import { useState } from "react";
 import { type AssetRow, uploadAsset, useAssets } from "../Assets.tsx";
@@ -121,12 +123,18 @@ function ObjectsTab(p: EditorProps) {
             <span>label</span>
             <input value={obj.label ?? ""} maxLength={40} onChange={(e) => p.edit((w) => (w.objects[p.selected!].label = e.target.value || undefined))} />
           </label>
+          <label className="num">
+            <span>title</span>
+            <input value={obj.title ?? ""} maxLength={40} placeholder={p.draft.kinds?.[obj.kind]?.title || "role"} onChange={(e) => p.edit((w) => (w.objects[p.selected!].title = e.target.value || undefined))} />
+          </label>
+          <label className="object-chat-field">Chat instructions<textarea rows={3} maxLength={12000} placeholder="Optional personality or context for this object" value={obj.chat?.instructions ?? ""} onChange={e => p.edit(w => { w.objects[p.selected!].chat = { instructions: e.target.value }; })} /></label>
           <div className="btn-row">
             <button
               type="button"
               onClick={() =>
                 p.edit((w) => {
                   const o = structuredClone(w.objects[p.selected!]);
+                  o.id = `obj-${requestId().replaceAll("-", "").slice(0, 24)}`;
                   o.at = [Math.min(o.at[0] + 0.5, findRoom(w, o.room)?.area.w ?? o.at[0]), o.at[1]];
                   w.objects.push(o);
                 })
@@ -158,7 +166,7 @@ function ObjectsTab(p: EditorProps) {
             title={`${k.category}${k.behaviors?.length ? ` · ${k.behaviors.map((b: Draft) => b.type).join(", ")}` : ""}`}
             onClick={() => {
               if (!room) return;
-              p.edit((w) => (w.objects ??= []).push({ kind: id, room: room.id, at: [+(room.area.w / 2).toFixed(2), +(room.area.d / 2).toFixed(2)] }));
+              p.edit((w) => (w.objects ??= []).push({ id: `obj-${requestId().replaceAll("-", "").slice(0, 24)}`, kind: id, room: room.id, at: [+(room.area.w / 2).toFixed(2), +(room.area.d / 2).toFixed(2)] }));
               p.setSelected(p.draft.objects?.length ?? 0);
             }}
           >
@@ -174,7 +182,7 @@ function ObjectsTab(p: EditorProps) {
             {here.map(({ o, i }: { o: Draft; i: number }) => (
               <li key={i}>
                 <button type="button" className={`task-row ${p.selected === i ? "active" : ""}`} onClick={() => p.setSelected(i)}>
-                  {p.draft.kinds?.[o.kind]?.name ?? o.kind} {o.label && <span className="muted small">“{o.label}”</span>}
+                  {p.draft.kinds?.[o.kind]?.name ?? o.kind} {o.label && <span className="muted small">“{o.label}”</span>} {(o.title ?? p.draft.kinds?.[o.kind]?.title) && <span className="muted small">{o.title ?? p.draft.kinds?.[o.kind]?.title}</span>}
                 </button>
               </li>
             ))}
@@ -431,6 +439,10 @@ function KindsTab(p: EditorProps) {
               <span>name</span>
               <input value={k.name} maxLength={60} onChange={(e) => set((x) => (x.name = e.target.value))} />
             </label>
+            <label className="num wide">
+              <span>title</span>
+              <input value={k.title ?? ""} maxLength={40} placeholder="role, e.g. Shop cat" onChange={(e) => set((x) => (x.title = e.target.value || undefined))} />
+            </label>
             <label className="num">
               <span>category</span>
               <select value={k.category} onChange={(e) => set((x) => (x.category = e.target.value))}>
@@ -442,6 +454,8 @@ function KindsTab(p: EditorProps) {
           </div>
 
           <h4>Look</h4>
+          <details className="object-chat-field"><summary>Default chat persona</summary><p className="muted small">{chatInstructionTemplate(k.look.character ?? "object", k.title ?? "", k.category)}</p></details>
+          <label className="object-chat-field">Chat instructions for this kind<textarea rows={3} maxLength={12000} placeholder="Optional instructions inherited by objects of this kind" value={k.chat?.instructions ?? ""} onChange={e => set(x => { x.chat = { instructions: e.target.value }; })} /></label>
           <div className="seg-toggle" role="group" aria-label="Look">
             {(["character", "parts", "asset"] as const).map((t) => (
               <button

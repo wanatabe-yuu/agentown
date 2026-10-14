@@ -125,22 +125,11 @@ export class KubernetesDriver implements RuntimeDriver {
       { name: "HOME", value: "/workspace/home" },
     ];
     if (spec.preset.model) env.push({ name: "AGENTOWN_MODEL", value: spec.preset.model });
-    // Per-agent provider key: its own Secret, replaced for every new runtime generation.
+    // Remove legacy per-agent provider Secrets. New runtimes use the server broker.
     const providerSecret = `agent-${spec.agentId}-provider`;
     await ignore404(this.core.deleteNamespacedSecret({ name: providerSecret, namespace: spec.namespace }));
     if (spec.llm) {
-      const { secret, plain } = llmEnv(spec.llm);
-      if (Object.keys(secret).length) {
-        await this.core.createNamespacedSecret({
-          namespace: spec.namespace,
-          body: {
-            metadata: { name: providerSecret, labels: { ...MANAGED_BY, "agentown.io/agent": spec.agentId } },
-            type: "Opaque",
-            stringData: secret,
-          },
-        });
-        for (const key of Object.keys(secret)) env.push({ name: key, valueFrom: { secretKeyRef: { name: providerSecret, key } } });
-      }
+      const { plain } = llmEnv(spec.llm, spec.apiUrl);
       for (const [name, value] of Object.entries(plain)) env.push({ name, value });
     }
     const dedicated = spec.preset.placement === "dedicated-node";

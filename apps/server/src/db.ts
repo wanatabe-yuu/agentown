@@ -340,6 +340,60 @@ const MIGRATIONS: string[] = [
     UNIQUE (org_id, sha256)
   );
   `,
+  `
+  -- Queue legacy runtimes; the server applies these only with an approved
+  -- target preset and no running task. New script runtimes are not queued.
+  ALTER TABLE agent_runtimes ADD COLUMN pending_preset_id text;
+  UPDATE agent_runtimes SET pending_preset_id='claude-v1' WHERE preset_id='script-v1';
+  CREATE TABLE data_migrations (
+    name text PRIMARY KEY,
+    at timestamptz NOT NULL DEFAULT now()
+  );
+  `,
+  `
+  -- Private owner conversations. Model context is independent of the visible transcript.
+  CREATE TABLE owner_chats (
+    id text PRIMARY KEY, org_id text NOT NULL REFERENCES organizations(id),
+    user_id text NOT NULL REFERENCES users(id), title text NOT NULL DEFAULT 'New chat',
+    config jsonb NOT NULL, context jsonb NOT NULL DEFAULT '[]',
+    context_tokens int NOT NULL DEFAULT 0, count_mode text NOT NULL DEFAULT 'estimated',
+    model_info jsonb, usage jsonb NOT NULL DEFAULT '{}',
+    created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE INDEX owner_chats_scope ON owner_chats(org_id,user_id,updated_at DESC);
+  CREATE TABLE owner_chat_runs (
+    id text PRIMARY KEY, chat_id text NOT NULL REFERENCES owner_chats(id) ON DELETE CASCADE,
+    request_id text NOT NULL, status text NOT NULL, kind text NOT NULL DEFAULT 'message',
+    rounds int NOT NULL DEFAULT 0, partial_text text NOT NULL DEFAULT '', error text,
+    created_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz,
+    UNIQUE(chat_id,request_id)
+  );
+  CREATE UNIQUE INDEX owner_chat_active ON owner_chat_runs(chat_id) WHERE status IN ('running','waiting_approval');
+  CREATE TABLE owner_chat_messages (
+    id bigserial PRIMARY KEY, chat_id text NOT NULL REFERENCES owner_chats(id) ON DELETE CASCADE,
+    run_id text REFERENCES owner_chat_runs(id), role text NOT NULL, text text NOT NULL,
+    partial boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE INDEX owner_chat_history ON owner_chat_messages(chat_id,id);
+  CREATE TABLE owner_chat_actions (
+    id text PRIMARY KEY, run_id text NOT NULL REFERENCES owner_chat_runs(id) ON DELETE CASCADE,
+    tool_id text NOT NULL, name text NOT NULL, args jsonb NOT NULL, status text NOT NULL,
+    result jsonb, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(run_id,tool_id)
+  );
+  `,
+  `ALTER TABLE owner_chats ADD COLUMN archived_at timestamptz;`,
+  `ALTER TABLE credentials ADD COLUMN api_protocol text CHECK (api_protocol IN ('anthropic','openai'));
+   ALTER TABLE credentials ADD COLUMN auth_header jsonb;`,
+  `UPDATE credentials SET key_hint=CASE WHEN key_hint<>'' THEN 'stored' ELSE '' END;`,
+  `ALTER TABLE owner_chats ADD COLUMN subject_type text NOT NULL DEFAULT 'owner' CHECK (subject_type IN ('owner','agent','object'));
+   ALTER TABLE owner_chats ADD COLUMN subject_id text NOT NULL DEFAULT '';
+   ALTER TABLE owner_chats ADD CONSTRAINT owner_chat_subject CHECK ((subject_type='owner')=(subject_id=''));
+   CREATE INDEX owner_chats_subject ON owner_chats(org_id,user_id,subject_type,subject_id,updated_at DESC);
+   UPDATE organizations o SET config=jsonb_set(config,'{world,objects}',
+     (SELECT jsonb_agg(CASE WHEN item ? 'id' THEN item ELSE item || jsonb_build_object('id','obj-' || substr(md5(o.id || ':' || n::text),1,16)) END ORDER BY n)
+      FROM jsonb_array_elements(config->'world'->'objects') WITH ORDINALITY AS a(item,n))), config_revision=config_revision+1
+   WHERE jsonb_typeof(config->'world'->'objects')='array' AND EXISTS
+     (SELECT 1 FROM jsonb_array_elements(config->'world'->'objects') AS a(item) WHERE NOT item ? 'id');`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

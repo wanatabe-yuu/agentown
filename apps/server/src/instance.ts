@@ -1,3 +1,4 @@
+import { worldIdentities } from "./world-identities.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { stringify } from "yaml";
 import { join } from "node:path";
@@ -11,6 +12,18 @@ import { Service } from "./service.ts";
 import { ApiError, badRequest, conflict, deny, newId, notFound, sha256 } from "./util.ts";
 
 const ORG_ID = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
+
+/** Preserve the author's document, changing only legacy template presets. */
+function upgradeScriptTemplates(doc: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(doc.agentTemplates)) return doc;
+  let changed = false;
+  const agentTemplates = doc.agentTemplates.map((t) => {
+    if (!t || typeof t !== "object" || t.runtimePreset !== "script-v1") return t;
+    changed = true;
+    return { ...t, runtimePreset: "claude-v1" };
+  });
+  return changed ? { ...doc, agentTemplates } : doc;
+}
 
 export interface OrgTemplate {
   meta: TemplateMeta;
@@ -41,6 +54,8 @@ export class Instance {
     templatesDir?: string,
   ) {
     this.file = splitInstanceConfig(configText);
+    const upgradeScripts = this.runtimeCatalog.some((p) => p.id === "claude-v1" && p.harness === "claude");
+    if (upgradeScripts) this.file.doc = upgradeScriptTemplates(this.file.doc);
     const { organization, doc } = this.file;
     this.builtInTemplates.set("company", {
       meta: { id: "company", name: "Company", description: `The ${organization.name} organization this install shipped with.` },
@@ -48,8 +63,16 @@ export class Instance {
       builtIn: true,
     });
     for (const f of templatesDir ? readdirSync(templatesDir).filter((n) => n.endsWith(".yaml")).sort() : []) {
-      const t = parseTemplate(readFileSync(join(templatesDir!, f), "utf8"), this.file.catalog);
-      this.builtInTemplates.set(t.meta.id, { ...t, builtIn: true });
+      let t: ReturnType<typeof parseTemplate>;
+      try {
+        t = parseTemplate(readFileSync(join(templatesDir!, f), "utf8"), this.file.catalog);
+      } catch (err) {
+        // A customized install may not approve the runtimes needed by a shipped
+        // template. Omit that template, while still surfacing other invalid files.
+        if (err instanceof z.ZodError && err.issues.every((i) => i.code === "custom" && /^template .+: unknown runtimePreset /.test(i.message))) continue;
+        throw err;
+      }
+      this.builtInTemplates.set(t.meta.id, { ...t, doc: upgradeScripts ? upgradeScriptTemplates(t.doc) : t.doc, builtIn: true });
     }
   }
 
@@ -149,23 +172,41 @@ export class Instance {
    * Returns a fresh admin token only when none exists yet.
    */
   async bootstrap(opts: { ownerToken?: string } = {}): Promise<{ ownerToken: string | null }> {
+    await this.upgradeScriptTemplates();
     const { organization, doc } = this.file;
     const seed = await tx(this.db, async (c) => {
       const { rows } = await c.query<{ id: string; config: unknown }>("SELECT id, config FROM organizations");
       const existing = rows.find((r) => r.id === organization.id);
       if (!rows.length) {
-        await c.query("INSERT INTO organizations(id, name, config, created_by) VALUES ($1,$2,$3,'system:config')", [organization.id, organization.name, JSON.stringify(doc)]);
+        await c.query("INSERT INTO organizations(id, name, config, created_by) VALUES ($1,$2,$3,'system:config')", [organization.id, organization.name, JSON.stringify(worldIdentities(doc))]);
         await c.query("INSERT INTO org_members(org_id, user_id, is_owner, created_by) VALUES ($1,'owner',true,'system:config')", [organization.id]);
         return true;
       }
       if (existing && !existing.config) {
-        await c.query("UPDATE organizations SET config=$2 WHERE id=$1", [organization.id, JSON.stringify(doc)]);
+        await c.query("UPDATE organizations SET config=$2 WHERE id=$1", [organization.id, JSON.stringify(worldIdentities(doc))]);
         return true;
       }
       return false;
     });
     const service = seed ? await this.org(organization.id) : null;
     if (service) await service.seedBootstrapAgents();
+
+    // Also works without a runtime driver. Busy agents are retried by the controller.
+    const pending = await this.db.query<{ agent_id: string; org_id: string }>(
+      "SELECT r.agent_id, a.org_id FROM agent_runtimes r JOIN agents a ON a.id=r.agent_id WHERE r.pending_preset_id=ANY($1::text[])",
+      [this.runtimeCatalog.filter((p) => p.harness === "claude").map((p) => p.id)],
+    );
+    for (const r of pending.rows) {
+      let org: Service;
+      try {
+        org = await this.org(r.org_id, { includeArchived: true });
+      } catch (err) {
+        // An unreadable org stays pending; the controller logs it without blocking other orgs.
+        if (err instanceof ApiError && err.code === "org_config_invalid") continue;
+        throw err;
+      }
+      await org.applyPendingRuntimeUpgrade(r.agent_id);
+    }
 
     const { rows } = await this.db.query("SELECT 1 FROM tokens WHERE principal_kind='human' AND principal_id='owner' AND revoked_at IS NULL");
     if (rows[0]) return { ownerToken: null };
@@ -175,6 +216,24 @@ export class Instance {
     }
     const any = service ?? (await this.org(organization.id));
     return { ownerToken: await any.issueToken(this.db, "human", "owner", "bootstrap", false) };
+  }
+
+  /** Config-dependent data migration: leave it pending if the install has no LLM preset. */
+  private async upgradeScriptTemplates(): Promise<void> {
+    if (!this.runtimeCatalog.some((p) => p.id === "claude-v1" && p.harness === "claude")) return;
+    await tx(this.db, async (c) => {
+      await c.query("SELECT pg_advisory_xact_lock(7340211)");
+      if ((await c.query("SELECT 1 FROM data_migrations WHERE name='script-v1-to-claude-v1'")).rowCount) return;
+      for (const [table, column] of [["organizations", "config"], ["templates", "doc"]] as const) {
+        const { rows } = await c.query<{ id: string; doc: Record<string, unknown> }>(`SELECT id, ${column} AS doc FROM ${table} WHERE ${column} IS NOT NULL FOR UPDATE`);
+        for (const r of rows) {
+          const doc = upgradeScriptTemplates(r.doc);
+          if (doc === r.doc) continue;
+          await c.query(`UPDATE ${table} SET ${column}=$2${table === "organizations" ? ", config_revision=config_revision+1" : ""} WHERE id=$1`, [r.id, JSON.stringify(worldIdentities(doc))]);
+        }
+      }
+      await c.query("INSERT INTO data_migrations(name) VALUES ('script-v1-to-claude-v1')");
+    });
   }
 
   // ---------------------------------------------------------------- instance admin
@@ -336,7 +395,7 @@ export class Instance {
       if ((await c.query("SELECT 1 FROM agent_runtimes WHERE namespace=$1 LIMIT 1", [namespace])).rowCount) throw conflict("namespace_taken", `namespace ${namespace} is in use`);
       await c.query(
         "INSERT INTO organizations(id, name, config, template_id, created_by, runtime_namespace) VALUES ($1,$2,$3,$4,$5,$6)",
-        [input.id, input.name, JSON.stringify(template.doc), template.meta.id, `human:${p.id}`, namespace],
+        [input.id, input.name, JSON.stringify(worldIdentities(template.doc)), template.meta.id, `human:${p.id}`, namespace],
       );
       let ownerId: string;
       const newPerson = !("userId" in input.owner);

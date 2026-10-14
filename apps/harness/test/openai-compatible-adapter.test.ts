@@ -145,6 +145,12 @@ describe("OpenAICompatibleAdapter", () => {
     expect(tools[1].content).toContain("not valid JSON");
   });
 
+  it("explains a custom gateway protocol mismatch without echoing the provider response", async () => {
+    replies = [{ status: 200, body: { type: "message", content: [{ type: "text", text: "sensitive provider echo" }] } }];
+    const result = await new OpenAICompatibleAdapter({ provider: "custom", baseUrl, apiKey: undefined, identity, sleep: noSleep }).run(context("claude-haiku-5-5"));
+    expect(result.outcome).toBe("failed"); expect(result.summary).toContain("Anthropic / Claude");
+    expect(result.summary).not.toContain("sensitive provider echo"); expect(requests).toHaveLength(1);
+  });
   it("fails on a non-retryable error and blocks when no model is chosen", async () => {
     replies = [{ status: 401, body: { error: { message: "bad key" } } }];
     await expect(new OpenAICompatibleAdapter({ provider: "deepseek", baseUrl, apiKey: "k", identity, sleep: noSleep }).run(context("deepseek-chat"))).rejects.toThrow(/deepseek 401/);

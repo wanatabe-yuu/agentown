@@ -1,6 +1,7 @@
 import { type AgentIdentity, NO_CREDENTIAL, runBashTool, taskPrompts } from "./common.ts";
 import { ScriptAdapter } from "./script.ts";
 import type { Adapter, RunContext, RunResult } from "./types.ts";
+import { keyHeaders, defaultAuthHeader, type AuthHeader } from "@agentown/core";
 
 /**
  * LLM adapter for every provider that speaks the OpenAI-compatible Chat
@@ -53,6 +54,8 @@ export interface OpenAICompatibleOptions {
   provider: string;
   baseUrl: string;
   apiKey: string | undefined;
+  authHeader?: AuthHeader;
+  broker?: { token: string; generation: number };
   identity: AgentIdentity;
   /** Waits between retries; tests pass a no-op. */
   sleep?: (ms: number) => Promise<void>;
@@ -88,7 +91,7 @@ export class OpenAICompatibleAdapter implements Adapter {
       usage.output_tokens += response.usage?.completion_tokens ?? 0;
 
       const choice = response.choices?.[0];
-      if (!choice?.message) return { outcome: "failed", summary: "the provider returned no message", usage };
+      if (!choice?.message) return { outcome: "failed", summary: this.opts.provider === "custom" ? "The gateway did not return an OpenAI Chat Completions message. If it uses Claude Messages, select Anthropic / Claude (/v1/messages) in API keys → Edit connection and set its required authentication header." : "The provider did not return an OpenAI Chat Completions message. Check its API protocol and endpoint.", usage };
       const msg = choice.message;
       const text = typeof msg.content === "string" ? msg.content.trim() : "";
       if (text) ctx.log("agent", text);
@@ -140,7 +143,7 @@ export class OpenAICompatibleAdapter implements Adapter {
         headers: {
           "content-type": "application/json",
           accept: "application/json",
-          ...(this.opts.apiKey ? { authorization: `Bearer ${this.opts.apiKey}` } : {}),
+          ...(this.opts.broker ? { authorization: `Bearer ${this.opts.broker.token}`, "x-agentown-generation": String(this.opts.broker.generation) } : keyHeaders(this.opts.apiKey ?? "", this.opts.authHeader ?? defaultAuthHeader("openai"))),
         },
         body: JSON.stringify(body),
         redirect: "error",

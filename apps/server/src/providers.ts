@@ -1,4 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { providerFetch, registerProviderKey } from "./key-redaction.ts";
+import { apiProtocol, defaultAuthHeader, keyHeaders, anthropicBaseUrl, anthropicKeyHeaders, type ApiProtocol, type AuthHeader } from "@agentown/core";
 
 /**
  * LLM providers an owner can add keys for. Anthropic uses its own SDK and
@@ -26,7 +28,7 @@ export const PROVIDER_INFO = [
   { id: "groq", label: "Groq", baseUrl: "https://api.groq.com/openai/v1", keyRequired: true, keyPlaceholder: "gsk_…" },
   { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", keyRequired: true, keyPlaceholder: "sk-or-…" },
   { id: "together", label: "Together AI", baseUrl: "https://api.together.xyz/v1", keyRequired: true, keyPlaceholder: "" },
-  { id: "custom", label: "Custom (OpenAI-compatible)", baseUrl: null, keyRequired: false, keyPlaceholder: "optional" },
+  { id: "custom", label: "Custom URL", baseUrl: null, keyRequired: false, keyPlaceholder: "optional" },
 ] as const satisfies readonly ProviderInfo[];
 
 export type Provider = (typeof PROVIDER_INFO)[number]["id"];
@@ -77,6 +79,8 @@ export interface ProviderTarget {
   workspaceId: string | null;
   /** OpenAI-compatible providers: the resolved endpoint. */
   baseUrl: string | null;
+  protocol?: ApiProtocol;
+  authHeader?: AuthHeader;
 }
 
 /** Returns the model ids this key can use; throws if the provider rejects it. */
@@ -85,17 +89,21 @@ export type ModelLister = (target: ProviderTarget) => Promise<string[]>;
 // Models a Chat Completions agent cannot use (embeddings, speech, images, moderation...).
 const NON_CHAT = /(embed|tts|whisper|dall-e|moderation|transcribe|audio|realtime|image|rerank|guard|search-preview)/i;
 
-export const listModels: ModelLister = async ({ provider, apiKey, workspaceId, baseUrl }) => {
-  if (provider === "anthropic") {
-    const client = new Anthropic({ apiKey, defaultHeaders: workspaceHeaders(workspaceId), maxRetries: 1, timeout: 20_000 });
+export const listModels: ModelLister = async ({ provider, apiKey, workspaceId, baseUrl, protocol, authHeader }) => {
+  registerProviderKey(apiKey);
+  const wire = apiProtocol(provider, protocol);
+  const auth = authHeader ?? defaultAuthHeader(wire);
+  if (wire === "anthropic") {
+    const client = new Anthropic({ apiKey, authToken: null, ...(baseUrl ? { baseURL: anthropicBaseUrl(baseUrl) } : {}),
+      defaultHeaders: { ...workspaceHeaders(workspaceId), ...anthropicKeyHeaders(apiKey, auth) }, fetch: providerFetch, logLevel: "off", maxRetries: 1, timeout: 20_000 });
     const ids: string[] = [];
     for await (const m of client.models.list()) ids.push(m.id);
     return ids;
   }
   if (!baseUrl) throw new Error(`no endpoint for provider ${provider}`);
   const get = async (path: string) => {
-    const res = await fetch(`${baseUrl}${path}`, {
-      headers: { accept: "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+    const res = await providerFetch(`${baseUrl}${path}`, {
+      headers: { accept: "application/json", ...keyHeaders(apiKey, auth) },
       redirect: "error",
       signal: AbortSignal.timeout(20_000),
     });

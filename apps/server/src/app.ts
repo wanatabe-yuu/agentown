@@ -1,6 +1,7 @@
+import { chatSubjectSchema } from "./chat/subjects.ts";
 import { existsSync } from "node:fs";
-import { PassThrough } from "node:stream";
-import { ACTIONS, type Actor, EFFORTS, WORK_STATES } from "@agentown/core";
+import { PassThrough, Readable } from "node:stream";
+import { ACTIONS, type Actor, EFFORTS, WORK_STATES, authHeaderSchema } from "@agentown/core";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -11,6 +12,12 @@ import type { RuntimeDriver } from "./runtime/driver.ts";
 import type { Instance, Principal } from "./instance.ts";
 import type { Service } from "./service.ts";
 import { ApiError, badRequest } from "./util.ts";
+import { OwnerChat } from "./owner-chat.ts";
+import { ownerTools } from "./chat/tools.ts";
+import type { ChatModelFactory } from "./chat/types.ts";
+import { forwardModel } from "./model-broker.ts";
+import { redactProviderKeys, redactedBody } from "./key-redaction.ts";
+import { redactLine } from "./util.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -77,6 +84,8 @@ const S = {
     apiKey: z.string().max(500).nullable().optional(),
     workspaceId: z.string().trim().max(120).nullable().optional(),
     baseUrl: z.string().trim().max(500).nullable().optional(),
+    protocol: z.enum(["anthropic", "openai"]).nullable().optional(),
+    authHeader: authHeaderSchema.nullable().optional(),
     departments: z.array(z.string()).nullable().default(null),
   }),
   spawn: z.object({
@@ -173,12 +182,27 @@ export interface AppOptions {
   webDist?: string;
   logger?: boolean;
   onStateChange?: () => void;
+  chatModelFactory?: ChatModelFactory;
 }
 
 export async function buildApp(opts: AppOptions) {
   const { instance, driver } = opts;
-  const app = Fastify({ logger: opts.logger ? { level: "info" } : false, bodyLimit: 4 * 1024 * 1024 });
+  // Register keys internally so old logs/chat responses are filtered after a restart too.
+  for (const row of (await instance.db.query("SELECT ciphertext FROM credentials")).rows) instance.secrets.open(row.ciphertext);
+  const app = Fastify({ logger: opts.logger ? { level: "info" } : false, bodyLimit: 4 * 1024 * 1024, forceCloseConnections: true });
+  const ownerChat = new OwnerChat(instance, ownerTools(S), opts.chatModelFactory, opts.onStateChange);
+  await ownerChat.recover();
+  app.addHook("onClose", async () => ownerChat.close());
   await app.register(fastifyWebsocket);
+  app.addHook("onSend", async (req, _reply, payload) => {
+    if (!req.url.startsWith("/api/")) return payload;
+    if (typeof payload === "string") return redactProviderKeys(payload);
+    if (Buffer.isBuffer(payload)) {
+      const text = payload.toString("utf8"), filtered = redactProviderKeys(text);
+      return filtered === text ? payload : Buffer.from(filtered);
+    }
+    return payload;
+  });
 
   app.decorateRequest("principal", null);
   app.decorateRequest("actor", null);
@@ -199,7 +223,7 @@ export async function buildApp(opts: AppOptions) {
     if (err.statusCode && err.statusCode < 500) {
       return reply.status(err.statusCode).send({ error: "bad_request", message: err.message });
     }
-    app.log.error(err);
+    app.log.error({ name: err.name, message: redactLine(err.message) });
     return reply.status(500).send({ error: "internal", message: "internal error" });
   });
 
@@ -257,7 +281,60 @@ export async function buildApp(opts: AppOptions) {
       req.svc = service;
       req.actor = actor;
     });
+    r.all<{ Params: { protocol: string; "*": string } }>("/runtime/llm/:protocol/*", async (req, reply) =>
+      forwardModel(svcOf(req), actorOf(req), req, reply, req.params.protocol, req.params["*"]));
     if (o.people) {
+      r.addHook("onSend", async (req, reply) => {
+        if ((req.routeOptions.url?.includes("/owner-chats") || req.routeOptions.url?.includes("/entity-chats"))) reply.header("cache-control", "no-store");
+      });
+      r.get<{ Querystring: { archived?: string } }>("/owner-chats", async req => {
+        if (req.query.archived !== undefined && !["true", "false"].includes(req.query.archived)) throw badRequest("Invalid archived filter.");
+        return ownerChat.list(svcOf(req).orgId, actorOf(req), req.query.archived === "true");
+      });
+      r.post("/owner-chats", async (req, reply) => {
+        reply.status(201);
+        return ownerChat.create(svcOf(req).orgId, actorOf(req), req.body);
+      });
+      r.get<{ Params: { id: string }; Querystring: { before?: string } }>("/owner-chats/:id", async req => {
+        const before = req.query.before ? Number(req.query.before) : undefined;
+        if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) throw badRequest("Invalid history cursor.");
+        return ownerChat.view(svcOf(req).orgId, actorOf(req), req.params.id, before);
+      });
+      r.put<{ Params: { id: string } }>("/owner-chats/:id/config", async req => ownerChat.configure(svcOf(req).orgId, actorOf(req), req.params.id, req.body));
+      r.put<{ Params: { id: string } }>("/owner-chats/:id/archive", async req => ownerChat.lifecycle(svcOf(req).orgId, actorOf(req), req.params.id,
+        parse(z.object({ archived: z.boolean() }).strict(), req.body).archived ? "archive" : "restore"));
+      r.delete<{ Params: { id: string } }>("/owner-chats/:id", async req => ownerChat.lifecycle(svcOf(req).orgId, actorOf(req), req.params.id, "delete"));
+      r.post<{ Params: { id: string } }>("/owner-chats/:id/messages", async req => ownerChat.start(svcOf(req).orgId, actorOf(req), req.params.id,
+        parse(z.object({ requestId: z.string().min(8).max(100), text: z.string().trim().min(1).max(50000) }).strict(), req.body)));
+      r.post<{ Params: { id: string } }>("/owner-chats/:id/compact", async req => ownerChat.start(svcOf(req).orgId, actorOf(req), req.params.id,
+        { ...parse(z.object({ requestId: z.string().min(8).max(100) }).strict(), req.body), compact: true }));
+      r.post<{ Params: { id: string } }>("/owner-chats/:id/stop", async req => ownerChat.stop(svcOf(req).orgId, actorOf(req), req.params.id));
+      r.post<{ Params: { id: string; aid: string } }>("/owner-chats/:id/actions/:aid", async req => ownerChat.decide(svcOf(req).orgId, actorOf(req), req.params.id, req.params.aid,
+        parse(z.object({ approve: z.boolean() }).strict(), req.body).approve));
+      r.get<{ Params: { type: string; subjectId: string }; Querystring: { archived?: string } }>("/entity-chats/:type/:subjectId", async req => {
+        if (req.query.archived !== undefined && !["true", "false"].includes(req.query.archived)) throw badRequest("Invalid archived filter.");
+        return ownerChat.list(svcOf(req).orgId, actorOf(req), req.query.archived === "true", parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId }));
+      });
+      r.post<{ Params: { type: string; subjectId: string } }>("/entity-chats/:type/:subjectId", async (req, reply) => {
+        reply.status(201);
+        return ownerChat.create(svcOf(req).orgId, actorOf(req), req.body, parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId }));
+      });
+      r.get<{ Params: { id: string; type: string; subjectId: string }; Querystring: { before?: string } }>("/entity-chats/:type/:subjectId/:id", async req => {
+        const before = req.query.before ? Number(req.query.before) : undefined;
+        if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) throw badRequest("Invalid history cursor.");
+        return ownerChat.view(svcOf(req).orgId, actorOf(req), req.params.id, before, parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId }));
+      });
+      r.put<{ Params: { id: string; type: string; subjectId: string } }>("/entity-chats/:type/:subjectId/:id/config", async req => ownerChat.configure(svcOf(req).orgId, actorOf(req), req.params.id, req.body, parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId })));
+      r.put<{ Params: { id: string; type: string; subjectId: string } }>("/entity-chats/:type/:subjectId/:id/archive", async req => ownerChat.lifecycle(svcOf(req).orgId, actorOf(req), req.params.id,
+        parse(z.object({ archived: z.boolean() }).strict(), req.body).archived ? "archive" : "restore", parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId })));
+      r.delete<{ Params: { id: string; type: string; subjectId: string } }>("/entity-chats/:type/:subjectId/:id", async req => ownerChat.lifecycle(svcOf(req).orgId, actorOf(req), req.params.id, "delete", parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId })));
+      r.post<{ Params: { id: string; type: string; subjectId: string } }>("/entity-chats/:type/:subjectId/:id/messages", async req => ownerChat.start(svcOf(req).orgId, actorOf(req), req.params.id,
+        parse(z.object({ requestId: z.string().min(8).max(100), text: z.string().trim().min(1).max(50000) }).strict(), req.body), parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId })));
+      r.post<{ Params: { id: string; type: string; subjectId: string } }>("/entity-chats/:type/:subjectId/:id/compact", async req => ownerChat.start(svcOf(req).orgId, actorOf(req), req.params.id,
+        { ...parse(z.object({ requestId: z.string().min(8).max(100) }).strict(), req.body), compact: true }, parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId })));
+      r.post<{ Params: { id: string; type: string; subjectId: string } }>("/entity-chats/:type/:subjectId/:id/stop", async req => ownerChat.stop(svcOf(req).orgId, actorOf(req), req.params.id, parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId })));
+      r.post<{ Params: { id: string; aid: string; type: string; subjectId: string } }>("/entity-chats/:type/:subjectId/:id/actions/:aid", async req => ownerChat.decide(svcOf(req).orgId, actorOf(req), req.params.id, req.params.aid,
+        parse(z.object({ approve: z.boolean() }).strict(), req.body).approve, parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId })));
       r.get("/me", async (req) => svcOf(req).me(actorOf(req)));
       // The organization's structure (owner only), and saving it as a template.
       r.get("/config", async (req) => svcOf(req).getConfig(actorOf(req)));
@@ -324,6 +401,7 @@ export async function buildApp(opts: AppOptions) {
     return reply.status(204).send();
   });
   r.get("/catalog", async (req) => svcOf(req).catalog(actorOf(req)));
+  r.get("/capabilities", async (req) => svcOf(req).me(actorOf(req)));
   r.get("/office/snapshot", async (req) => svcOf(req).snapshot(actorOf(req)));
 
   // ---- agents
@@ -365,6 +443,8 @@ export async function buildApp(opts: AppOptions) {
   r.post<{ Params: { id: string } }>("/credentials/:id/refresh-models", async (req) =>
     svcOf(req).refreshCredentialModels(actorOf(req), req.params.id),
   );
+  r.put<{ Params: { id: string } }>("/credentials/:id/connection", async req => changed(await svcOf(req).updateCredentialConnection(actorOf(req), req.params.id,
+    parse(z.object({ revision: z.number().int().positive(), baseUrl: z.string().trim().min(1).max(500), protocol: z.enum(["anthropic", "openai"]), authHeader: authHeaderSchema, workspaceId: z.string().trim().max(120).nullable().optional() }).strict(), req.body))));
   r.delete<{ Params: { id: string } }>("/credentials/:id", async (req, reply) => {
     await svcOf(req).revokeCredential(actorOf(req), req.params.id);
     changed(null);
@@ -469,7 +549,7 @@ export async function buildApp(opts: AppOptions) {
     const write = (e: Parameters<typeof visible>[0]) => {
       if (e.seq <= cursor || !visible(e)) return;
       cursor = e.seq;
-      res.write(`id: ${e.seq}\nevent: agent-event\ndata: ${JSON.stringify(e)}\n\n`);
+      res.write(`id: ${e.seq}\nevent: agent-event\ndata: ${redactProviderKeys(JSON.stringify(e))}\n\n`);
     };
     const svc = svcOf(req);
     // Other organizations' events never reach this stream, whatever the policy says.
@@ -535,7 +615,8 @@ export async function buildApp(opts: AppOptions) {
         void terminalService(sid).then((s) => s.closeTerminal(sid, reason)).catch(() => {});
       };
       terminals.set(sid, close);
-      stdout.on("data", (d: Buffer) => socket.send(JSON.stringify({ type: "output", data: d.toString("utf8") })));
+      const filtered = Readable.fromWeb(redactedBody(Readable.toWeb(stdout) as ReadableStream<Uint8Array>) as any);
+      filtered.on("data", (d: Buffer) => socket.send(JSON.stringify({ type: "output", data: d.toString("utf8") })));
       socket.on("message", (raw: Buffer) => {
         try {
           const m = JSON.parse(raw.toString());
@@ -578,5 +659,5 @@ export async function buildApp(opts: AppOptions) {
     });
   }
 
-  return { app, recheckTerminals, terminals };
+  return { app, recheckTerminals, terminals, ownerChat };
 }

@@ -35,7 +35,8 @@ runtimeCatalog:
     harness: claude
     model: claude-opus-5-5
     workspace: { size: 512Mi }
-    resources: { cpu: 500m, memory: 512Mi }
+    # Every agent runs this now; the harness mostly waits on the provider's API.
+    resources: { cpu: 250m, memory: 256Mi }
   # Same runtime, but the agent gets a node of its own (see scripts/add-node.sh).
   - id: claude-dedicated-v1
     image: agentown/harness:0.4.0
@@ -99,13 +100,13 @@ policyProfiles:
     - { action: code.propose, scope: self, repos: [agentown] }
 
 agentTemplates:
-  - { id: ceo-v1, jobRole: ceo, runtimePreset: script-v1, policyProfile: ceo }
-  - { id: leader-v1, jobRole: leader, runtimePreset: script-v1, policyProfile: leader }
-  - { id: po-v1, jobRole: po, runtimePreset: script-v1, policyProfile: po }
-  - { id: engineer-v1, jobRole: engineer, runtimePreset: script-v1, policyProfile: worker }
-  - { id: qa-v1, jobRole: qa, runtimePreset: script-v1, policyProfile: worker }
+  - { id: ceo-v1, jobRole: ceo, runtimePreset: claude-v1, policyProfile: ceo }
+  - { id: leader-v1, jobRole: leader, runtimePreset: claude-v1, policyProfile: leader }
+  - { id: po-v1, jobRole: po, runtimePreset: claude-v1, policyProfile: po }
+  - { id: engineer-v1, jobRole: engineer, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: qa-v1, jobRole: qa, runtimePreset: claude-v1, policyProfile: worker }
   - { id: engineer-claude-v1, jobRole: engineer, runtimePreset: claude-v1, policyProfile: worker }
-  - { id: developer-v1, jobRole: engineer, runtimePreset: script-v1, policyProfile: developer }
+  - { id: developer-v1, jobRole: engineer, runtimePreset: claude-v1, policyProfile: developer }
   - { id: developer-claude-v1, jobRole: engineer, runtimePreset: claude-v1, policyProfile: developer }
   - { id: engineer-claude-dedicated-v1, jobRole: engineer, runtimePreset: claude-dedicated-v1, policyProfile: worker }
 

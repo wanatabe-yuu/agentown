@@ -69,11 +69,14 @@ function adapterFor(): Adapter {
   if (harnessKind === "claude") {
     const identity = { agentId, displayName: env.AGENTOWN_DISPLAY_NAME ?? agentId, jobRole: env.AGENTOWN_JOB_ROLE ?? "agent" };
     const provider = env.AGENTOWN_LLM_PROVIDER || "anthropic";
-    if (provider !== "anthropic") {
+    if (provider !== "anthropic" && env.AGENTOWN_LLM_PROTOCOL !== "anthropic") {
       log(`LLM harness using ${provider} at ${env.AGENTOWN_LLM_BASE_URL || "(no endpoint)"}`);
-      return new OpenAICompatibleAdapter({ provider, baseUrl: env.AGENTOWN_LLM_BASE_URL ?? "", apiKey: env.AGENTOWN_LLM_API_KEY, identity });
+      return new OpenAICompatibleAdapter({ provider, baseUrl: env.AGENTOWN_LLM_BASE_URL ?? "", apiKey: env.AGENTOWN_LLM_API_KEY, identity,
+        ...(env.AGENTOWN_LLM_BROKER === "1" ? { broker: { token: env.AGENTOWN_TOKEN!, generation } } : {}),
+        ...(env.AGENTOWN_LLM_AUTH_HEADER ? { authHeader: { name: env.AGENTOWN_LLM_AUTH_HEADER, scheme: env.AGENTOWN_LLM_AUTH_SCHEME === "bearer" ? "bearer" : "raw" } } : {}),
+      });
     }
-    if (!env.ANTHROPIC_API_KEY) log("claude harness without ANTHROPIC_API_KEY: prompt tasks will fail");
+    if (env.AGENTOWN_LLM_BROKER !== "1" && !env.ANTHROPIC_API_KEY) log("claude harness without model access: prompt tasks will fail");
     return new ClaudeAdapter(env.AGENTOWN_MODEL ?? "claude-opus-5-5", identity);
   }
   return new ScriptAdapter();

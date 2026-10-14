@@ -93,7 +93,7 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
       )}
 
       <div className="table-wrap">
-        <table className="grid">
+        <table className="grid mobile-cards">
           <thead>
             <tr>
               <th>Person</th>
@@ -114,8 +114,8 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
                       <code>{u.id}</code>
                     </div>
                   </td>
-                  <td className="small">{u.owner ? "everything" : (roles.find((r) => r.id === u.roleId)?.name ?? "custom")}</td>
-                  <td className="small">{u.owner ? "—" : u.permissions.length}</td>
+                  <td data-label="Role" className="small">{u.owner ? "everything" : (roles.find((r) => r.id === u.roleId)?.name ?? "custom")}</td>
+                  <td data-label="Permissions" className="small">{u.owner ? "—" : u.permissions.length}</td>
                   <td>
                     {editable && (
                       <div className="btn-row">
@@ -204,7 +204,7 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
   return (
     <section className="actions">
       <h3>Permissions of {user.displayName}</h3>
-      <table className="grid">
+      <table className="grid mobile-cards">
         <thead>
           <tr>
             <th>Action</th>
@@ -219,7 +219,7 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
                 <code>{p.action}</code>
                 {p.constraints.templates && <div className="muted small">templates: {p.constraints.templates.join(", ")}</div>}
               </td>
-              <td className="small">{describeScope(p.scope)}</td>
+              <td data-label="Scope" className="small">{describeScope(p.scope)}</td>
               <td>
                 <button type="button" className="danger" onClick={() => void run(() => api("DELETE", `/api/users/${user.id}/grants/${p.id}`))}>
                   Remove

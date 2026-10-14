@@ -82,7 +82,7 @@ describe("editing an organization's structure", () => {
     await env.call(env.owner, "POST", "/api/tasks", { title: "still here?", assigneeAgentId: eve, spec: { kind: "playbook", playbook: "noop", args: {} } });
     const claim = await env.call(env.token(eve), "POST", "/api/runs/claim", { generation: rows[0].generation });
     expect(claim.status).toBe(200);
-    expect(claim.body.config.harness).toBe("script");
+    expect(claim.body.config.harness).toBe("claude");
   });
 });
 

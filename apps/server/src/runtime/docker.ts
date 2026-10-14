@@ -136,8 +136,8 @@ export class DockerDriver implements RuntimeDriver {
     ];
     if (spec.preset.model) env.push(`AGENTOWN_MODEL=${spec.preset.model}`);
     if (spec.llm) {
-      const { secret, plain } = llmEnv(spec.llm);
-      for (const [k, v] of Object.entries({ ...secret, ...plain })) env.push(`${k}=${v}`);
+      const { plain } = llmEnv(spec.llm, spec.apiUrl);
+      for (const [k, v] of Object.entries(plain)) env.push(`${k}=${v}`);
     }
     const cpu = parseCpu(spec.preset.resources.cpu);
     const mem = parseMemory(spec.preset.resources.memory);

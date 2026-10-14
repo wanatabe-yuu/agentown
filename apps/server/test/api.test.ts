@@ -403,7 +403,7 @@ describe("per-agent credentials and model config", () => {
     expect(r.status).toBe(201);
     credId = r.body.id;
     expect(r.body.models).toContain("claude-opus-5-5");
-    expect(r.body.keyHint).toBe("…abcd");
+    expect(r.body.keyHint).toBe("Hidden");
     expect(JSON.stringify(r.body)).not.toContain(KEY);
     const ops = await env.call(env.owner, "POST", "/api/credentials", { name: "Ops key", apiKey: "sk-test-ops-small-9999", departments: ["ops"] });
     opsOnlyId = ops.body.id;
@@ -436,14 +436,14 @@ describe("per-agent credentials and model config", () => {
     expect(ok.body.config).toMatchObject({ credentialId: credId, model: "claude-sonnet-5-5", effort: "high" });
   });
 
-  it("the controller replaces the idle runtime so it holds exactly its own key", async () => {
+  it("the controller replaces the idle runtime with broker access and no provider key", async () => {
     const before = podOf(bot);
     expect(before.providerKey).toBeNull();
     await env.settle();
     await env.settle();
     const after = podOf(bot);
     expect(after.generation).toBe(before.generation + 1);
-    expect(after.providerKey).toBe(KEY);
+    expect(after.providerKey).toBeNull();
     // Other agents never receive it.
     for (const p of env.driver.pods.values()) if (p.agentId !== bot) expect(p.providerKey).toBeNull();
   });
@@ -451,7 +451,7 @@ describe("per-agent credentials and model config", () => {
   it("claims carry the agent's model settings, not the key", async () => {
     const g = await gen(bot);
     await env.call(env.token(bot), "POST", "/api/runtime/heartbeat", { generation: g, state: "idle" });
-    await env.call(env.token("lead-eng"), "POST", "/api/tasks", { title: "think", assigneeAgentId: bot });
+    await env.call(env.token("lead-eng"), "POST", "/api/tasks", { title: "think", assigneeAgentId: bot, spec: { kind: "prompt" } });
     const c = await env.call(env.token(bot), "POST", "/api/runs/claim", { generation: g });
     expect(c.body.config).toMatchObject({ harness: "claude", model: "claude-sonnet-5-5", effort: "high", instructions: "Write tests first.", hasCredential: true });
     expect(JSON.stringify(c.body)).not.toContain(KEY);
@@ -466,7 +466,7 @@ describe("per-agent credentials and model config", () => {
     await env.settle();
     await env.settle();
     expect(podOf(bot).generation).toBe(g + 1);
-    expect(podOf(bot).providerKey).toBe("sk-test-second-small-77");
+    expect(podOf(bot).providerKey).toBeNull();
   });
 
   it("revoking a key pulls it from the runtime", async () => {
@@ -488,7 +488,7 @@ describe("per-agent credentials and model config", () => {
     });
     expect(r.status).toBe(202);
     await env.settle();
-    expect(podOf(r.body.agent.id).providerKey).toBe(KEY);
+    expect(podOf(r.body.agent.id).providerKey).toBeNull();
   });
 
   it("an organization-level key needs a workspace ID, which reaches the runtime with the key", async () => {
@@ -509,10 +509,45 @@ describe("per-agent credentials and model config", () => {
     expect((await env.call(env.token("lead-eng"), "PUT", `/api/agents/${ws}/config`, { credentialId: r.body.id })).status).toBe(200);
     await env.settle();
     await env.settle();
-    expect(podOf(ws)).toMatchObject({ providerKey: orgKey, providerWorkspaceId: "wrkspc_01AbC" });
+    expect(podOf(ws)).toMatchObject({ providerKey: null, providerWorkspaceId: "wrkspc_01AbC" });
     expect(podOf(bot).providerWorkspaceId).toBeNull();
   });
 
+  it("custom Anthropic gateways persist auth metadata, validate it, refresh models and reach the Claude runtime", async () => {
+    const add = (body: Record<string, unknown>) => env.call(env.owner, "POST", "/api/credentials", body);
+    const gateway = { name: "Claude gateway", provider: "custom", protocol: "anthropic", apiKey: "sk-test-small-gateway", baseUrl: "https://gateway.example.com/claude/v1", authHeader: { name: "X-API-Key", scheme: "raw" } };
+    const created = await add(gateway); expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ provider: "custom", protocol: "anthropic", authHeader: { name: "x-api-key", scheme: "raw" }, models: ["claude-haiku-5-5"] });
+    expect(JSON.stringify(created.body)).not.toContain(gateway.apiKey);
+    expect((await env.call(env.owner, "POST", `/api/credentials/${created.body.id}/refresh-models`)).body.models).toEqual(["claude-haiku-5-5"]);
+    for (const name of ["x-api-key\r\nInjected", "host", "content-type", "anthropic-beta", "cookie"]) expect((await add({ ...gateway, authHeader: { name, scheme: "raw" } })).status).toBe(400);
+    expect((await add({ ...gateway, provider: "anthropic", baseUrl: null })).status).toBe(400);
+    expect((await add({ ...gateway, protocol: "invalid" })).status).toBe(400);
+    const defaults = await add({ ...gateway, authHeader: undefined });
+    expect(defaults.body.authHeader).toEqual({ name: "x-api-key", scheme: "raw" });
+    const actor = { kind: "human" as const, id: (await env.instance.authenticate(env.owner))!.id, owner: true };
+    const target = await env.service.ownerChatCredential(actor, created.body.id);
+    expect(target).toMatchObject({ baseUrl: gateway.baseUrl, protocol: "anthropic", authHeader: { name: "x-api-key", scheme: "raw" } });
+    const spawned = await spawnUnder(env.token("lead-eng"), "engineer-claude-v1", "Gateway tester", "lead-eng", "gateway-test");
+    const id = spawned.body.agent.id; await env.settle();
+    expect((await env.call(env.token("lead-eng"), "PUT", `/api/agents/${id}/config`, { credentialId: created.body.id, model: "claude-haiku-5-5" })).status).toBe(200);
+    await env.settle(); await env.settle();
+    expect(podOf(id).llmEnv).toMatchObject({ AGENTOWN_LLM_BROKER: "1", AGENTOWN_LLM_PROTOCOL: "anthropic" });
+    expect(JSON.stringify(podOf(id).llmEnv)).not.toContain(gateway.apiKey);
+    expect(podOf(id).llmEnv.ANTHROPIC_BASE_URL).toContain("/api/runtime/llm/anthropic");
+    expect(podOf(id).llmEnv.AGENTOWN_LLM_API_KEY).toBeUndefined();
+    const sealed = (await env.db.query("SELECT ciphertext FROM credentials WHERE id=$1", [created.body.id])).rows[0].ciphertext;
+    const connection = { revision: created.body.revision, baseUrl: gateway.baseUrl, protocol: "anthropic", authHeader: { name: "x-gateway-key", scheme: "raw" } };
+    expect((await env.call(env.token("ceo"), "PUT", `/api/credentials/${created.body.id}/connection`, connection)).status).toBe(403);
+    const edited = await env.call(env.owner, "PUT", `/api/credentials/${created.body.id}/connection`, connection);
+    expect(edited.status).toBe(200); expect(edited.body.revision).toBe(created.body.revision + 1);
+    expect(edited.body.authHeader).toEqual(connection.authHeader);
+    expect(JSON.stringify(edited.body)).not.toContain(gateway.apiKey);
+    expect((await env.db.query("SELECT ciphertext FROM credentials WHERE id=$1", [created.body.id])).rows[0].ciphertext).toEqual(sealed);
+    expect((await env.call(env.owner, "PUT", `/api/credentials/${created.body.id}/connection`, connection)).status).toBe(409);
+    await env.settle(); await env.settle();
+    expect(podOf(id).llmEnv.AGENTOWN_LLM_AUTH_HEADER).toBeUndefined();
+  });
   it("OpenAI-compatible providers: preset endpoints, custom base URLs, and what reaches the runtime", async () => {
     const add = (body: Record<string, unknown>) => env.call(env.owner, "POST", "/api/credentials", body);
     expect((await env.call(env.owner, "GET", "/api/catalog")).body.providers.map((p: any) => p.id)).toEqual(
@@ -524,7 +559,7 @@ describe("per-agent credentials and model config", () => {
     expect((await add({ name: "x", provider: "nope", apiKey: "sk-test-oai-1" })).status).toBe(400);
     const oai = await add({ name: "OpenAI", provider: "openai", apiKey: "sk-test-oai-1234" });
     expect(oai.status).toBe(201);
-    expect(oai.body).toMatchObject({ provider: "openai", baseUrl: "https://api.openai.com/v1", models: ["openai-chat", "openai-mini"], keyHint: "…1234" });
+    expect(oai.body).toMatchObject({ provider: "openai", baseUrl: "https://api.openai.com/v1", models: ["openai-chat", "openai-mini"], keyHint: "Hidden" });
 
     expect((await add({ name: "x", provider: "custom" })).status).toBe(400); // base URL required
     expect((await add({ name: "x", provider: "custom", baseUrl: "ftp://host/v1" })).status).toBe(400);
@@ -544,18 +579,19 @@ describe("per-agent credentials and model config", () => {
     await env.settle();
     expect(podOf(agent).llmEnv).toEqual({
       AGENTOWN_LLM_PROVIDER: "openai",
-      AGENTOWN_LLM_BASE_URL: "https://api.openai.com/v1",
-      AGENTOWN_LLM_API_KEY: "sk-test-oai-1234",
+      AGENTOWN_LLM_PROTOCOL: "openai",
+      AGENTOWN_LLM_BROKER: "1",
+      AGENTOWN_LLM_BASE_URL: "http://test/api/runtime/llm/openai/v1",
     });
 
     // A keyless custom endpoint: no secret, and no Claude default model is handed to the adapter.
     expect((await env.call(t, "PUT", `/api/agents/${agent}/config`, { credentialId: local.body.id })).status).toBe(200);
     await env.settle();
     await env.settle();
-    expect(podOf(agent).llmEnv).toEqual({ AGENTOWN_LLM_PROVIDER: "custom", AGENTOWN_LLM_BASE_URL: "http://10.0.0.5:11434/ollama/v1" });
+    expect(podOf(agent).llmEnv).toMatchObject({ AGENTOWN_LLM_PROVIDER: "custom", AGENTOWN_LLM_PROTOCOL: "openai", AGENTOWN_LLM_BROKER: "1" });
     const g = await gen(agent);
     await env.call(env.token(agent), "POST", "/api/runtime/heartbeat", { generation: g, state: "idle" });
-    await env.call(t, "POST", "/api/tasks", { title: "think locally", assigneeAgentId: agent });
+    await env.call(t, "POST", "/api/tasks", { title: "think locally", assigneeAgentId: agent, spec: { kind: "prompt" } });
     const c = await env.call(env.token(agent), "POST", "/api/runs/claim", { generation: g });
     expect(c.body.config).toMatchObject({ harness: "claude", provider: "custom", model: null, hasCredential: true });
   });

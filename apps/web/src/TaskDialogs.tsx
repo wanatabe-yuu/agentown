@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, fetchBlob } from "./api.ts";
-import type { Me, Snapshot, TaskDetail } from "./types.ts";
+import type { Catalog, Me, Snapshot, TaskDetail } from "./types.ts";
 import { Modal, StatusPill, ago } from "./ui.tsx";
 
 type Notify = (msg: string, kind?: "error" | "info") => void;
@@ -116,7 +116,7 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
             {task.runs.length === 0 ? (
               <p className="muted small">Not started.</p>
             ) : (
-              <table className="grid">
+              <table className="grid task-runs">
                 <thead>
                   <tr>
                     <th>Attempt</th>
@@ -129,13 +129,13 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
                 <tbody>
                   {task.runs.map((r) => (
                     <tr key={r.id}>
-                      <td>#{r.attempt}</td>
-                      <td>g{r.runtime_generation}</td>
-                      <td>
+                      <td data-label="Attempt">#{r.attempt}</td>
+                      <td data-label="Runtime">g{r.runtime_generation}</td>
+                      <td data-label="Status">
                         <StatusPill state={r.status} />
                       </td>
-                      <td className="muted small">{ago(r.started_at, now)}</td>
-                      <td className="small">
+                      <td data-label="Started" className="muted small">{ago(r.started_at, now)}</td>
+                      <td data-label="Summary" className="small">
                         {r.summary}
                         {r.usage && <div className="muted">usage: {JSON.stringify(r.usage)}</div>}
                       </td>
@@ -184,44 +184,30 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
   );
 }
 
-const PLAYBOOKS: Record<string, string[]> = {
-  "ceo-launch-site": ["TITLE", "HEADLINE", "GOAL", "LEADER"],
-  "lead-build-site": ["TITLE", "HEADLINE"],
-  "build-page": ["TITLE", "HEADLINE", "BODY"],
-  "qa-page": ["EXPECT_HEADLINE"],
-  "workspace-note": ["NOTE"],
-  noop: ["MESSAGE"],
-};
-
-export function NewTaskDialog({ snapshot, me, assignee, onClose, notify, onCreated }: { snapshot: Snapshot; me: Me; assignee: string | null; onClose: () => void; notify: Notify; onCreated: (id: string) => void }) {
+export function NewTaskDialog({ snapshot, me, catalog, assignee, onClose, notify, onCreated }: { snapshot: Snapshot; me: Me; catalog: Catalog | null; assignee: string | null; onClose: () => void; notify: Notify; onCreated: (id: string) => void }) {
   // Only agents this person may give work to.
   const active = snapshot.agents.filter((a) => a.lifecycleState !== "retired" && me.taskTargets.includes(a.id));
-  const [to, setTo] = useState(assignee ?? active[0]?.id ?? "");
+  // Not a permission: work is a prompt, so it needs a model. Agents without one only walk around the office.
+  const why = (a: (typeof active)[number]) =>
+    catalog?.presets.find((p) => p.id === a.runtime?.presetId)?.harness === "script" ? "no LLM runtime" : !a.config.credentialId ? "no API key" : null;
+  const [to, setTo] = useState(assignee ?? active.find((a) => !why(a))?.id ?? "");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [criteria, setCriteria] = useState("");
   const [project, setProject] = useState("");
-  const [kind, setKind] = useState<"playbook" | "prompt" | "script">("playbook");
-  const [playbook, setPlaybook] = useState("ceo-launch-site");
-  const [args, setArgs] = useState<Record<string, string>>({ TITLE: "Agentown", HEADLINE: "Agents that ship" });
-  const [script, setScript] = useState("echo hello from $(hostname)\necho SUMMARY: said hello");
+  const target = active.find((a) => a.id === to);
+  const blocked = target ? why(target) : "no assignee";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const spec =
-      kind === "playbook"
-        ? { kind, playbook, args: Object.fromEntries(Object.entries(args).filter(([k, v]) => v && PLAYBOOKS[playbook]!.includes(k))) }
-        : kind === "script"
-          ? { kind, script }
-          : { kind };
     try {
       const r = await api("POST", "/api/tasks", {
-        title: title || (kind === "playbook" ? playbook : "Task"),
+        title,
         description,
         acceptanceCriteria: criteria,
         assigneeAgentId: to,
         projectId: project || null,
-        spec,
+        spec: { kind: "prompt" },
       });
       notify(`Task ${r.task.id} → ${to}`, "info");
       onCreated(r.task.id);
@@ -237,15 +223,25 @@ export function NewTaskDialog({ snapshot, me, assignee, onClose, notify, onCreat
           Assignee
           <select value={to} onChange={(e) => setTo(e.target.value)}>
             {active.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.displayName} — {a.jobRole} ({a.id})
+              <option key={a.id} value={a.id} disabled={!!why(a)}>
+                {a.displayName} — {a.jobRole}
+                {why(a) ? ` · ${why(a)}` : ""}
               </option>
             ))}
           </select>
         </label>
+        {target && blocked && <p className="error small">{target.displayName} has {blocked}: give it an API key in its Config tab.</p>}
         <label>
           Title
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What should be done?" maxLength={200} />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What should be done?" maxLength={200} required />
+        </label>
+        <label>
+          Prompt
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={5} placeholder="Describe the work in plain words." required />
+        </label>
+        <label>
+          Acceptance criteria
+          <textarea value={criteria} onChange={(e) => setCriteria(e.target.value)} rows={2} placeholder="How you will judge it is done (optional)" />
         </label>
         <label>
           Project
@@ -258,49 +254,8 @@ export function NewTaskDialog({ snapshot, me, assignee, onClose, notify, onCreat
             ))}
           </select>
         </label>
-        <fieldset className="seg">
-          <legend>Work type</legend>
-          {(["playbook", "prompt", "script"] as const).filter((k) => k !== "script" || me.execTargets.includes(to)).map((k) => (
-            <label key={k}>
-              <input type="radio" name="kind" checked={kind === k} onChange={() => setKind(k)} /> {k}
-            </label>
-          ))}
-        </fieldset>
-        {kind === "playbook" && (
-          <>
-            <label>
-              Playbook (owner-approved, baked into the runtime image)
-              <select value={playbook} onChange={(e) => setPlaybook(e.target.value)}>
-                {Object.keys(PLAYBOOKS).map((p) => (
-                  <option key={p}>{p}</option>
-                ))}
-              </select>
-            </label>
-            {PLAYBOOKS[playbook]!.map((k) => (
-              <label key={k}>
-                {k}
-                <input value={args[k] ?? ""} onChange={(e) => setArgs({ ...args, [k]: e.target.value })} />
-              </label>
-            ))}
-          </>
-        )}
-        {kind === "prompt" && <p className="muted small">Free-form work for an agent with an LLM harness (e.g. template engineer-claude-v1). Script-harness agents will report it as blocked.</p>}
-        {kind === "script" && me.execTargets.includes(to) && (
-          <label>
-            Shell script (counts as exec: needs runtime.exec on the assignee)
-            <textarea value={script} onChange={(e) => setScript(e.target.value)} rows={4} className="mono" />
-          </label>
-        )}
-        <label>
-          Description
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
-        </label>
-        <label>
-          Acceptance criteria
-          <textarea value={criteria} onChange={(e) => setCriteria(e.target.value)} rows={2} />
-        </label>
         <div className="btn-row">
-          <button type="submit" className="primary">
+          <button type="submit" className="primary" disabled={!!blocked}>
             Create task
           </button>
         </div>

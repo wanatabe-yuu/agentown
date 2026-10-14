@@ -45,6 +45,8 @@ Both paths use the same installer. It needs Ubuntu 24.04 on x86_64, installs the
 
 ## Architecture
 
+Owners also have an independent [Owner chat](docs/OWNER_CHAT.md) beside New task: persistent conversations, saved provider configuration, world-management tools, confirmations, token usage and automatic context compaction.
+
 ```mermaid
 flowchart LR
   U["Web: 2D office<br/>(holds only a person's token, in an HttpOnly cookie)"] -- REST / SSE / WS ticket --> S
@@ -109,18 +111,19 @@ scripts/dev-server.sh                                      # AGENTOWN_RUNTIME_DR
 
 ## Per-agent API keys and models
 
-- The owner adds keys in the UI (**API keys**). The server checks each key with the provider and stores the list of models that key can use. Keys are encrypted with AES‑256‑GCM and the API only ever returns the last 4 characters. A key can be restricted to certain departments.
+- The owner adds keys in the UI (**API keys**). The server checks each key with the provider and stores its model list. Keys are encrypted with AES‑256‑GCM; owners and agents see only a name and **Hidden**, with no key fragments. A key can be restricted to certain departments.
 - Providers:
 
   | Provider | How agents call it |
   | --- | --- |
   | Anthropic (Claude) | Anthropic SDK, Anthropic-defined `bash` tool. A key created at the organization level also needs its **workspace ID** (`wrkspc_…`). |
   | OpenAI, DeepSeek, xAI (Grok), Google Gemini, Mistral, Groq, OpenRouter, Together AI | OpenAI-compatible Chat Completions with a `bash` function, at the provider's fixed endpoint. |
-  | Custom | Any OpenAI-compatible endpoint you enter (Ollama, vLLM, LM Studio, LiteLLM, a gateway…). The key is optional. |
+  | Custom URL | Anthropic/Claude or OpenAI-compatible gateway. Choose the API protocol, base URL, and `x-api-key`, Bearer, or custom authentication header. The saved key supplies the header value. |
 
   Agents are only as good as the model's tool use, so pick a model that handles function calling well. With the Kubernetes driver, agent pods can reach only **public** addresses on **port 443** (see the NetworkPolicy above), so a custom endpoint must be public HTTPS; a model server on a private network or another port works with the Docker driver, or after you widen the `agent-isolation` NetworkPolicy yourself.
 - Each agent picks **one key and one of that key's models**, plus effort, max turns and its own instructions (the agent's **Config** tab, or at hiring time). Changing them is the `agent.configure` action: leaders for their direct reports, the CEO for its whole subtree.
-- A key is only ever delivered to the runtime of **that agent** (its own Kubernetes Secret / container env). When a key is changed or revoked, the controller replaces the runtime once the agent is idle, without cutting off work in progress. Model, effort and instructions travel with each task, so changing them needs no restart.
+- Agents can use `agentown capabilities` to see their configuration targets, `agentown credentials` to list approved key IDs/models, and `agentown agent configure ID --credential ID --model MODEL --effort medium`. `whoami.can` describes rights on the caller itself; it does not describe rights on its reports. Every call stays in the caller's organization and the server checks the target's permissions and credential department scope.
+- Keys stay on the server. Agent pods/containers call the authenticated model broker, scoped to their current runtime generation and configured model; no provider key is placed in runtime environment or Kubernetes Secrets. Revocation is checked on every model request. The controller upgrades existing runtimes when idle. Custom keys are bound to their saved URL: changing endpoint requires entering a new key. Provider responses, API text, historical logs/chat and terminal output filter known key values. This protects application owners/agents; a host/database administrator with the server master key remains outside that boundary.
 
 ## Permission model (summary)
 

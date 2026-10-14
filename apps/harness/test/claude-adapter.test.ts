@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ClaudeAdapter } from "../src/adapters/claude.ts";
 import type { RunContext } from "../src/adapters/types.ts";
 
@@ -14,6 +14,7 @@ import type { RunContext } from "../src/adapters/types.ts";
  */
 const requests: Array<{ headers: http.IncomingHttpHeaders; body: any }> = [];
 let server: http.Server;
+const savedProvider = process.env.AGENTOWN_LLM_PROVIDER;
 const saved = { url: process.env.ANTHROPIC_BASE_URL, key: process.env.ANTHROPIC_API_KEY };
 
 beforeAll(async () => {
@@ -50,7 +51,9 @@ beforeAll(async () => {
   process.env.ANTHROPIC_API_KEY = "sk-local-test";
 });
 
+beforeEach(() => { requests.length = 0; delete process.env.AGENTOWN_LLM_PROVIDER; });
 afterAll(() => {
+  if (savedProvider === undefined) delete process.env.AGENTOWN_LLM_PROVIDER; else process.env.AGENTOWN_LLM_PROVIDER = savedProvider;
   server.close();
   process.env.ANTHROPIC_BASE_URL = saved.url;
   process.env.ANTHROPIC_API_KEY = saved.key;
@@ -94,6 +97,26 @@ describe("ClaudeAdapter", () => {
     expect(toolResult.content).toContain("wrote");
   });
 
+  it("uses standard tools for custom Claude gateways and still executes tool results without native extensions", async () => {
+    process.env.AGENTOWN_LLM_PROVIDER = "custom";
+    const workdir = mkdtempSync(join(tmpdir(), "agentown-custom-claude-"));
+    const outputDir = join(workdir, "out"); mkdirSync(outputDir);
+    const ctx: RunContext = {
+      config: { harness: "claude", provider: "custom", model: "claude-haiku-5-5", effort: "medium", instructions: "Keep it short.", maxTurns: 5, hasCredential: true },
+      task: { id: "t-custom", title: "Say hello", description: "write hello.txt", acceptanceCriteria: "file exists", spec: { kind: "prompt" }, inputTaskIds: [], parentTaskId: null, projectId: null },
+      runId: "r-custom", workdir, outputDir, stateFile: join(workdir, "state.json"), signal: new AbortController().signal, log: () => {}, setState: () => {}, event: () => {},
+    };
+    const result = await new ClaudeAdapter("claude-haiku-5-5", { agentId: "custom", displayName: "Custom", jobRole: "engineer" }).run(ctx);
+    expect(result.outcome).toBe("succeeded");
+    expect(readFileSync(join(outputDir, "hello.txt"), "utf8").trim()).toBe("hello");
+    const [first, second] = requests;
+    expect(first!.body.tools[0]).toMatchObject({ name: "bash", input_schema: { type: "object", required: ["command"] } });
+    expect(first!.body.tools[0].type).toBeUndefined();
+    expect(first!.body.fallbacks).toBeUndefined();
+    expect(first!.headers["anthropic-beta"]).toBeUndefined();
+    expect(first!.body.output_config).toEqual({ effort: "medium" });
+    expect(second!.body.messages.at(-1).content[0]).toMatchObject({ type: "tool_result", tool_use_id: "toolu_1", is_error: false });
+  });
   it("blocks instead of failing silently when no key is configured", async () => {
     const key = process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;

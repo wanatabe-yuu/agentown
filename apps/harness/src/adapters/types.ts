@@ -12,7 +12,7 @@ export interface TaskInfo {
 /** Per-agent settings delivered with each claim (never contains the API key). */
 export interface RunConfig {
   harness: "script" | "claude";
-  /** Provider of the agent's credential (null = none); the harness reads its endpoint and key from the environment. */
+  /** Provider of the agent's credential (null = none); the harness uses server-broker endpoints and its identity token. */
   provider?: string | null;
   model: string | null;
   effort: "low" | "medium" | "high" | "xhigh" | "max" | null;

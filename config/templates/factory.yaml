@@ -46,11 +46,11 @@ policyProfiles:
     - { action: runtime.logs, scope: self }
 
 agentTemplates:
-  - { id: plant-manager-v1, jobRole: plant-manager, runtimePreset: script-v1, policyProfile: plant-manager }
-  - { id: supervisor-v1, jobRole: supervisor, runtimePreset: script-v1, policyProfile: supervisor }
-  - { id: operator-v1, jobRole: operator, runtimePreset: script-v1, policyProfile: worker }
-  - { id: inspector-v1, jobRole: inspector, runtimePreset: script-v1, policyProfile: worker }
-  - { id: technician-v1, jobRole: technician, runtimePreset: script-v1, policyProfile: worker }
+  - { id: plant-manager-v1, jobRole: plant-manager, runtimePreset: claude-v1, policyProfile: plant-manager }
+  - { id: supervisor-v1, jobRole: supervisor, runtimePreset: claude-v1, policyProfile: supervisor }
+  - { id: operator-v1, jobRole: operator, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: inspector-v1, jobRole: inspector, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: technician-v1, jobRole: technician, runtimePreset: claude-v1, policyProfile: worker }
   - { id: planner-claude-v1, jobRole: planner, runtimePreset: claude-v1, policyProfile: worker }
 
 humanRoles:

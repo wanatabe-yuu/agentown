@@ -52,4 +52,5 @@ export class AgentownClient {
 
   get = <T = any>(path: string) => this.request<T>("GET", path);
   post = <T = any>(path: string, body: unknown = {}) => this.request<T>("POST", path, body);
+  put = <T = any>(path: string, body: unknown) => this.request<T>("PUT", path, body);
 }

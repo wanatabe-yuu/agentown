@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export function ago(iso: string | null, now = Date.now()): string {
   if (!iso) return "never";
@@ -42,15 +42,29 @@ export function describeScope(scope: { kind: string; ids?: string[] }): string {
   return scope.ids ? `${scope.kind}: ${scope.ids.join(", ")}` : scope.kind;
 }
 
-export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+export function Modal({ title, onClose, children, wide, className = "", style }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; className?: string; style?: CSSProperties }) {
+  const dialog = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !dialog.current) return;
+      const nodes = [...dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]')].filter(n => n.getClientRects().length);
+      const first = nodes[0], last = nodes.at(-1);
+      if (e.shiftKey && (document.activeElement === first || !dialog.current.contains(document.activeElement))) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || !dialog.current.contains(document.activeElement))) { e.preventDefault(); first?.focus(); }
+    };
+    dialog.current?.querySelector<HTMLElement>("button")?.focus();
+    window.addEventListener("keydown", trap);
+    return () => { window.removeEventListener("keydown", trap); if (previous?.isConnected) previous.focus(); };
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+    <div className="modal-backdrop" style={style} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div ref={dialog} className={`modal ${wide ? "wide" : ""} ${className}`} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modal-head">
           <h2>{title}</h2>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">

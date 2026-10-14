@@ -234,8 +234,11 @@ export function buildScene(
     // The world editor finds placed objects by this index.
     obj.userData.objectIndex = i;
     obj.scale.multiplyScalar(o.scale);
-    if (o.label) {
-      const { obj: tag } = label("object-label", o.label);
+    const title = o.title ?? kind.title;
+    if (o.label || title) {
+      const { el, obj: tag } = label("object-label", "");
+      if (o.label) el.append(Object.assign(document.createElement("b"), { textContent: o.label }));
+      if (title) el.append(Object.assign(document.createElement("small"), { textContent: title }));
       tag.position.set(0, 1.4, 0);
       obj.add(tag);
     }
@@ -249,7 +252,7 @@ export function buildScene(
       body.rotation.y = obj.rotation.y;
       obj.position.set(0, 0, 0);
       obj.rotation.y = 0;
-      if (o.label) {
+      if (o.label || title) {
         const tag = obj.children.find((c) => c instanceof CSS2DObject);
         if (tag) body.add(tag);
       }

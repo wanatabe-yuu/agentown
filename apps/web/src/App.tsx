@@ -5,6 +5,7 @@ import { AssetsDialog } from "./Assets.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
 import { OrgEditor } from "./OrgEditor.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
+import { OwnerChatDialog, type ChatTarget } from "./OwnerChat.tsx";
 import { UsersDialog } from "./Users.tsx";
 import { HttpError, api, setOrg } from "./api.ts";
 import type { Flight } from "./office3d/scene.ts";
@@ -144,6 +145,8 @@ function OrgApp({
   const [view, setView] = useState<"office" | "table">(() => (window.innerWidth < 700 ? "table" : "office"));
   const [showAudit, setShowAudit] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
+  const [showOwnerChat, setShowOwnerChat] = useState(false);
+  const [entityChat, setEntityChat] = useState<ChatTarget | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [toasts, setToasts] = useState<Array<{ id: number; msg: string; kind: string }>>([]);
   const [flights, setFlights] = useState<Flight[]>([]);
@@ -206,7 +209,7 @@ function OrgApp({
   const working = active.filter((a) => ["thinking", "executing", "waiting"].includes(effectiveWork(a))).length;
 
   return (
-    <div className="app">
+    <div className={`app${me.actor.owner ? " has-owner-chat" : ""}`}>
       <header className="topbar">
         <div className="brand">
           <span className="logo" aria-hidden>
@@ -240,11 +243,14 @@ function OrgApp({
             Table
           </button>
         </div>
+        <div className="task-actions">
         {me.taskTargets.length > 0 && (
-          <button type="button" className="primary" onClick={() => setNewTaskFor(null)}>
+          <button type="button" className="primary new-task" onClick={() => setNewTaskFor(null)}>
             + New task
           </button>
         )}
+        {me.actor.owner && <button type="button" className="owner-chat-button" onClick={() => setShowOwnerChat(true)}>✦ Owner chat</button>}
+        </div>
         {manageItems.length > 0 && <Menu label="Manage" trigger={<>Manage ▾</>} items={manageItems} />}
         <Menu
           label="Account"
@@ -268,8 +274,8 @@ function OrgApp({
         />
       </header>
 
-      <main className="main">
-        <section className="stage">
+      <main className={`main${selected && !worldEditing ? " panel-open" : ""}`}>
+        <section className={`stage view-${view}`}>
           {view === "office" ? (
             <Suspense fallback={<div className="center muted">Loading the office…</div>}>
               <Office3D
@@ -278,6 +284,10 @@ function OrgApp({
                 needsOwner={needsOwner}
                 selected={selected}
                 onSelect={setSelected}
+                onObjectChat={me.actor.owner ? id => {
+                  const o = snapshot.world?.objects.find(o => o.id === id);
+                  if (o) setEntityChat({ type: "object", id, name: o.label || snapshot.world!.kinds[o.kind]!.name });
+                } : undefined}
                 flights={flights}
                 dark={dark}
                 canDesign={!!me.can["org.design"]}
@@ -286,13 +296,15 @@ function OrgApp({
               />
             </Suspense>
           ) : (
-            <AgentTable snapshot={snapshot} workOf={effectiveWork} now={now} onSelect={setSelected} selected={selected} />
+            <AgentTable snapshot={snapshot} workOf={effectiveWork} now={now} onSelect={setSelected} selected={selected} onObjectChat={me.actor.owner ? setEntityChat : undefined} onChat={me.actor.owner ? id => setEntityChat({ type: "agent", id, name: snapshot.agents.find(a => a.id === id)!.displayName }) : undefined} />
           )}
+          {view === "office" && me.actor.owner && <WorldObjectChats snapshot={snapshot} onChat={setEntityChat} />}
           <Legend />
         </section>
 
         {worldEditing ? null : selected ? (
           <AgentPanel
+            onChat={me.actor.owner ? () => setEntityChat({ type: "agent", id: selected, name: snapshot.agents.find(a => a.id === selected)!.displayName }) : undefined}
             agentId={selected}
             snapshot={snapshot}
             catalog={catalog}
@@ -348,6 +360,7 @@ function OrgApp({
         <NewTaskDialog
           snapshot={snapshot}
           me={me}
+          catalog={catalog}
           assignee={newTaskFor}
           onClose={() => setNewTaskFor(undefined)}
           notify={notify}
@@ -359,6 +372,8 @@ function OrgApp({
       )}
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
       {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
+      {entityChat && me.actor.owner && <OwnerChatDialog key={`${orgId}:${entityChat.type}:${entityChat.id}`} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} subject={entityChat} onClose={() => setEntityChat(null)} onKeys={() => { setEntityChat(null); setShowKeys(true); }} />}
+      {showOwnerChat && me.actor.owner && <OwnerChatDialog orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} onClose={() => setShowOwnerChat(false)} onKeys={() => { setShowOwnerChat(false); setShowKeys(true); }} />}
       {showAssets && <AssetsDialog onClose={() => setShowAssets(false)} notify={notify} />}
       {showOrg && <OrgEditor orgId={orgId} catalog={catalog} snapshot={snapshot} onClose={() => setShowOrg(false)} notify={notify} />}
       {showAdmin && (
@@ -385,7 +400,7 @@ function OrgApp({
   );
 }
 
-function AgentTable({ snapshot, workOf, now, onSelect, selected }: { snapshot: NonNullable<ReturnType<typeof useOffice>["snapshot"]>; workOf: ReturnType<typeof useOffice>["effectiveWork"]; now: number; onSelect: (id: string) => void; selected: string | null }) {
+function AgentTable({ snapshot, workOf, now, onSelect, selected, onChat, onObjectChat }: { onObjectChat?: (target: ChatTarget) => void; onChat?: (id: string) => void; snapshot: NonNullable<ReturnType<typeof useOffice>["snapshot"]>; workOf: ReturnType<typeof useOffice>["effectiveWork"]; now: number; onSelect: (id: string) => void; selected: string | null }) {
   const name = (id: string | null) => snapshot.agents.find((a) => a.id === id)?.displayName ?? "—";
   return (
     <div className="table-wrap">
@@ -407,15 +422,15 @@ function AgentTable({ snapshot, workOf, now, onSelect, selected }: { snapshot: N
             .map((a) => (
               <tr key={a.id} className={selected === a.id ? "selected" : ""} onClick={() => onSelect(a.id)} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onSelect(a.id)}>
                 <td>
-                  <strong>{a.displayName}</strong> <code className="muted small">{a.id}</code>
+                  <strong>{a.displayName}</strong>{onChat && <button type="button" className="agent-chat-shortcut" aria-label={`Chat with ${a.displayName}`} onClick={e => { e.stopPropagation(); onChat(a.id); }} onKeyDown={e => e.stopPropagation()}>Chat</button>} <code className="muted small agent-id">{a.id}</code>
                 </td>
                 <td>{a.jobRole}</td>
                 <td>{snapshot.departments.find((d) => d.id === a.departmentId)?.name}</td>
                 <td>{name(a.reportsToAgentId)}</td>
-                <td>
+                <td data-label="Work">
                   <StatusPill state={workOf(a)} /> <span className="muted small">{a.work.detail}</span>
                 </td>
-                <td>
+                <td data-label="Runtime">
                   <StatusPill state={a.runtime?.state ?? "none"} /> <span className="muted small">g{a.runtime?.generation}</span>
                 </td>
                 <td className="muted small">{ago(a.lastHeartbeatAt, now)}</td>
@@ -423,8 +438,24 @@ function AgentTable({ snapshot, workOf, now, onSelect, selected }: { snapshot: N
             ))}
         </tbody>
       </table>
+      {onObjectChat && <WorldObjectChats snapshot={snapshot} onChat={onObjectChat} />}
     </div>
   );
+}
+
+function WorldObjectChats({ snapshot, onChat }: { snapshot: NonNullable<ReturnType<typeof useOffice>["snapshot"]>; onChat: (target: ChatTarget) => void }) {
+  if (!snapshot.world?.objects.length) return null;
+  return <section className="world-object-chats" aria-label="Object conversations">
+            <details><summary>Chat with objects & animals <span className="count">{snapshot.world.objects.length}</span></summary>
+              <div className="world-object-chat-list">{snapshot.world.objects.map((o, i) => {
+                const kind = snapshot.world!.kinds[o.kind]!;
+                const room = snapshot.world!.floors.flatMap(f => f.rooms).find(r => r.id === o.room);
+                return <button type="button" key={o.id ?? i} disabled={!o.id} onClick={() => onChat({ type: "object", id: o.id!, name: o.label || kind.name })}>
+                  <strong>{o.label || kind.name}</strong><span className="muted small">{o.title || kind.title || kind.category} · {room?.name}</span><span>Chat →</span>
+                </button>;
+              })}</div>
+            </details>
+          </section>;
 }
 
 function AuditDialog({ onClose, now }: { onClose: () => void; now: number }) {
@@ -440,7 +471,7 @@ function AuditDialog({ onClose, now }: { onClose: () => void; now: number }) {
         <input type="checkbox" checked={onlyDenied} onChange={(e) => setOnlyDenied(e.target.checked)} /> Denials only
       </label>
       <div className="table-wrap">
-        <table className="grid">
+        <table className="grid mobile-cards">
           <thead>
             <tr>
               <th>When</th>
@@ -454,16 +485,16 @@ function AuditDialog({ onClose, now }: { onClose: () => void; now: number }) {
           <tbody>
             {shown.map((r) => (
               <tr key={r.id}>
-                <td className="muted small">{ago(r.at, now)}</td>
-                <td>
+                <td data-label="When" className="muted small">{ago(r.at, now)}</td>
+                <td data-label="Actor">
                   <code>{r.actor}</code>
                 </td>
-                <td>
+                <td data-label="Action">
                   <code>{r.action}</code>
                 </td>
-                <td>{r.target}</td>
-                <td>{r.allowed ? <span className="pill pill-good">allowed</span> : <span className="pill pill-bad">denied</span>}</td>
-                <td className="small">{r.reason}</td>
+                <td data-label="Target">{r.target}</td>
+                <td data-label="Decision">{r.allowed ? <span className="pill pill-good">allowed</span> : <span className="pill pill-bad">denied</span>}</td>
+                <td data-label="Reason" className="small mobile-wide">{r.reason}</td>
               </tr>
             ))}
           </tbody>

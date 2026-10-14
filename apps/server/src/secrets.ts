@@ -1,12 +1,13 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { registerProviderKey } from "./key-redaction.ts";
 
 /**
  * Envelope for provider API keys at rest (AES-256-GCM). The master key comes
  * from AGENTOWN_SECRET_KEY (base64, 32 bytes) or, in development, a generated
- * 0600 file. Plaintext keys only leave the server towards the runtime of the
- * agent that uses them (Kubernetes Secret / container env), never via the API.
+ * 0600 file. Plaintext keys only reach the configured provider from the server.
+ * Agent runtimes, human APIs and model context never receive them.
  */
 export class SecretBox {
   private constructor(private readonly key: Buffer) {
@@ -27,6 +28,7 @@ export class SecretBox {
   }
 
   seal(plaintext: string): Buffer {
+    registerProviderKey(plaintext);
     const iv = randomBytes(12);
     const c = createCipheriv("aes-256-gcm", this.key, iv);
     const body = Buffer.concat([c.update(plaintext, "utf8"), c.final()]);
@@ -39,6 +41,7 @@ export class SecretBox {
     const tag = sealed.subarray(13, 29);
     const d = createDecipheriv("aes-256-gcm", this.key, iv);
     d.setAuthTag(tag);
-    return Buffer.concat([d.update(sealed.subarray(29)), d.final()]).toString("utf8");
+    const value = Buffer.concat([d.update(sealed.subarray(29)), d.final()]).toString("utf8");
+    registerProviderKey(value); return value;
   }
 }

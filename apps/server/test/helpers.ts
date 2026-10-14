@@ -8,6 +8,7 @@ import { llmEnv, podName } from "../src/runtime/driver.ts";
 import type { ModelLister } from "../src/providers.ts";
 import { SecretBox } from "../src/secrets.ts";
 import { Instance } from "../src/instance.ts";
+import type { ChatModelFactory } from "../src/chat/types.ts";
 
 /** In-memory driver: pods become Ready immediately. Records issued tokens so tests can act as runtimes. */
 export class FakeDriver implements RuntimeDriver {
@@ -34,9 +35,9 @@ export class FakeDriver implements RuntimeDriver {
       name,
       agentId: spec.agentId,
       namespace: spec.namespace,
-      providerKey: spec.llm?.apiKey ?? null,
+      providerKey: (spec.llm as any)?.apiKey ?? null,
       providerWorkspaceId: spec.llm?.workspaceId ?? null,
-      llmEnv: spec.llm ? { ...llmEnv(spec.llm).secret, ...llmEnv(spec.llm).plain } : {},
+      llmEnv: spec.llm ? { ...llmEnv(spec.llm, spec.apiUrl).secret, ...llmEnv(spec.llm, spec.apiUrl).plain } : {},
       generation: spec.generation,
       phase: "Running",
       ready: true,
@@ -58,7 +59,7 @@ export class FakeDriver implements RuntimeDriver {
   }
 }
 
-export async function setup() {
+export async function setup(chatModelFactory?: ChatModelFactory) {
   const url = process.env.DATABASE_URL_TEST ?? "postgres://agentown:agentown@127.0.0.1:5432/agentown_test";
   const db = createPool(url);
   await db.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
@@ -68,10 +69,10 @@ export async function setup() {
   // Fake provider: keys starting with "sk-test-" are valid; the suffix picks the model set.
   // "sk-test-orgwide-" keys are not scoped to a workspace and need one named on each request.
   // OpenAI-compatible providers list "<provider>-chat"; a custom endpoint at an "/ollama" URL needs no key.
-  const modelLister: ModelLister = async ({ provider, apiKey, workspaceId, baseUrl }) => {
+  const modelLister: ModelLister = async ({ provider, apiKey, workspaceId, baseUrl, protocol }) => {
     if (provider === "custom" && baseUrl?.endsWith("/ollama/v1")) return ["llama3.3", "qwen3"];
     if (!apiKey.startsWith("sk-test-")) throw new Error("401 invalid x-api-key");
-    if (provider !== "anthropic") return [`${provider}-chat`, `${provider}-mini`];
+    if (provider !== "anthropic" && protocol !== "anthropic") return [`${provider}-chat`, `${provider}-mini`];
     if (apiKey.startsWith("sk-test-orgwide-") && !workspaceId) {
       throw new Error('400 {"type":"error","error":{"type":"invalid_request_error","message":"This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header"}}');
     }
@@ -82,7 +83,7 @@ export async function setup() {
   const service = await instance.org(instance.defaultOrgId);
   const driver = new FakeDriver();
   const controller = new RuntimeController(instance, driver, { apiUrlForRuntimes: "http://test" });
-  const { app, recheckTerminals } = await buildApp({ instance, driver });
+  const { app, recheckTerminals, ownerChat } = await buildApp({ instance, driver, chatModelFactory });
   // Two passes: create pods, then observe them Ready.
   const settle = async () => {
     await controller.reconcileAll();
@@ -93,6 +94,8 @@ export async function setup() {
   // People act inside an organization: tests written against /api/… run in the default one.
   const INSTANCE_ROUTES = /^\/api\/(session|orgs\/|admin\/|admin$|templates|instance\/)/;
   const call = async (token: string, method: string, url: string, body?: unknown) => {
+    // Prompt tasks need an agent with an API key; tests about task flow use a model-free playbook unless they say otherwise.
+    if (method === "POST" && /^\/api\/(orgs\/[^/]+\/)?tasks$/.test(url) && body && !(body as { spec?: unknown }).spec) body = { ...(body as object), spec: { kind: "playbook", playbook: "noop", args: {} } };
     const res = await app.inject({
       method: method as "GET",
       url: url.startsWith("/api/") && !INSTANCE_ROUTES.test(url) ? `/api/orgs/${instance.defaultOrgId}/${url.slice(5)}` : url,
@@ -115,6 +118,7 @@ export async function setup() {
     settle,
     app,
     recheckTerminals,
+    ownerChat,
     owner: ownerToken!,
     token: (agentId: string) => {
       const t = driver.tokens.get(agentId);

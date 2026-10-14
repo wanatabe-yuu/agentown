@@ -109,7 +109,7 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
       )}
 
       <div className="table-wrap">
-        <table className="grid">
+        <table className="grid mobile-cards">
           <thead>
             <tr>
               <th>Organization</th>
@@ -129,10 +129,10 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
                     <code>{o.id}</code> · {o.runtimeNamespace ?? "per-department namespaces"}
                   </div>
                 </td>
-                <td className="small">{o.templateId ?? "—"}</td>
-                <td className="small">{o.owner?.displayName ?? "—"}</td>
-                <td className="small">{o.agents}</td>
-                <td className="small">{o.members}</td>
+                <td data-label="Template" className="small">{o.templateId ?? "—"}</td>
+                <td data-label="Owner" className="small">{o.owner?.displayName ?? "—"}</td>
+                <td data-label="Agents" className="small">{o.agents}</td>
+                <td data-label="People" className="small">{o.members}</td>
                 <td>
                   <div className="btn-row">
                     {member.has(o.id) && !o.archivedAt && (

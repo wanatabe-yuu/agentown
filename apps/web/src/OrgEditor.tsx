@@ -217,7 +217,7 @@ function RowsTable({ headers, rows, render, onAdd, onRemove, note }: { headers: 
   return (
     <section>
       <p className="muted small">{note}</p>
-      <table className="grid">
+      <table className="grid mobile-cards">
         <thead>
           <tr>
             {headers.map((h) => (
@@ -230,7 +230,7 @@ function RowsTable({ headers, rows, render, onAdd, onRemove, note }: { headers: 
           {rows.map((row, i) => (
             <tr key={i}>
               {render(row, i).map((cell, j) => (
-                <td key={j}>{cell}</td>
+                <td key={j} data-label={headers[j]}>{cell}</td>
               ))}
               <td>
                 <button type="button" className="danger" onClick={() => onRemove(i)}>
@@ -333,7 +333,7 @@ function CapRows({ caps, actions, scopes, lists, withDelegable, onChange }: { ca
   const set = (i: number, patch: Partial<Cap>) => onChange(caps.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   return (
-    <table className="grid">
+    <table className="grid mobile-cards">
       <thead>
         <tr>
           <th>Action</th>
@@ -349,7 +349,7 @@ function CapRows({ caps, actions, scopes, lists, withDelegable, onChange }: { ca
           const pick = kind === "departments" || kind === "agents" || kind === "projects" ? lists[kind] : null;
           return (
             <tr key={i}>
-              <td>
+              <td data-label="Action">
                 <select
                   value={c.action}
                   onChange={(e) =>
@@ -376,7 +376,7 @@ function CapRows({ caps, actions, scopes, lists, withDelegable, onChange }: { ca
                   </div>
                 )}
               </td>
-              <td>
+              <td data-label="Scope">
                 {ORG_ONLY.includes(c.action) ? (
                   <span className="muted small">whole organization</span>
                 ) : (
@@ -397,7 +397,7 @@ function CapRows({ caps, actions, scopes, lists, withDelegable, onChange }: { ca
                 )}
               </td>
               {withDelegable && (
-                <td>
+                <td data-label="Delegable">
                   <input type="checkbox" checked={!!c.delegable} onChange={(e) => set(i, { delegable: e.target.checked })} aria-label="Delegable" />
                 </td>
               )}
@@ -477,7 +477,7 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
       </form>
 
       <h3 style={{ marginTop: 16 }}>Templates</h3>
-      <table className="grid">
+      <table className="grid mobile-cards">
         <tbody>
           {rows.map((t) => (
             <tr key={t.id}>

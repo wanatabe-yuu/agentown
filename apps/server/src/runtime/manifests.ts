@@ -110,6 +110,10 @@ export function renderManifests(opts: { images: string[]; namespaces: AgentNames
         },
         validations: [
           {
+            expression: "object.spec.containers.all(c, (!has(c.envFrom) || size(c.envFrom) == 0) && (!has(c.env) || c.env.all(e, !(e.name in ['ANTHROPIC_API_KEY', 'AGENTOWN_LLM_API_KEY']) && (!has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) || (e.name == 'AGENTOWN_TOKEN' && e.valueFrom.secretKeyRef.key == 'token' && e.valueFrom.secretKeyRef.name == 'agent-' + object.metadata.labels['agentown.io/agent'] + '-credentials')))))",
+            message: "provider API keys must stay on the server; only the agent identity token may be mounted",
+          },
+          {
             expression: `object.spec.containers.all(c, c.image in [${imageList}])`,
             message: "agent runtimes may only use images from the approved runtime catalog",
           },

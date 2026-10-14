@@ -65,8 +65,13 @@ export type Behavior = z.infer<typeof behaviorSchema>;
 const accessSchema = z.union([z.enum(["all", "own-department", "own-room"]), z.object({ rooms: z.array(idSchema).min(1) }), z.object({ zone: idSchema })]);
 export type Access = z.infer<typeof accessSchema>;
 
+const objectChatSchema = z.object({ instructions: z.string().max(12000).optional() });
+
 const objectKindSchema = z.object({
+  chat: objectChatSchema.optional(),
   name: z.string().min(1).max(60),
+  /** Default role or title shown under each one's name; an object's own `title` overrides it. */
+  title: z.string().max(40).optional(),
   /** character: a person or an animal (can be an agent's avatar). static: furniture. dynamic: moves or glows. */
   category: z.enum(OBJECT_CATEGORIES),
   look: lookSchema,
@@ -102,6 +107,9 @@ const floorSchema = z.object({
 });
 
 const placementSchema = z.object({
+  /** Stable identity within this organization; assigned on save for legacy templates. */
+  id: idSchema.optional(),
+  chat: objectChatSchema.optional(),
   kind: idSchema,
   room: idSchema,
   /** Position inside the room, from its north-west corner, in meters. */
@@ -110,6 +118,8 @@ const placementSchema = z.object({
   scale: num(0.05, 20).default(1),
   /** A name shown above it (a shop cat called Mocha). */
   label: z.string().max(40).optional(),
+  /** A smaller line under the name: a role or title (Shop cat, Barista, Music player); default: its kind's title. */
+  title: z.string().max(40).optional(),
 });
 
 export const worldSchema = z.object({
@@ -131,6 +141,11 @@ export type Room = World["floors"][number]["rooms"][number];
 
 /** Cross-references a world must satisfy, given the org's departments. */
 export function checkWorld(world: World, departments: Set<string>, issue: (message: string) => void) {
+  const ids = new Set<string>();
+  for (const o of world.objects) if (o.id) {
+    if (ids.has(o.id)) issue(`world: duplicate object id ${o.id}`);
+    ids.add(o.id);
+  }
   const rooms = new Map<string, Room>();
   for (const f of world.floors) {
     for (const r of f.rooms) {

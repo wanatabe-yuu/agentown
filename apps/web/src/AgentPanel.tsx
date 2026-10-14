@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { api } from "./api.ts";
+import { requestId } from "./requestId.ts";
 import { AgentConfigForm } from "./Credentials.tsx";
 import type { Agent, AgentDetail, Catalog, Credential, Snapshot, WorkState } from "./types.ts";
 import { ago, describeScope, StatusPill } from "./ui.tsx";
@@ -15,6 +16,7 @@ interface Props {
   catalog: Catalog | null;
   workOf: (a: Agent) => WorkState;
   now: number;
+  onChat?: () => void;
   onClose: () => void;
   onOpenTask: (id: string) => void;
   onNewTask: (assignee: string) => void;
@@ -76,6 +78,7 @@ export function AgentPanel(p: Props) {
         </button>
       </header>
 
+      {p.onChat && <div className="agent-chat-entry"><button type="button" className="primary" onClick={p.onChat}>Chat with {agent.displayName}</button><span className="muted small">Questions, analysis & tasks</span></div>}
       <nav className="tabs" role="tablist">
         {visibleTabs.map((t) => (
           <button key={t} role="tab" aria-selected={shownTab === t} className={shownTab === t ? "active" : ""} onClick={() => setTab(t)}>
@@ -176,7 +179,7 @@ export function AgentPanel(p: Props) {
             <p className="muted small">
               Effective rights come only from these grants, evaluated against the current reporting line. The job title grants nothing.
             </p>
-            <table className="grid">
+            <table className="grid mobile-cards">
               <thead>
                 <tr>
                   <th>Action</th>
@@ -191,11 +194,11 @@ export function AgentPanel(p: Props) {
                       <code>{g.action}</code>
                       {g.delegable && <span className="tag">delegable</span>}
                     </td>
-                    <td>
+                    <td data-label="Scope">
                       {describeScope(g.scope)}
                       {g.constraints.templates && <div className="muted small">templates: {g.constraints.templates.join(", ")}</div>}
                     </td>
-                    <td className="muted small">{g.issuer}</td>
+                    <td data-label="Issuer" className="muted small">{g.issuer}</td>
                   </tr>
                 ))}
               </tbody>
@@ -234,7 +237,7 @@ function SpawnForm({ manager, catalog: full, templates: allowed, notify }: { man
         templateId: template,
         displayName: name || "New hire",
         reportsToAgentId: manager.id,
-        idempotencyKey: `ui-${crypto.randomUUID()}`,
+        idempotencyKey: `ui-${requestId()}`,
         ...(usesModel && credentialId ? { config: { credentialId, model: model || null } } : {}),
       });
       notify(`Hiring ${r.agent.displayName} (${r.agent.id}); runtime is provisioning`, "info");

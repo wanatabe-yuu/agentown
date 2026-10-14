@@ -47,11 +47,11 @@ policyProfiles:
     - { action: runtime.logs, scope: self }
 
 agentTemplates:
-  - { id: store-manager-v1, jobRole: store-manager, runtimePreset: script-v1, policyProfile: store-manager }
-  - { id: shift-lead-v1, jobRole: shift-lead, runtimePreset: script-v1, policyProfile: lead }
-  - { id: barista-v1, jobRole: barista, runtimePreset: script-v1, policyProfile: worker }
-  - { id: baker-v1, jobRole: baker, runtimePreset: script-v1, policyProfile: worker }
-  - { id: roaster-v1, jobRole: roaster, runtimePreset: script-v1, policyProfile: worker }
+  - { id: store-manager-v1, jobRole: store-manager, runtimePreset: claude-v1, policyProfile: store-manager }
+  - { id: shift-lead-v1, jobRole: shift-lead, runtimePreset: claude-v1, policyProfile: lead }
+  - { id: barista-v1, jobRole: barista, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: baker-v1, jobRole: baker, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: roaster-v1, jobRole: roaster, runtimePreset: claude-v1, policyProfile: worker }
   - { id: marketer-claude-v1, jobRole: marketer, runtimePreset: claude-v1, policyProfile: worker }
   - { id: mascot-claude-v1, jobRole: mascot, runtimePreset: claude-v1, policyProfile: worker }
 
@@ -168,6 +168,7 @@ world:
       access: all
     shop-cat:
       name: Shop cat
+      title: Shop cat
       category: dynamic
       look: { character: cat, color: "#3b3b3b", accent: "#1a1a1a" }
       behaviors: [{ type: roam, amount: 0.6 }]
@@ -234,6 +235,7 @@ world:
         - { type: bob, part: cup, speed: 0.5, amount: 0.3 }
     jukebox:
       name: Jukebox
+      title: Music player
       category: dynamic
       look:
         parts:

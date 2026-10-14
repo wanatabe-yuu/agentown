@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Actor } from "@agentown/core";
+import { redactProviderKeys } from "./key-redaction.ts";
 
 export class ApiError extends Error {
   constructor(
@@ -56,7 +57,8 @@ const LINE_PATTERNS: RegExp[] = [
 ];
 
 export function redactLine(line: string): string {
-  let out = line;
+  let out = redactProviderKeys(line);
+  out = out.replace(/sk-ant-[A-Za-z0-9_-]+/g, "[redacted]");
   for (const re of LINE_PATTERNS) out = out.replace(re, "$1[redacted]");
   return out;
 }

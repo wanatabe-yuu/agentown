@@ -44,6 +44,8 @@ export interface Credential {
   keyHint: string;
   workspaceId: string | null;
   baseUrl: string | null;
+  protocol: "anthropic" | "openai";
+  authHeader: { name: string; scheme: "raw" | "bearer" };
   models: string[];
   departments: string[] | null;
   revision: number;

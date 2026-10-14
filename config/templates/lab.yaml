@@ -43,11 +43,11 @@ policyProfiles:
     - { action: runtime.logs, scope: self }
 
 agentTemplates:
-  - { id: pi-v1, jobRole: pi, runtimePreset: script-v1, policyProfile: pi }
-  - { id: group-lead-v1, jobRole: group-lead, runtimePreset: script-v1, policyProfile: group-lead }
+  - { id: pi-v1, jobRole: pi, runtimePreset: claude-v1, policyProfile: pi }
+  - { id: group-lead-v1, jobRole: group-lead, runtimePreset: claude-v1, policyProfile: group-lead }
   - { id: researcher-claude-v1, jobRole: researcher, runtimePreset: claude-v1, policyProfile: worker }
   - { id: analyst-claude-v1, jobRole: analyst, runtimePreset: claude-v1, policyProfile: worker }
-  - { id: technician-v1, jobRole: technician, runtimePreset: script-v1, policyProfile: worker }
+  - { id: technician-v1, jobRole: technician, runtimePreset: claude-v1, policyProfile: worker }
 
 humanRoles:
   postdoc:

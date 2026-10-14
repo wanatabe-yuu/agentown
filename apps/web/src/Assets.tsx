@@ -69,7 +69,7 @@ export function AssetsDialog({ onClose, notify }: { onClose: () => void; notify:
         <input type="file" multiple accept=".glb,image/png,image/jpeg,image/webp" disabled={busy} onChange={(e) => void upload(e.target.files).then(() => (e.target.value = ""))} />
         {busy ? "Uploading…" : "Upload models or textures"}
       </label>
-      <table className="grid" style={{ marginTop: 12 }}>
+      <table className="grid mobile-cards" style={{ marginTop: 12 }}>
         <thead>
           <tr>
             <th />
@@ -84,10 +84,10 @@ export function AssetsDialog({ onClose, notify }: { onClose: () => void; notify:
           {assets.map((a) => (
             <tr key={a.id}>
               <td>{a.kind === "texture" ? <img src={orgPath(`/api/assets/${a.id}`)} alt="" width={40} height={40} style={{ objectFit: "cover", borderRadius: 4 }} /> : "◆"}</td>
-              <td>{a.name}</td>
-              <td className="small">{a.kind}</td>
-              <td className="small">{mb(a.size)}</td>
-              <td>
+              <td data-label="Name">{a.name}</td>
+              <td data-label="Kind" className="small">{a.kind}</td>
+              <td data-label="Size" className="small">{mb(a.size)}</td>
+              <td data-label="Id" className="mobile-wide">
                 <code className="small">{a.id}</code>
               </td>
               <td>

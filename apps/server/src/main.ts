@@ -58,11 +58,25 @@ const RECHECK_ON = new Set(["grant.revoked", "agent.updated", "agent.retired", "
 bus.subscribe((e) => {
   if (RECHECK_ON.has(e.type)) void recheckTerminals().catch(() => {});
 });
-setInterval(() => void recheckTerminals().catch(() => {}), 5000);
+const terminalSweep = setInterval(() => void recheckTerminals().catch(() => {}), 5000);
 
 if (controller) controller.start();
-else setInterval(() => void instance.sweepLeases().catch(() => {}), 5000);
+const leaseSweep = !controller ? setInterval(() => void instance.sweepLeases().catch(() => {}), 5000) : null;
 
 const port = Number(env.PORT ?? 8080);
 await app.listen({ port, host: env.HOST ?? "0.0.0.0" });
 console.log(`[agentown] listening on :${port} (runtime driver: ${driverKind})`);
+
+// Finish private chat receipts before exiting; clients reconnect to persisted history.
+let closing = false;
+const shutdown = async () => {
+  if (closing) return;
+  closing = true;
+  controller?.stop();
+  clearInterval(terminalSweep);
+  if (leaseSweep) clearInterval(leaseSweep);
+  await app.close();
+  await db.end();
+  process.exit(0);
+};
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => void shutdown().catch(() => process.exit(1)));

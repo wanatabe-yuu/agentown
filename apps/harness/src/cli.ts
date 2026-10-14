@@ -9,8 +9,15 @@ import { AgentownClient, ApiError } from "./client.ts";
 
 const HELP = `agentown <command>
 
-  whoami                                   show this agent's identity
+  whoami                                   identity and permissions (can = on yourself only)
+  capabilities                             permitted task/configuration targets in this organization
   agents                                   list agents you are allowed to see
+  agent get ID                             inspect an agent and your permissions on it
+  credentials                              list available credential IDs and models (never API keys)
+  agent configure ID [--credential ID] [--model MODEL] [--effort LEVEL]
+                     [--instructions TEXT] [--max-turns N]
+                                           configure an agent you are allowed to manage
+                                           use "none" to clear credential, model or effort
   spawn --template T --name N [--manager M] [--key K]
                                            hire a new agent from an approved template
   task create --to AGENT --title T [--desc D] [--criteria C] [--project P]
@@ -31,7 +38,7 @@ function parseFlags(argv: string[]) {
     const a = argv[i]!;
     if (a.startsWith("--")) {
       const k = a.slice(2);
-      const v = argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "true";
+      const v = argv[i + 1] !== undefined && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "true";
       (flags[k] ??= []).push(v);
     } else pos.push(a);
   }
@@ -57,8 +64,16 @@ async function main() {
   const api = AgentownClient.fromEnv();
 
   switch (cmd) {
-    case "whoami":
-      return out(await api.get(`/api/agents/${process.env.AGENTOWN_AGENT_ID}`));
+    case "whoami": {
+      const identity = await api.get(`/api/agents/${process.env.AGENTOWN_AGENT_ID}`);
+      return out({ ...identity, capabilities: await api.get("/api/capabilities") });
+    }
+    case "capabilities":
+      return out(await api.get("/api/capabilities"));
+    case "credentials":
+      return out(await api.get("/api/credentials"));
+    case "agent":
+      return agent(api, sub, rest);
     case "agents": {
       const r = await api.get("/api/agents");
       for (const a of r.agents) out(`${a.id}\t${a.displayName}\t${a.jobRole}\t${a.departmentId}\treports-to=${a.reportsToAgentId ?? "-"}\t${a.work.state}`);
@@ -79,6 +94,27 @@ async function main() {
     default:
       throw new Error(`unknown command ${cmd}\n${HELP}`);
   }
+}
+
+async function agent(api: AgentownClient, sub: string | undefined, rest: string[]) {
+  const { pos, flags, one } = parseFlags(rest);
+  const id = pos[0];
+  if (!id || pos.length !== 1) throw new Error(`agent ${sub} requires one agent ID`);
+  const path = `/api/agents/${encodeURIComponent(id)}`;
+  if (sub === "get") return out(await api.get(path));
+  if (sub !== "configure") throw new Error(`unknown agent command ${sub}\n${HELP}`);
+  const fields = { credential: "credentialId", model: "model", effort: "effort", instructions: "instructions", "max-turns": "maxTurns" } as const;
+  const change: Record<string, unknown> = {};
+  for (const flag of Object.keys(flags)) {
+    if (!Object.hasOwn(fields, flag)) throw new Error(`unknown configuration flag --${flag}`);
+    const value = one(flag)!;
+    if (value === "true" || flags[flag]!.length !== 1) throw new Error(`--${flag} requires one value`);
+    const field = fields[flag as keyof typeof fields];
+    change[field] = field === "maxTurns" ? Number(value)
+      : value === "none" && ["credentialId", "model", "effort"].includes(field) ? null : value;
+  }
+  if (!Object.keys(change).length) throw new Error("agent configure requires at least one configuration flag");
+  return out(await api.put(`${path}/config`, change));
 }
 
 async function task(api: AgentownClient, sub: string | undefined, rest: string[]) {

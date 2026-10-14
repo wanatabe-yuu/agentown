@@ -22,7 +22,7 @@ const spec = {
   storageRef: `agent-${agentId}-workspace`,
   displayName: "Smoke",
   jobRole: "engineer",
-  llm: { provider: "anthropic", apiKey: "sk-smoke-not-a-real-key", workspaceId: "wrkspc_smoke", baseUrl: null },
+  llm: { provider: "anthropic", workspaceId: "wrkspc_smoke", baseUrl: null },
 };
 let issued = 0;
 await driver.ensureIdentity(spec, async () => {

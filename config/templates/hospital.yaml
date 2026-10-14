@@ -45,9 +45,9 @@ policyProfiles:
     - { action: runtime.logs, scope: self }
 
 agentTemplates:
-  - { id: director-v1, jobRole: director, runtimePreset: script-v1, policyProfile: director }
-  - { id: coordinator-v1, jobRole: coordinator, runtimePreset: script-v1, policyProfile: coordinator }
-  - { id: clerk-v1, jobRole: clerk, runtimePreset: script-v1, policyProfile: worker }
+  - { id: director-v1, jobRole: director, runtimePreset: claude-v1, policyProfile: director }
+  - { id: coordinator-v1, jobRole: coordinator, runtimePreset: claude-v1, policyProfile: coordinator }
+  - { id: clerk-v1, jobRole: clerk, runtimePreset: claude-v1, policyProfile: worker }
   - { id: assistant-claude-v1, jobRole: assistant, runtimePreset: claude-v1, policyProfile: worker }
 
 humanRoles:

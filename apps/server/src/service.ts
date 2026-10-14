@@ -1,3 +1,4 @@
+import { worldIdentities } from "./world-identities.ts";
 import {
   type Action,
   type Actor,
@@ -13,6 +14,11 @@ import {
   type TaskStatus,
   type Target,
   type WorkState,
+  type ApiProtocol,
+  type AuthHeader,
+  apiProtocol,
+  defaultAuthHeader,
+  authHeaderSchema,
   OrgGraph,
   worldAssets,
   type World,
@@ -90,6 +96,8 @@ interface CredentialRow {
   key_hint: string;
   workspace_id: string | null;
   base_url: string | null;
+  api_protocol: ApiProtocol | null;
+  auth_header: AuthHeader | null;
   models: string[];
   departments: string[] | null;
   revision: number;
@@ -102,6 +110,7 @@ interface CredentialRow {
 export interface RuntimeRow {
   agent_id: string;
   preset_id: string;
+  pending_preset_id: string | null;
   generation: number;
   namespace: string;
   workload_ref: string | null;
@@ -404,7 +413,8 @@ export class Service {
    */
   async replaceConfig(actor: Actor, input: { revision: number; doc: Record<string, unknown> }, parse: (doc: Record<string, unknown>) => OrgConfig) {
     this.requireOrgOwner(actor, "org.config.update");
-    const { organization: _o, runtimeCatalog: _r, format: _f, meta: _m, ...doc } = input.doc;
+    const { organization: _o, runtimeCatalog: _r, format: _f, meta: _m, ...rawDoc } = input.doc;
+    const doc = worldIdentities(rawDoc);
     return this.withTx(async (ctx) => {
       const { rows } = await ctx.c.query("SELECT config_revision FROM organizations WHERE id=$1 FOR UPDATE", [this.orgId]);
       if (rows[0].config_revision !== input.revision) throw conflict("stale", "the organization was changed meanwhile; reload and try again");
@@ -475,7 +485,7 @@ export class Service {
       const { rows } = await ctx.c.query("SELECT config, config_revision FROM organizations WHERE id=$1 FOR UPDATE", [this.orgId]);
       if (rows[0].config_revision !== input.revision) throw conflict("stale", "the organization was changed meanwhile; reload and try again");
       const { world: _old, ...rest } = rows[0].config as Record<string, unknown>;
-      const doc = input.world ? { ...rest, world: input.world } : rest;
+      const doc = worldIdentities(input.world ? { ...rest, world: input.world } : rest);
       let next: OrgConfig;
       try {
         next = parse(doc);
@@ -489,7 +499,7 @@ export class Service {
       );
       const revision = upd.rows[0]!.config_revision;
       await this.emit(ctx, { type: "org.config", payload: { revision, part: "world" } });
-      return { revision, world: input.world };
+      return { revision, world: (doc as Record<string, unknown>).world ?? null };
     });
   }
 
@@ -667,9 +677,9 @@ export class Service {
     return rows[0];
   }
 
-  async getRuntimeRow(id: string, q: Queryable = this.db): Promise<RuntimeRow> {
+  async getRuntimeRow(id: string, q: Queryable = this.db, lock = false): Promise<RuntimeRow> {
     const { rows } = await q.query<RuntimeRow>(
-      "SELECT r.* FROM agent_runtimes r JOIN agents a ON a.id = r.agent_id WHERE r.agent_id = $1 AND a.org_id = $2",
+      `SELECT r.* FROM agent_runtimes r JOIN agents a ON a.id = r.agent_id WHERE r.agent_id = $1 AND a.org_id = $2${lock ? " FOR UPDATE OF r" : ""}`,
       [id, this.orgId],
     );
     if (!rows[0]) throw notFound("runtime");
@@ -930,7 +940,7 @@ export class Service {
     return { credentialId: a.credential_id, model: a.model, effort: a.effort, instructions: a.instructions, maxTurns: a.max_turns };
   }
 
-  /** What the harness needs per run (non-secret). The API key reaches the runtime separately. */
+  /** What the harness needs per run; the provider key never leaves the server. */
   async runConfig(a: AgentRow, q: Queryable = this.db) {
     // The runtime's own preset, never the template: templates can be edited or removed while agents run.
     const rt = await this.getRuntimeRow(a.id, q);
@@ -956,9 +966,11 @@ export class Service {
       id: r.id,
       name: r.name,
       provider: r.provider,
-      keyHint: r.key_hint ? `…${r.key_hint}` : "(no key)",
+      keyHint: r.key_hint ? "Hidden" : "(no key)",
       workspaceId: r.workspace_id,
       baseUrl: providerBaseUrl(r.provider, r.base_url),
+      protocol: apiProtocol(r.provider, r.api_protocol),
+      authHeader: r.auth_header ?? defaultAuthHeader(apiProtocol(r.provider, r.api_protocol)),
       models: r.models,
       departments: r.departments,
       revision: r.revision,
@@ -975,17 +987,28 @@ export class Service {
     return rows[0];
   }
 
+  /** Server-only provider target; never return this from an HTTP route or tool. */
+  async ownerChatCredential(actor: Actor, id: string) {
+    this.requireOrgOwner(actor, "owner.chat");
+    const c = await this.getCredentialRow(id);
+    if (c.revoked_at) throw conflict("revoked", "credential is revoked");
+    return { provider: c.provider, apiKey: this.secrets.open(c.ciphertext), workspaceId: c.workspace_id,
+      baseUrl: providerBaseUrl(c.provider, c.base_url), protocol: apiProtocol(c.provider, c.api_protocol),
+      authHeader: c.auth_header ?? defaultAuthHeader(apiProtocol(c.provider, c.api_protocol)), revision: c.revision, models: c.models };
+  }
+
   private async requireCredentialManage(actor: Actor, action: string, target: string | null) {
     await this.require(actor, "credential.manage", {}, { auditAs: action, detail: { credential: target } });
   }
 
-  private async discoverModels(provider: Provider, apiKey: string, workspaceId: string | null, customBaseUrl: string | null): Promise<string[]> {
+  private async discoverModels(provider: Provider, apiKey: string, workspaceId: string | null, customBaseUrl: string | null, protocol?: ApiProtocol, authHeader?: AuthHeader): Promise<string[]> {
     try {
-      const models = await this.modelLister({ provider, apiKey, workspaceId, baseUrl: providerBaseUrl(provider, customBaseUrl) });
+      const models = await this.modelLister({ provider, apiKey, workspaceId, baseUrl: providerBaseUrl(provider, customBaseUrl), protocol, authHeader });
       if (!models.length) throw new Error("key works but lists no models");
       return models;
     } catch (err) {
-      const message = String((err as Error).message ?? err);
+      const rawMessage = String((err as Error).message ?? err);
+      const message = apiKey ? rawMessage.split(apiKey).join("[redacted]") : rawMessage;
       if (provider === "anthropic" && !workspaceId && /not scoped to a workspace|anthropic-workspace-id/i.test(message)) {
         throw badRequest(
           "this API key belongs to the organization, not to a workspace: enter the ID of the workspace to use (wrkspc_…, Anthropic Console → Settings → Workspaces), or create the key inside a workspace",
@@ -1021,6 +1044,8 @@ export class Service {
       apiKey?: string | null;
       workspaceId?: string | null;
       baseUrl?: string | null;
+      protocol?: ApiProtocol | null;
+      authHeader?: AuthHeader | null;
       departments: string[] | null;
     },
   ) {
@@ -1029,9 +1054,16 @@ export class Service {
     if (!info || !PROVIDERS.includes(input.provider)) throw badRequest("unsupported provider");
     for (const d of input.departments ?? []) if (!this.config.departments.some((x) => x.id === d)) throw badRequest(`unknown department ${d}`);
     const apiKey = input.apiKey?.trim() ?? "";
+    if (apiKey && apiKey.length < 8) throw badRequest("API key must be at least 8 characters.");
+    if (/[\r\n\0]/.test(apiKey)) throw badRequest("API key must not contain line breaks.");
+    if (input.provider !== "custom" && (input.protocol != null || input.authHeader != null)) throw badRequest("Custom protocol and auth headers require the Custom URL provider.");
+    const protocol = apiProtocol(input.provider, input.protocol);
+    const parsedAuth = authHeaderSchema.safeParse(input.authHeader ?? defaultAuthHeader(protocol));
+    if (!parsedAuth.success) throw badRequest("Invalid authentication header.");
+    const authHeader = parsedAuth.data;
     if (info.keyRequired && apiKey.length < 8) throw badRequest(`${info.label} needs an API key`);
     const workspaceId = input.workspaceId?.trim() || null;
-    if (workspaceId && input.provider !== "anthropic") throw badRequest("a workspace ID only applies to Anthropic keys");
+    if (workspaceId && protocol !== "anthropic") throw badRequest("a workspace ID only applies to Anthropic keys");
     if (workspaceId && !WORKSPACE_ID_PATTERN.test(workspaceId)) throw badRequest("workspace ID must look like wrkspc_…");
     let baseUrl: string | null = null;
     if (input.provider === "custom") {
@@ -1044,24 +1076,26 @@ export class Service {
     } else if (input.baseUrl?.trim()) {
       throw badRequest(`${info.label} uses a fixed endpoint; choose "custom" to use your own base URL`);
     }
-    const models = await this.discoverModels(input.provider, apiKey, workspaceId, baseUrl);
+    const models = await this.discoverModels(input.provider, apiKey, workspaceId, baseUrl, protocol, authHeader);
     return this.withTx(async (ctx) => {
       const id = newId("k");
       await ctx.c.query(
-        `INSERT INTO credentials(id, name, provider, ciphertext, key_hint, workspace_id, base_url, models, departments, created_by, org_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        `INSERT INTO credentials(id, name, provider, ciphertext, key_hint, workspace_id, base_url, models, departments, created_by, org_id, api_protocol, auth_header)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           id,
           input.name.slice(0, 60),
           input.provider,
           this.secrets.seal(apiKey),
-          apiKey.length >= 8 ? apiKey.slice(-4) : "",
+          apiKey ? "stored" : "",
           workspaceId,
           baseUrl,
           models,
           input.departments?.length ? input.departments : null,
           actorRef(actor),
           this.orgId,
+          input.provider === "custom" ? protocol : null,
+          input.provider === "custom" ? JSON.stringify(authHeader) : null,
         ],
       );
       await this.emit(ctx, { type: "credential.created", payload: { credentialId: id, name: input.name, models: models.length } });
@@ -1073,9 +1107,34 @@ export class Service {
     await this.requireCredentialManage(actor, "credential.refresh", id);
     const cred = await this.getCredentialRow(id);
     if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
-    const models = await this.discoverModels(cred.provider, this.secrets.open(cred.ciphertext), cred.workspace_id, cred.base_url);
+    const models = await this.discoverModels(cred.provider, this.secrets.open(cred.ciphertext), cred.workspace_id, cred.base_url,
+      apiProtocol(cred.provider, cred.api_protocol), cred.auth_header ?? defaultAuthHeader(apiProtocol(cred.provider, cred.api_protocol)));
     await this.db.query("UPDATE credentials SET models=$2, models_refreshed_at=now() WHERE id=$1 AND org_id=$3", [id, models, this.orgId]);
     return this.presentCredential(await this.getCredentialRow(id));
+  }
+
+  async updateCredentialConnection(actor: Actor, id: string, input: { revision: number; baseUrl: string; protocol: ApiProtocol; authHeader: AuthHeader; workspaceId?: string | null }) {
+    this.requireOrgOwner(actor, "credential.connection");
+    await this.requireCredentialManage(actor, "credential.connection", id);
+    const cred = await this.getCredentialRow(id);
+    if (cred.provider !== "custom") throw badRequest("Only Custom URL connections can be edited.");
+    if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
+    if (cred.revision !== input.revision) throw conflict("revision", "This key changed. Reload its settings.");
+    let baseUrl: string;
+    try { baseUrl = normalizeBaseUrl(input.baseUrl); } catch (e) { throw badRequest((e as Error).message); }
+    if (baseUrl !== normalizeBaseUrl(cred.base_url!)) throw badRequest("The stored key is bound to its endpoint. Add a new key to use a different URL.");
+    const auth = authHeaderSchema.safeParse(input.authHeader);
+    if (!auth.success) throw badRequest("Invalid authentication header.");
+    const workspaceId = input.workspaceId?.trim() || null;
+    if (workspaceId && (input.protocol !== "anthropic" || !WORKSPACE_ID_PATTERN.test(workspaceId))) throw badRequest("A workspace ID needs Anthropic protocol and must look like wrkspc_….");
+    const models = await this.discoverModels("custom", this.secrets.open(cred.ciphertext), workspaceId, baseUrl, input.protocol, auth.data);
+    return this.withTx(async ctx => {
+      const updated = await ctx.c.query(`UPDATE credentials SET base_url=$2,api_protocol=$3,auth_header=$4,workspace_id=$5,models=$6,models_refreshed_at=now(),revision=revision+1
+        WHERE id=$1 AND org_id=$7 AND revision=$8 AND revoked_at IS NULL RETURNING id`, [id, baseUrl, input.protocol, JSON.stringify(auth.data), workspaceId, models, this.orgId, input.revision]);
+      if (!updated.rowCount) throw conflict("revision", "This key changed. Reload its settings.");
+      await this.emit(ctx, { type: "credential.updated", payload: { credentialId: id, protocol: input.protocol, authHeader: auth.data, models: models.length } });
+      return this.presentCredential(await this.getCredentialRow(id, ctx.c));
+    });
   }
 
   /** Revoking pulls the key from every runtime that holds it (the controller replaces idle runtimes). */
@@ -1134,27 +1193,43 @@ export class Service {
     return this.presentAgentById(id);
   }
 
-  /** Controller-side: the key the agent's runtime should hold now, tagged with a revision. */
+  /** Controller-side: non-secret broker routing metadata, tagged with a revision. */
   async runtimeCredential(agentId: string): Promise<{ rev: string; llm: RuntimeLlm | null }> {
     const a = await this.getAgentRow(agentId);
     if (!a.credential_id) return { rev: "none", llm: null };
     const cred = await this.getCredentialRow(a.credential_id);
     if (cred.revoked_at) return { rev: `${cred.id}:revoked`, llm: null };
     return {
-      rev: `${cred.id}:${cred.revision}`,
+      rev: `broker-v1:${cred.id}:${cred.revision}`,
       llm: {
         provider: cred.provider,
-        apiKey: this.secrets.open(cred.ciphertext),
         workspaceId: cred.workspace_id,
         baseUrl: providerBaseUrl(cred.provider, cred.base_url),
+        ...(cred.provider === "custom" ? { protocol: apiProtocol(cred.provider, cred.api_protocol), authHeader: cred.auth_header ?? defaultAuthHeader(apiProtocol(cred.provider, cred.api_protocol)) } : {}),
       },
     };
+  }
+
+  /** Private server target for the caller's current generation; never a public response. */
+  async runtimeProviderTarget(actor: Actor, generation: number) {
+    const id = this.requireAgent(actor);
+    const rt = await this.requireCurrentGeneration(id, generation, this.db);
+    const agent = await this.getAgentRow(id);
+    if (agent.lifecycle_state === "retired" || agent.desired_runtime !== "running") throw deny("Runtime is not active.");
+    const preset = this.config.runtimeCatalog.find(p => p.id === rt.preset_id);
+    if (preset?.harness !== "claude") throw deny("This runtime has no model broker access.");
+    if (!agent.credential_id) throw conflict("no_credential", "No API credential is configured.");
+    const cred = await this.getCredentialRow(agent.credential_id);
+    if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
+    return { provider: cred.provider, apiKey: this.secrets.open(cred.ciphertext), workspaceId: cred.workspace_id,
+      baseUrl: providerBaseUrl(cred.provider, cred.base_url), protocol: apiProtocol(cred.provider, cred.api_protocol),
+      authHeader: cred.auth_header ?? defaultAuthHeader(apiProtocol(cred.provider, cred.api_protocol)), models: cred.models, model: agent.model };
   }
 
   async desiredSecretRev(a: AgentRow): Promise<string> {
     if (!a.credential_id) return "none";
     const cred = await this.getCredentialRow(a.credential_id);
-    return cred.revoked_at ? `${cred.id}:revoked` : `${cred.id}:${cred.revision}`;
+    return cred.revoked_at ? `${cred.id}:revoked` : `broker-v1:${cred.id}:${cred.revision}`;
   }
 
   async markSecretApplied(agentId: string, generation: number, rev: string) {
@@ -1281,6 +1356,13 @@ export class Service {
     };
   }
 
+  /** Prompt work needs a model: an LLM runtime and an API key. Without one an agent only moves around the office. */
+  private async requirePromptable(a: AgentRow, q: Queryable) {
+    const rt = (await q.query<{ preset_id: string }>("SELECT preset_id FROM agent_runtimes WHERE agent_id=$1", [a.id])).rows[0];
+    if (this.config.runtimeCatalog.find((p) => p.id === rt?.preset_id)?.harness === "script") throw badRequest(`${a.display_name} runs the script harness and cannot take prompt tasks`);
+    if (!a.credential_id) throw badRequest(`${a.display_name} has no API key: assign one in its Config tab first`);
+  }
+
   private validateSpec(spec: unknown): TaskSpec {
     const s = (spec ?? { kind: "prompt" }) as TaskSpec;
     if (s.kind === "prompt") return { kind: "prompt" };
@@ -1329,6 +1411,7 @@ export class Service {
       if (assignee) {
         const a = await this.getAgentRow(assignee, ctx.c);
         if (a.lifecycle_state === "retired") throw conflict("retired", "assignee is retired");
+        if (spec.kind === "prompt") await this.requirePromptable(a, ctx.c);
         await this.require(actor, "task.create", { agentId: assignee, projectId: input.projectId ?? null }, { policy, q: ctx.c, detail: { title: input.title } });
         // Inline shell runs with the assignee's identity and data: treat it as exec.
         if (spec.kind === "script" && !(actor.kind === "agent" && actor.id === assignee)) {
@@ -1447,6 +1530,7 @@ export class Service {
       const policy = await this.loadPolicy(ctx.c);
       const a = await this.getAgentRow(assigneeAgentId, ctx.c);
       if (a.lifecycle_state === "retired") throw conflict("retired", "assignee is retired");
+      if (t.spec.kind === "prompt") await this.requirePromptable(a, ctx.c);
       // Need authority over both the current and the new owner.
       if (t.assignee_agent_id && actor.kind === "agent" && t.created_by !== actorRef(actor)) {
         await this.require(actor, "task.assign", { agentId: t.assignee_agent_id, projectId: t.project_id }, { policy, q: ctx.c, auditAs: "task.assign.from" });
@@ -1519,7 +1603,8 @@ export class Service {
 
   /** Reject calls from a runtime generation that has been replaced. */
   private async requireCurrentGeneration(agentId: string, generation: number, q: Queryable) {
-    const rt = await this.getRuntimeRow(agentId, q);
+    // Serialize claims with preset upgrades so an idle check cannot race a new run.
+    const rt = await this.getRuntimeRow(agentId, q, true);
     if (rt.generation !== generation) {
       throw conflict("stale_runtime", `runtime generation ${generation} was replaced by ${rt.generation}`);
     }
@@ -1552,7 +1637,7 @@ export class Service {
   async claim(actor: Actor, generation: number) {
     const agentId = this.requireAgent(actor);
     return this.withTx(async (ctx) => {
-      await this.requireCurrentGeneration(agentId, generation, ctx.c);
+      const rt = await this.requireCurrentGeneration(agentId, generation, ctx.c);
       const agent = await this.getAgentRow(agentId, ctx.c);
       const existing = await ctx.c.query(
         "SELECT * FROM task_runs WHERE agent_id=$1 AND status='running' AND runtime_generation=$2 LIMIT 1",
@@ -1562,6 +1647,8 @@ export class Service {
         const run = existing.rows[0];
         return { run: this.presentRun(run), task: this.presentTask(await this.getTaskRow(run.task_id, ctx.c)), resumed: true, config: await this.runConfig(agent, ctx.c) };
       }
+      // Finish an existing run, then let the controller upgrade before taking more work.
+      if (rt.pending_preset_id && this.config.runtimeCatalog.some((p) => p.id === rt.pending_preset_id && p.harness === "claude")) return null;
       if (!agent.accepting_work || agent.lifecycle_state === "retired") return null;
       const { rows } = await ctx.c.query<TaskRow>(
         `SELECT * FROM tasks WHERE assignee_agent_id=$1 AND status='assigned' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`,
@@ -1749,6 +1836,23 @@ export class Service {
     return this.withTx((ctx) => this.bumpGeneration(ctx, agentId, reason));
   }
 
+  /** Apply a queued upgrade once; keep busy agents and unavailable presets pending. */
+  async applyPendingRuntimeUpgrade(agentId: string): Promise<boolean> {
+    return this.withTx(async (ctx) => {
+      const rt = await this.getRuntimeRow(agentId, ctx.c, true);
+      const target = this.config.runtimeCatalog.find((p) => p.id === rt.pending_preset_id && p.harness === "claude");
+      if (!target || (await ctx.c.query("SELECT 1 FROM task_runs WHERE agent_id=$1 AND status='running'", [agentId])).rowCount) return false;
+      await ctx.c.query(
+        "UPDATE agent_runtimes SET preset_id=$2, pending_preset_id=NULL, observed_state='none', observed_detail=NULL, applied_secret_rev=NULL WHERE agent_id=$1",
+        [agentId, target.id],
+      );
+      const reason = `runtime preset upgrade: ${rt.preset_id} -> ${target.id}`;
+      await this.bumpGeneration(ctx, agentId, reason);
+      await this.audit(ctx.c, "system:migration", "runtime.upgrade", agentId, true, reason);
+      return true;
+    });
+  }
+
   // ---------------------------------------------------------------- office snapshot & events
 
   async snapshot(actor: Actor) {
@@ -1839,6 +1943,7 @@ export class Service {
       /** Agents the caller may give a task to, and those it may also run shell work on. */
       taskTargets: agents.filter((a) => authorize(actor, "task.create", { agentId: a.id }, policy).allowed).map((a) => a.id),
       execTargets: agents.filter((a) => authorize(actor, "runtime.exec", { agentId: a.id }, policy).allowed).map((a) => a.id),
+      configureTargets: agents.filter((a) => authorize(actor, "agent.configure", { agentId: a.id }, policy).allowed).map((a) => a.id),
     };
   }
 

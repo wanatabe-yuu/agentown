@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { authHeaderSchema, anthropicBaseUrl, anthropicKeyHeaders, defaultAuthHeader } from "@agentown/core";
 import { type AgentIdentity, NO_CREDENTIAL, runBashTool, taskPrompts } from "./common.ts";
 import { ScriptAdapter } from "./script.ts";
 import type { Adapter, RunContext, RunResult } from "./types.ts";
@@ -15,22 +16,31 @@ import type { Adapter, RunContext, RunResult } from "./types.ts";
  */
 export class ClaudeAdapter implements Adapter {
   private readonly client: Anthropic;
+  private readonly custom = process.env.AGENTOWN_LLM_PROVIDER === "custom";
+  private readonly broker = process.env.AGENTOWN_LLM_BROKER === "1";
   private readonly fallback = new ScriptAdapter();
 
   constructor(
     private readonly defaultModel: string,
     private readonly identity: AgentIdentity,
   ) {
-    // Reads ANTHROPIC_API_KEY: this agent's own key, mounted from its per-agent secret.
-    // A key made at the organization level (not inside a workspace) must name its workspace on every request.
-    const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID;
-    this.client = new Anthropic(workspaceId ? { defaultHeaders: { "anthropic-workspace-id": workspaceId } } : {});
+    // Production runtimes authenticate to the broker with their identity token, never a provider key.
+    // Direct provider mode is retained for standalone adapter tests/development only.
+    const key = this.broker ? process.env.AGENTOWN_TOKEN ?? "" : process.env.ANTHROPIC_API_KEY ?? "";
+    const workspaceId = this.broker ? undefined : process.env.ANTHROPIC_WORKSPACE_ID;
+    const auth = this.broker ? { name: "authorization", scheme: "bearer" as const } : process.env.AGENTOWN_LLM_AUTH_HEADER ? authHeaderSchema.parse({ name: process.env.AGENTOWN_LLM_AUTH_HEADER, scheme: process.env.AGENTOWN_LLM_AUTH_SCHEME ?? "raw" }) : defaultAuthHeader("anthropic");
+    this.client = new Anthropic({ apiKey: key || null, authToken: null,
+      ...(process.env.ANTHROPIC_BASE_URL ? { baseURL: anthropicBaseUrl(process.env.ANTHROPIC_BASE_URL) } : {}),
+      defaultHeaders: { ...anthropicKeyHeaders(key, auth), ...(workspaceId ? { "anthropic-workspace-id": workspaceId } : {}),
+        ...(this.broker ? { "x-agentown-generation": process.env.AGENTOWN_GENERATION ?? "" } : {}) },
+      fetchOptions: { redirect: "error" },
+    });
   }
 
   async run(ctx: RunContext): Promise<RunResult> {
     // Playbooks/scripts are deterministic even on an LLM runtime.
     if (ctx.task.spec.kind !== "prompt") return this.fallback.run(ctx);
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (this.broker ? !ctx.config.hasCredential || !process.env.AGENTOWN_TOKEN : !process.env.ANTHROPIC_API_KEY && !(this.custom && ctx.config.hasCredential)) {
       return { outcome: "blocked", summary: NO_CREDENTIAL };
     }
     const model = ctx.config.model ?? this.defaultModel;
@@ -50,12 +60,15 @@ export class ClaudeAdapter implements Adapter {
         ...(ctx.config.effort ? { output_config: { effort: ctx.config.effort } } : {}),
         max_tokens: 16000,
         system,
-        tools: [{ type: "bash_20250124", name: "bash" }],
+        // Gateways may support standard function tools without Anthropic's native bash extension.
+        tools: this.custom ? [{ name: "bash", description: "Run a shell command inside this agent's isolated Linux runtime. Each command starts a fresh shell in the task directory.",
+          input_schema: { type: "object", properties: { command: { type: "string" }, restart: { type: "boolean" } }, required: ["command"] } }] : [{ type: "bash_20250124", name: "bash" }],
         messages,
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
+        ...(!this.custom ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" } : {}),
       };
-      const response = (await this.client.beta.messages.create(params as any, { signal: ctx.signal })) as unknown as Anthropic.Message;
+      const response = (await (this.custom
+        ? this.client.messages.create(params as any, { signal: ctx.signal })
+        : this.client.beta.messages.create(params as any, { signal: ctx.signal }))) as unknown as Anthropic.Message;
       usage.turns++;
       usage.input_tokens += response.usage.input_tokens;
       usage.output_tokens += response.usage.output_tokens;

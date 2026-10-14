@@ -109,6 +109,7 @@ export class RuntimeController {
   }
 
   async reconcile(service: Service, a: AgentRow, rt: RuntimeRow): Promise<void> {
+    if (rt.pending_preset_id && await service.applyPendingRuntimeUpgrade(a.id)) rt = await service.getRuntimeRow(a.id);
     const observe = (generation: number, state: string, detail: string | null, workloadRef: string | null, ready: boolean) =>
       service.recordObservation(a.id, { state, detail, workloadRef, generation, ready });
     const pods = await this.driver.listPods(rt.namespace, a.id);

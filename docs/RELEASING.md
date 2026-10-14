@@ -24,6 +24,8 @@
 
 Hosts install or upgrade with `curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo bash`, or `sudo agentownctl upgrade`. See [GCP.md](GCP.md).
 
+The prompt-task upgrade automatically moves existing `script-v1` agents to the install's approved `claude-v1` preset, and updates agent templates in stored organizations and saved templates. Each migrated agent gets one new runtime generation while keeping its workspace and settings. Running tasks finish on the old runtime before the controller applies the upgrade; stopped agents stay stopped. If `claude-v1` is missing or does not use the LLM harness, the migration stays pending until an approved LLM preset is available on a later server start. Agents still need an API credential to take prompt tasks. Back up PostgreSQL before upgrading; data migrations are not reversed by switching release directories.
+
 To try a release build locally: `scripts/package-release.sh v0.1.0 out/` (needs Docker). Skip the image build with `AGENTOWN_SKIP_IMAGE=1`.
 
 ## Supply chain: what protects against what

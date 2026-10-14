@@ -21,6 +21,7 @@ interface Props {
   needsOwner: Set<string>;
   selected: string | null;
   onSelect: (id: string | null) => void;
+  onObjectChat?: (id: string) => void;
   flights: Flight[];
   dark: boolean;
   /** May edit the world (org.design). */
@@ -81,8 +82,8 @@ export default function Office3D(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [shownWorld, snapshot.departments, snapshot.agents.map((a) => `${a.id}:${a.departmentId}:${a.seat}:${a.lifecycleState}:${a.jobRole}`).join("|")],
   );
-  const latest = useRef({ props, layout, editing, edit });
-  latest.current = { props, layout, editing, edit };
+  const latest = useRef({ props, layout, editing, edit, floor, focusRoom });
+  latest.current = { props, layout, editing, edit, floor, focusRoom };
   const engine = useRef<{
     renderer: THREE.WebGLRenderer;
     labels: CSS2DRenderer;
@@ -158,6 +159,13 @@ export default function Office3D(props: Props) {
       const aspect = w / h;
       Object.assign(camera, { left: -VIEW * aspect, right: VIEW * aspect, top: VIEW, bottom: -VIEW });
       camera.updateProjectionMatrix();
+      // Reframe on rotation or panel resizing; a desktop zoom can otherwise
+      // crop the office on a phone, or leave it tiny after rotating back.
+      if (engine.current?.office) {
+        const { layout: l, floor: f, focusRoom: roomId } = latest.current;
+        const room = l.rooms.find((r) => r.id === roomId);
+        focus(room ? [room] : f === "all" ? l.rooms : l.rooms.filter((r) => r.floorIndex === f));
+      }
     };
     const ro = new ResizeObserver(resize);
     ro.observe(el);
@@ -233,6 +241,14 @@ export default function Office3D(props: Props) {
         } else {
           const id = pickAt(ev);
           if (id) latest.current.props.onSelect(id);
+          else if (latest.current.props.onObjectChat) {
+            aim(ev);
+            const e = engine.current!;
+            const hits = e.office ? ray.intersectObject(e.office.root, true).filter(h => h.object.visible && (h.object as THREE.Mesh).isMesh) : [];
+            const index = hits.map(h => objectIndexOf(h.object)).find(i => i !== null);
+            const object = index != null ? latest.current.props.snapshot.world?.objects[index] : undefined;
+            if (object?.id) latest.current.props.onObjectChat(object.id);
+          }
         }
       }
       down = null;
