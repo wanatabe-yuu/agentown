@@ -9,9 +9,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Set at build time: -ldflags "-X main.version=v0.1.0"
@@ -274,6 +276,8 @@ func up(c *Cluster, force bool) error {
 		}
 	}
 
+	warnIfUIExposed(c.Server.Host)
+
 	step("Done")
 	fmt.Printf(`  Agentown %s is running on %s.
 
@@ -282,6 +286,25 @@ func up(c *Cluster, force bool) error {
   agentownctl token      the owner token to sign in with
 `, tag, c.Server.Host)
 	return nil
+}
+
+// warnIfUIExposed checks whether the server's port 8080 answers from this
+// machine. The UI has no TLS and the owner token is its only credential, so
+// it must only be reachable through the SSH tunnel.
+func warnIfUIExposed(host string) {
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, "8080"), 3*time.Second)
+	if err != nil {
+		return
+	}
+	_ = conn.Close()
+	fmt.Fprintf(os.Stderr, `
+WARNING: %s:8080 is reachable from this machine. The Agentown UI and API
+have no TLS and are protected only by the owner token. Block TCP 8080 from
+outside the cluster (cloud firewall or security group) and use: agentownctl ui
+`, host)
 }
 
 func joinNodes(c *Cluster, serverNode string, nodeFacts []map[string]string) error {

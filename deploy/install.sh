@@ -148,6 +148,12 @@ sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='agentown'" 
 # ---------------------------------------------------------------------------
 HOST_IP="$(ip -4 route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')"
 [ -n "$HOST_IP" ] || die "could not determine this host's primary IPv4 address"
+# The server listens on this address (agent runtimes reach it there). On a
+# public address, only a firewall keeps port 8080 off the Internet.
+case "$HOST_IP" in
+  10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].* | 100.6[4-9].* | 100.[7-9][0-9].* | 100.1[01][0-9].* | 100.12[0-7].*) PUBLIC_IP="" ;;
+  *) PUBLIC_IP=1 ;;
+esac
 
 if [ "$DRIVER" = kubernetes ]; then
   say "Loading agent image and applying cluster guard rails"
@@ -267,3 +273,6 @@ Open the UI from your own machine through an SSH tunnel (keep port 8080 closed):
 
 Back up $STATE/secret-key: it encrypts the stored API keys.
 EOF
+if [ -n "$PUBLIC_IP" ]; then
+  printf '\n\033[31mWARNING:\033[0m the primary address %s of this host is public. Block TCP 8080 from\nthe Internet (cloud firewall, security group or ufw): the UI has no TLS and only the owner token protects it.\n' "$HOST_IP"
+fi

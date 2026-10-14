@@ -80,12 +80,13 @@ type Cluster struct {
 }
 
 var (
-	reName     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-	reHost     = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,253}$`)
-	reUser     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
-	reVersion  = regexp.MustCompile(`^(latest|v\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?)$`)
-	reRepo     = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-	reURLHTTPS = regexp.MustCompile(`^https?://\S+$`)
+	reName    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	reHost    = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,253}$`)
+	reUser    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
+	reVersion = regexp.MustCompile(`^(latest|v\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?)$`)
+	reRepo    = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	// The installer runs as root, so it is only fetched over TLS (plain HTTP only from this machine, for testing).
+	reInstallURL = regexp.MustCompile(`^(https://\S+|http://(localhost|127\.0\.0\.1)(:\d+)?/\S*)$`)
 )
 
 func expandPath(p, base string) string {
@@ -139,8 +140,8 @@ func ParseCluster(data []byte, file string) (*Cluster, error) {
 	if !reRepo.MatchString(f.Repo) {
 		bad("repo", "must look like owner/name")
 	}
-	if f.InstallURL != "" && !reURLHTTPS.MatchString(f.InstallURL) {
-		bad("installUrl", "must be an http(s) URL")
+	if f.InstallURL != "" && !reInstallURL.MatchString(f.InstallURL) {
+		bad("installUrl", "must be an https:// URL")
 	}
 	checkHost := func(field string, h hostSpec) {
 		if h.Host == "" {

@@ -42,6 +42,7 @@ func TestParseClusterRejects(t *testing.T) {
 		"duplicate node names": "server: { host: a }\nnodes: [{ host: b, name: x }, { host: c, name: x }]",
 		"shell in host":        "server: { host: 'a; rm -rf /' }",
 		"bad user":             "ssh: { user: 'a b' }\nserver: { host: a }",
+		"plain http installer": "server: { host: a }\ninstallUrl: http://example.com/install.sh",
 	}
 	for name, doc := range cases {
 		if _, err := ParseCluster([]byte(doc), "f.yaml"); err == nil {
@@ -57,5 +58,18 @@ func TestExampleParses(t *testing.T) {
 	}
 	if c.Server.Host == "" || !strings.HasPrefix(c.Version, "latest") {
 		t.Fatalf("example: %+v", c)
+	}
+}
+
+func TestInstallURL(t *testing.T) {
+	for _, ok := range []string{"https://example.com/install.sh", "http://127.0.0.1:8999/install.sh", "http://localhost/install.sh"} {
+		if _, err := ParseCluster([]byte("server: { host: a }\ninstallUrl: "+ok), "f.yaml"); err != nil {
+			t.Errorf("%s should be accepted: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"http://example.com/install.sh", "http://127.0.0.1.evil.com/x", "ftp://example.com/x", "file:///tmp/x"} {
+		if _, err := ParseCluster([]byte("server: { host: a }\ninstallUrl: "+bad), "f.yaml"); err == nil {
+			t.Errorf("%s should be rejected", bad)
+		}
 	}
 }
