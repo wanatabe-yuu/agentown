@@ -12,8 +12,12 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
   const [name, setName] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
+  const [provider, setProvider] = useState("anthropic");
+  const [baseUrl, setBaseUrl] = useState("");
   const [departments, setDepartments] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const providers = catalog?.providers ?? [{ id: "anthropic", label: "Anthropic (Claude)", baseUrl: null, keyRequired: true, keyPlaceholder: "sk-ant-…" }];
+  const info = providers.find((p) => p.id === provider) ?? providers[0]!;
   const load = useCallback(() => api<{ credentials: Credential[] }>("GET", "/api/credentials").then((r) => setRows(r.credentials)), []);
   useEffect(() => void load().catch((e) => notify(e.message, "error")), [load]);
 
@@ -21,11 +25,19 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
     e.preventDefault();
     setBusy(true);
     try {
-      const c = await api<Credential>("POST", "/api/credentials", { name, apiKey, workspaceId: workspaceId.trim() || null, departments: departments.length ? departments : null });
+      const c = await api<Credential>("POST", "/api/credentials", {
+        name,
+        provider,
+        apiKey: apiKey || null,
+        workspaceId: provider === "anthropic" ? workspaceId.trim() || null : null,
+        baseUrl: provider === "custom" ? baseUrl.trim() : null,
+        departments: departments.length ? departments : null,
+      });
       notify(`Key "${c.name}" saved — ${c.models.length} models available`, "info");
       setName("");
       setApiKey("");
       setWorkspaceId("");
+      setBaseUrl("");
       setDepartments([]);
       await load();
     } catch (err) {
@@ -70,7 +82,8 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
                 <td>
                   <strong>{c.name}</strong>
                   <div className="muted small">
-                    {c.provider} · {c.revokedAt ? `revoked ${ago(c.revokedAt, now)}` : `added ${ago(c.createdAt, now)}`}
+                    {providers.find((p) => p.id === c.provider)?.label ?? c.provider}
+                    {c.provider === "custom" && c.baseUrl ? ` (${c.baseUrl})` : ""} · {c.revokedAt ? `revoked ${ago(c.revokedAt, now)}` : `added ${ago(c.createdAt, now)}`}
                   </div>
                 </td>
                 <td>
@@ -110,13 +123,44 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Engineering team key" required maxLength={60} />
         </label>
         <label>
-          Anthropic API key (checked against the provider; the model list comes from the key)
-          <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-ant-…" required autoComplete="off" />
+          Provider
+          <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
         </label>
+        {provider === "custom" && (
+          <label>
+            Base URL of an OpenAI-compatible API (the part before /chat/completions)
+            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="e.g. http://ollama.internal:11434/v1" required maxLength={500} autoComplete="off" />
+          </label>
+        )}
         <label>
-          Workspace ID (only for a key created at the organization level, not inside a workspace)
-          <input value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder="wrkspc_… (optional)" maxLength={120} autoComplete="off" />
+          API key{info.keyRequired ? "" : " (optional)"} (checked against the provider; the model list comes from the key)
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={info.keyPlaceholder}
+            required={info.keyRequired}
+            autoComplete="off"
+          />
         </label>
+        {provider === "anthropic" && (
+          <label>
+            Workspace ID (only for a key created at the organization level, not inside a workspace)
+            <input value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder="wrkspc_… (optional)" maxLength={120} autoComplete="off" />
+          </label>
+        )}
+        {provider !== "anthropic" && (
+          <p className="muted small">
+            Agents call this provider's Chat Completions API with a bash tool. Pick a model with good tool use; on the Kubernetes driver, agents can only reach public
+            HTTPS endpoints (port 443).
+          </p>
+        )}
         <fieldset className="seg">
           <legend>Usable by departments (none = all)</legend>
           {(catalog?.departments ?? []).map((d) => (
@@ -191,7 +235,7 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
           <option value="">— none —</option>
           {(creds ?? (detail.credential ? [detail.credential] : [])).map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name} ({c.keyHint})
+              {c.name} ({c.provider}, {c.keyHint})
             </option>
           ))}
         </select>
@@ -199,7 +243,7 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
       <label>
         Model (offered by this key)
         <select value={model} disabled={!editable || !selected} onChange={(e) => setModel(e.target.value)}>
-          <option value="">template default</option>
+          <option value="">{!selected || selected.provider === "anthropic" ? "template default" : "— choose a model —"}</option>
           {(selected?.models ?? []).map((m) => (
             <option key={m}>{m}</option>
           ))}

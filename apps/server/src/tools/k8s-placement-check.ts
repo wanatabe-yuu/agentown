@@ -23,7 +23,7 @@ const ns = "agentown-eng";
 const ids = ["place-a", "place-b"].map((x) => `${x}-${Date.now().toString(36)}`);
 
 for (const agentId of ids) {
-  const spec = { agentId, generation: 1, namespace: ns, preset, apiUrl: "http://127.0.0.1:8080", storageRef: `agent-${agentId}-workspace`, displayName: agentId, jobRole: "engineer", providerKey: null, providerWorkspaceId: null };
+  const spec = { agentId, generation: 1, namespace: ns, preset, apiUrl: "http://127.0.0.1:8080", storageRef: `agent-${agentId}-workspace`, displayName: agentId, jobRole: "engineer", llm: null };
   await driver.ensureIdentity(spec, async () => "placement-token");
   await driver.createPod(spec);
 }

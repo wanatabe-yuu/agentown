@@ -5,6 +5,7 @@ import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
+import { PROVIDERS } from "./providers.ts";
 import type { RuntimeDriver } from "./runtime/driver.ts";
 import type { Service } from "./service.ts";
 import { ApiError, badRequest } from "./util.ts";
@@ -36,9 +37,10 @@ const S = {
   agentConfig: agentConfigSchema,
   credential: z.object({
     name: z.string().min(1).max(60),
-    provider: z.enum(["anthropic"]).default("anthropic"),
-    apiKey: z.string().min(8).max(500),
+    provider: z.enum(PROVIDERS).default("anthropic"),
+    apiKey: z.string().max(500).nullable().optional(),
     workspaceId: z.string().trim().max(120).nullable().optional(),
+    baseUrl: z.string().trim().max(500).nullable().optional(),
     departments: z.array(z.string()).nullable().default(null),
   }),
   spawn: z.object({

@@ -1,6 +1,6 @@
 import * as k8s from "@kubernetes/client-node";
 import type { ExecStreams, PodInfo, RuntimeDriver, RuntimeSpec } from "./driver.ts";
-import { podName } from "./driver.ts";
+import { llmEnv, podName } from "./driver.ts";
 
 const MANAGED_BY = { "app.kubernetes.io/managed-by": "agentown" };
 const CONTAINER = "harness";
@@ -120,17 +120,20 @@ export class KubernetesDriver implements RuntimeDriver {
     // Per-agent provider key: its own Secret, replaced for every new runtime generation.
     const providerSecret = `agent-${spec.agentId}-provider`;
     await ignore404(this.core.deleteNamespacedSecret({ name: providerSecret, namespace: spec.namespace }));
-    if (spec.providerKey) {
-      await this.core.createNamespacedSecret({
-        namespace: spec.namespace,
-        body: {
-          metadata: { name: providerSecret, labels: { ...MANAGED_BY, "agentown.io/agent": spec.agentId } },
-          type: "Opaque",
-          stringData: { ANTHROPIC_API_KEY: spec.providerKey },
-        },
-      });
-      env.push({ name: "ANTHROPIC_API_KEY", valueFrom: { secretKeyRef: { name: providerSecret, key: "ANTHROPIC_API_KEY" } } });
-      if (spec.providerWorkspaceId) env.push({ name: "ANTHROPIC_WORKSPACE_ID", value: spec.providerWorkspaceId });
+    if (spec.llm) {
+      const { secret, plain } = llmEnv(spec.llm);
+      if (Object.keys(secret).length) {
+        await this.core.createNamespacedSecret({
+          namespace: spec.namespace,
+          body: {
+            metadata: { name: providerSecret, labels: { ...MANAGED_BY, "agentown.io/agent": spec.agentId } },
+            type: "Opaque",
+            stringData: secret,
+          },
+        });
+        for (const key of Object.keys(secret)) env.push({ name: key, valueFrom: { secretKeyRef: { name: providerSecret, key } } });
+      }
+      for (const [name, value] of Object.entries(plain)) env.push({ name, value });
     }
     const dedicated = spec.preset.placement === "dedicated-node";
     await createIfMissing(() =>

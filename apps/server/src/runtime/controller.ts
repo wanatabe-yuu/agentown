@@ -1,5 +1,5 @@
 import type { Service, AgentRow, RuntimeRow } from "../service.ts";
-import type { PodInfo, RuntimeDriver, RuntimeSpec } from "./driver.ts";
+import type { PodInfo, RuntimeDriver, RuntimeLlm, RuntimeSpec } from "./driver.ts";
 
 const FATAL_WAITING = new Set([
   "ErrImagePull",
@@ -80,7 +80,7 @@ export class RuntimeController {
     }
   }
 
-  private spec(a: AgentRow, rt: RuntimeRow, generation: number, cred: { apiKey: string | null; workspaceId: string | null }): RuntimeSpec {
+  private spec(a: AgentRow, rt: RuntimeRow, generation: number, llm: RuntimeLlm | null): RuntimeSpec {
     const preset = this.service.config.runtimeCatalog.find((p) => p.id === rt.preset_id);
     if (!preset) throw new Error(`preset ${rt.preset_id} no longer in catalog`);
     return {
@@ -92,8 +92,7 @@ export class RuntimeController {
       storageRef: rt.storage_ref ?? `agent-${a.id}-workspace`,
       displayName: a.display_name,
       jobRole: a.job_role,
-      providerKey: cred.apiKey,
-      providerWorkspaceId: cred.apiKey ? cred.workspaceId : null,
+      llm,
     };
   }
 
@@ -126,7 +125,7 @@ export class RuntimeController {
     if (!current) {
       if (rt.observed_state === "failed" && rt.generation === generation) return; // wait for an explicit retry
       const cred = await this.service.runtimeCredential(a.id);
-      const spec = this.spec(a, rt, generation, cred);
+      const spec = this.spec(a, rt, generation, cred.llm);
       await this.driver.ensureIdentity(spec, () => this.service.issueAgentToken(a.id));
       const name = await this.driver.createPod(spec);
       await this.service.markSecretApplied(a.id, generation, cred.rev);

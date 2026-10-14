@@ -110,6 +110,15 @@ scripts/dev-server.sh                                      # AGENTOWN_RUNTIME_DR
 ## Per-agent API keys and models
 
 - The owner adds keys in the UI (**API keys**). The server checks each key with the provider and stores the list of models that key can use. Keys are encrypted with AES‑256‑GCM and the API only ever returns the last 4 characters. A key can be restricted to certain departments.
+- Providers:
+
+  | Provider | How agents call it |
+  | --- | --- |
+  | Anthropic (Claude) | Anthropic SDK, Anthropic-defined `bash` tool. A key created at the organization level also needs its **workspace ID** (`wrkspc_…`). |
+  | OpenAI, DeepSeek, xAI (Grok), Google Gemini, Mistral, Groq, OpenRouter, Together AI | OpenAI-compatible Chat Completions with a `bash` function, at the provider's fixed endpoint. |
+  | Custom | Any OpenAI-compatible endpoint you enter (Ollama, vLLM, LM Studio, LiteLLM, a gateway…). The key is optional. |
+
+  Agents are only as good as the model's tool use, so pick a model that handles function calling well. With the Kubernetes driver, agent pods can reach only **public** addresses on **port 443** (see the NetworkPolicy above), so a custom endpoint must be public HTTPS; a model server on a private network or another port works with the Docker driver, or after you widen the `agent-isolation` NetworkPolicy yourself.
 - Each agent picks **one key and one of that key's models**, plus effort, max turns and its own instructions (the agent's **Config** tab, or at hiring time). Changing them is the `agent.configure` action: leaders for their direct reports, the CEO for its whole subtree.
 - A key is only ever delivered to the runtime of **that agent** (its own Kubernetes Secret / container env). When a key is changed or revoked, the controller replaces the runtime once the agent is idle, without cutting off work in progress. Model, effort and instructions travel with each task, so changing them needs no restart.
 

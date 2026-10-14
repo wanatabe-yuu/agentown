@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { ClaudeAdapter } from "./adapters/claude.ts";
+import { OpenAICompatibleAdapter } from "./adapters/openai-compatible.ts";
 import { ScriptAdapter } from "./adapters/script.ts";
 import type { Adapter, RunConfig, RunContext, RunResult, TaskInfo } from "./adapters/types.ts";
 import { AgentownClient, ApiError } from "./client.ts";
@@ -64,13 +65,16 @@ async function heartbeat() {
 }
 
 function adapterFor(): Adapter {
+  // "claude" is the LLM harness; the agent's credential decides which provider adapter runs it.
   if (harnessKind === "claude") {
+    const identity = { agentId, displayName: env.AGENTOWN_DISPLAY_NAME ?? agentId, jobRole: env.AGENTOWN_JOB_ROLE ?? "agent" };
+    const provider = env.AGENTOWN_LLM_PROVIDER || "anthropic";
+    if (provider !== "anthropic") {
+      log(`LLM harness using ${provider} at ${env.AGENTOWN_LLM_BASE_URL || "(no endpoint)"}`);
+      return new OpenAICompatibleAdapter({ provider, baseUrl: env.AGENTOWN_LLM_BASE_URL ?? "", apiKey: env.AGENTOWN_LLM_API_KEY, identity });
+    }
     if (!env.ANTHROPIC_API_KEY) log("claude harness without ANTHROPIC_API_KEY: prompt tasks will fail");
-    return new ClaudeAdapter(env.AGENTOWN_MODEL ?? "claude-opus-5-5", {
-      agentId,
-      displayName: env.AGENTOWN_DISPLAY_NAME ?? agentId,
-      jobRole: env.AGENTOWN_JOB_ROLE ?? "agent",
-    });
+    return new ClaudeAdapter(env.AGENTOWN_MODEL ?? "claude-opus-5-5", identity);
   }
   return new ScriptAdapter();
 }
@@ -89,7 +93,7 @@ async function uploadOutputs(runId: string, dir: string) {
   return n;
 }
 
-const DEFAULT_CONFIG: RunConfig = { harness: "script", model: null, effort: null, instructions: "", maxTurns: 40, hasCredential: false };
+const DEFAULT_CONFIG: RunConfig = { harness: "script", provider: null, model: null, effort: null, instructions: "", maxTurns: 40, hasCredential: false };
 
 async function execute(run: { id: string; attempt: number }, task: TaskInfo, resumed: boolean, config: RunConfig = DEFAULT_CONFIG) {
   busy = true;

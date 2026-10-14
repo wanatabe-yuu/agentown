@@ -42,6 +42,7 @@ export interface Credential {
   provider: string;
   keyHint: string;
   workspaceId: string | null;
+  baseUrl: string | null;
   models: string[];
   departments: string[] | null;
   revision: number;
@@ -114,4 +115,13 @@ export interface Catalog {
   presets: Array<{ id: string; harness: string; image: string; placement?: string }>;
   departments: Department[];
   projects: Array<{ id: string; name: string }>;
+  providers?: ProviderInfo[];
+}
+
+export interface ProviderInfo {
+  id: string;
+  label: string;
+  baseUrl: string | null;
+  keyRequired: boolean;
+  keyPlaceholder: string;
 }

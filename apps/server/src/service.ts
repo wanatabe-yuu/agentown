@@ -27,7 +27,8 @@ import {
 import type pg from "pg";
 import type { AgentEventRow, EventBus } from "./bus.ts";
 import { type Db, type Queryable, tx } from "./db.ts";
-import { type ModelLister, PROVIDERS, type Provider, WORKSPACE_ID_PATTERN } from "./providers.ts";
+import { type ModelLister, normalizeBaseUrl, PROVIDER_INFO, PROVIDERS, type Provider, providerBaseUrl, providerInfo, WORKSPACE_ID_PATTERN } from "./providers.ts";
+import type { RuntimeLlm } from "./runtime/driver.ts";
 import type { SecretBox } from "./secrets.ts";
 import {
   ApiError,
@@ -79,6 +80,7 @@ interface CredentialRow {
   ciphertext: Buffer;
   key_hint: string;
   workspace_id: string | null;
+  base_url: string | null;
   models: string[];
   departments: string[] | null;
   revision: number;
@@ -725,11 +727,16 @@ export class Service {
   }
 
   /** What the harness needs per run (non-secret). The API key reaches the runtime separately. */
-  runConfig(a: AgentRow) {
+  async runConfig(a: AgentRow, q: Queryable = this.db) {
     const preset = this.config.runtimeCatalog.find((p) => p.id === this.template(a.template_id).preset.id)!;
+    const provider = a.credential_id
+      ? ((await q.query<{ provider: Provider }>("SELECT provider FROM credentials WHERE id=$1", [a.credential_id])).rows[0]?.provider ?? null)
+      : null;
     return {
       harness: preset.harness,
-      model: a.model ?? preset.model ?? null,
+      provider,
+      // The preset's default model is a Claude model: only meaningful with an Anthropic key.
+      model: a.model ?? (provider === null || provider === "anthropic" ? (preset.model ?? null) : null),
       effort: a.effort,
       instructions: a.instructions,
       maxTurns: a.max_turns,
@@ -742,8 +749,9 @@ export class Service {
       id: r.id,
       name: r.name,
       provider: r.provider,
-      keyHint: `…${r.key_hint}`,
+      keyHint: r.key_hint ? `…${r.key_hint}` : "(no key)",
       workspaceId: r.workspace_id,
+      baseUrl: providerBaseUrl(r.provider, r.base_url),
       models: r.models,
       departments: r.departments,
       revision: r.revision,
@@ -769,14 +777,14 @@ export class Service {
     throw deny(`${action} denied: credentials are managed by the owner`);
   }
 
-  private async discoverModels(provider: Provider, apiKey: string, workspaceId: string | null): Promise<string[]> {
+  private async discoverModels(provider: Provider, apiKey: string, workspaceId: string | null, customBaseUrl: string | null): Promise<string[]> {
     try {
-      const models = await this.modelLister(provider, apiKey, workspaceId);
+      const models = await this.modelLister({ provider, apiKey, workspaceId, baseUrl: providerBaseUrl(provider, customBaseUrl) });
       if (!models.length) throw new Error("key works but lists no models");
       return models;
     } catch (err) {
       const message = String((err as Error).message ?? err);
-      if (!workspaceId && /not scoped to a workspace|anthropic-workspace-id/i.test(message)) {
+      if (provider === "anthropic" && !workspaceId && /not scoped to a workspace|anthropic-workspace-id/i.test(message)) {
         throw badRequest(
           "this API key belongs to the organization, not to a workspace: enter the ID of the workspace to use (wrkspc_…, Anthropic Console → Settings → Workspaces), or create the key inside a workspace",
         );
@@ -800,27 +808,49 @@ export class Service {
 
   async createCredential(
     actor: Actor,
-    input: { name: string; provider: Provider; apiKey: string; workspaceId?: string | null; departments: string[] | null },
+    input: {
+      name: string;
+      provider: Provider;
+      apiKey?: string | null;
+      workspaceId?: string | null;
+      baseUrl?: string | null;
+      departments: string[] | null;
+    },
   ) {
     await this.requireOwner(actor, "credential.create", input.name);
-    if (!PROVIDERS.includes(input.provider)) throw badRequest("unsupported provider");
+    const info = providerInfo(input.provider);
+    if (!info || !PROVIDERS.includes(input.provider)) throw badRequest("unsupported provider");
     for (const d of input.departments ?? []) if (!this.config.departments.some((x) => x.id === d)) throw badRequest(`unknown department ${d}`);
-    const apiKey = input.apiKey.trim();
+    const apiKey = input.apiKey?.trim() ?? "";
+    if (info.keyRequired && apiKey.length < 8) throw badRequest(`${info.label} needs an API key`);
     const workspaceId = input.workspaceId?.trim() || null;
+    if (workspaceId && input.provider !== "anthropic") throw badRequest("a workspace ID only applies to Anthropic keys");
     if (workspaceId && !WORKSPACE_ID_PATTERN.test(workspaceId)) throw badRequest("workspace ID must look like wrkspc_…");
-    const models = await this.discoverModels(input.provider, apiKey, workspaceId);
+    let baseUrl: string | null = null;
+    if (input.provider === "custom") {
+      if (!input.baseUrl?.trim()) throw badRequest("a custom provider needs a base URL (e.g. http://ollama.internal:11434/v1)");
+      try {
+        baseUrl = normalizeBaseUrl(input.baseUrl);
+      } catch (err) {
+        throw badRequest((err as Error).message);
+      }
+    } else if (input.baseUrl?.trim()) {
+      throw badRequest(`${info.label} uses a fixed endpoint; choose "custom" to use your own base URL`);
+    }
+    const models = await this.discoverModels(input.provider, apiKey, workspaceId, baseUrl);
     return this.withTx(async (ctx) => {
       const id = newId("k");
       await ctx.c.query(
-        `INSERT INTO credentials(id, name, provider, ciphertext, key_hint, workspace_id, models, departments, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        `INSERT INTO credentials(id, name, provider, ciphertext, key_hint, workspace_id, base_url, models, departments, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           id,
           input.name.slice(0, 60),
           input.provider,
           this.secrets.seal(apiKey),
-          apiKey.slice(-4),
+          apiKey.length >= 8 ? apiKey.slice(-4) : "",
           workspaceId,
+          baseUrl,
           models,
           input.departments?.length ? input.departments : null,
           actorRef(actor),
@@ -835,7 +865,7 @@ export class Service {
     await this.requireOwner(actor, "credential.refresh", id);
     const cred = await this.getCredentialRow(id);
     if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
-    const models = await this.discoverModels(cred.provider, this.secrets.open(cred.ciphertext), cred.workspace_id);
+    const models = await this.discoverModels(cred.provider, this.secrets.open(cred.ciphertext), cred.workspace_id, cred.base_url);
     await this.db.query("UPDATE credentials SET models=$2, models_refreshed_at=now() WHERE id=$1", [id, models]);
     return this.presentCredential(await this.getCredentialRow(id));
   }
@@ -897,12 +927,20 @@ export class Service {
   }
 
   /** Controller-side: the key the agent's runtime should hold now, tagged with a revision. */
-  async runtimeCredential(agentId: string): Promise<{ rev: string; apiKey: string | null; workspaceId: string | null }> {
+  async runtimeCredential(agentId: string): Promise<{ rev: string; llm: RuntimeLlm | null }> {
     const a = await this.getAgentRow(agentId);
-    if (!a.credential_id) return { rev: "none", apiKey: null, workspaceId: null };
+    if (!a.credential_id) return { rev: "none", llm: null };
     const cred = await this.getCredentialRow(a.credential_id);
-    if (cred.revoked_at) return { rev: `${cred.id}:revoked`, apiKey: null, workspaceId: null };
-    return { rev: `${cred.id}:${cred.revision}`, apiKey: this.secrets.open(cred.ciphertext), workspaceId: cred.workspace_id };
+    if (cred.revoked_at) return { rev: `${cred.id}:revoked`, llm: null };
+    return {
+      rev: `${cred.id}:${cred.revision}`,
+      llm: {
+        provider: cred.provider,
+        apiKey: this.secrets.open(cred.ciphertext),
+        workspaceId: cred.workspace_id,
+        baseUrl: providerBaseUrl(cred.provider, cred.base_url),
+      },
+    };
   }
 
   async desiredSecretRev(a: AgentRow): Promise<string> {
@@ -1301,7 +1339,7 @@ export class Service {
       );
       if (existing.rows[0]) {
         const run = existing.rows[0];
-        return { run: this.presentRun(run), task: this.presentTask(await this.getTaskRow(run.task_id, ctx.c)), resumed: true, config: this.runConfig(agent) };
+        return { run: this.presentRun(run), task: this.presentTask(await this.getTaskRow(run.task_id, ctx.c)), resumed: true, config: await this.runConfig(agent, ctx.c) };
       }
       if (!agent.accepting_work || agent.lifecycle_state === "retired") return null;
       const { rows } = await ctx.c.query<TaskRow>(
@@ -1324,7 +1362,7 @@ export class Service {
       }
       await this.setTaskStatus(ctx, t, "in_progress", null);
       await this.emit(ctx, { type: "run.started", agentId, taskId: t.id, runId, payload: { attempt: t.attempt, generation, title: t.title } });
-      return { run: this.presentRun(ins.rows[0]), task: this.presentTask(t), resumed: false, config: this.runConfig(agent) };
+      return { run: this.presentRun(ins.rows[0]), task: this.presentTask(t), resumed: false, config: await this.runConfig(agent, ctx.c) };
     });
   }
 
@@ -1549,6 +1587,7 @@ export class Service {
       presets: this.config.runtimeCatalog.map((p) => ({ id: p.id, version: p.version, harness: p.harness, image: p.image, resources: p.resources, placement: p.placement, model: p.model ?? null })),
       departments: this.config.departments,
       projects: this.config.projects,
+      providers: PROVIDER_INFO,
     };
   }
 

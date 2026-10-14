@@ -1,9 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { runShell } from "./script.ts";
+import { type AgentIdentity, NO_CREDENTIAL, runBashTool, taskPrompts } from "./common.ts";
 import { ScriptAdapter } from "./script.ts";
 import type { Adapter, RunContext, RunResult } from "./types.ts";
-
-const TOOL_OUTPUT_LIMIT = 20_000;
 
 /**
  * LLM adapter: a manual tool-use loop with the Anthropic-defined bash tool.
@@ -21,7 +19,7 @@ export class ClaudeAdapter implements Adapter {
 
   constructor(
     private readonly defaultModel: string,
-    private readonly identity: { agentId: string; displayName: string; jobRole: string },
+    private readonly identity: AgentIdentity,
   ) {
     // Reads ANTHROPIC_API_KEY: this agent's own key, mounted from its per-agent secret.
     // A key made at the organization level (not inside a workspace) must name its workspace on every request.
@@ -33,40 +31,15 @@ export class ClaudeAdapter implements Adapter {
     // Playbooks/scripts are deterministic even on an LLM runtime.
     if (ctx.task.spec.kind !== "prompt") return this.fallback.run(ctx);
     if (!process.env.ANTHROPIC_API_KEY) {
-      return { outcome: "blocked", summary: "no API credential is configured for this agent (owner: add a key, then set it in the agent's Config tab)" };
+      return { outcome: "blocked", summary: NO_CREDENTIAL };
     }
     const model = ctx.config.model ?? this.defaultModel;
     const maxTurns = ctx.config.maxTurns;
 
-    const system = [
-      `You are ${this.identity.displayName}, an AI agent working as "${this.identity.jobRole}" in the Agentown organization (agent id ${this.identity.agentId}).`,
-      `You work inside your own Linux container. Your persistent workspace is /workspace; the working directory for this task is ${ctx.workdir}.`,
-      `Put deliverables (files the requester should receive) in ${ctx.outputDir}; they are uploaded as task artifacts when you finish.`,
-      "The `agentown` CLI talks to the organization API as you: `agentown help` lists commands (view tasks, download input artifacts, create/assign tasks, spawn agents if you are allowed).",
-      "The server enforces your permissions; a 403 means you are not allowed — do not try to work around it.",
-      "When done, reply with a short summary of what you delivered. If you cannot proceed without someone else's input, start your final reply with BLOCKED: and say what you need.",
-      ctx.config.instructions && `\nInstructions from your manager for how you work:\n${ctx.config.instructions}`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-    const user = [
-      `Task ${ctx.task.id}: ${ctx.task.title}`,
-      ctx.task.description && `\nDescription:\n${ctx.task.description}`,
-      ctx.task.acceptanceCriteria && `\nAcceptance criteria:\n${ctx.task.acceptanceCriteria}`,
-      ctx.task.inputTaskIds.length ? `\nInput tasks (use \`agentown task get <id>\` and \`agentown task artifacts <id> <dir>\`): ${ctx.task.inputTaskIds.join(", ")}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const { system, user } = taskPrompts(ctx, this.identity);
 
     const messages: Anthropic.MessageParam[] = [{ role: "user", content: user }];
     const usage = { model, input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, turns: 0 };
-    const env = {
-      AGENTOWN_TASK_ID: ctx.task.id,
-      AGENTOWN_RUN_ID: ctx.runId,
-      AGENTOWN_OUTPUT_DIR: ctx.outputDir,
-      AGENTOWN_STATE_FILE: ctx.stateFile,
-    };
-
     for (let turn = 0; turn < maxTurns; turn++) {
       if (ctx.signal.aborted) return { outcome: "failed", summary: "aborted", usage };
       ctx.setState("thinking", `turn ${turn + 1}`);
@@ -118,18 +91,8 @@ export class ClaudeAdapter implements Adapter {
           results.push({ type: "tool_result", tool_use_id: call.id, content: "shell restarted (each command runs in a fresh shell)" });
           continue;
         }
-        const command = String(input.command ?? "");
-        ctx.setState("executing", command.slice(0, 120));
-        ctx.log("agent", `$ ${command}`);
-        const { code, output } = await runShell(ctx, ["/bin/sh", "-c", command], env, { timeoutMs: 300_000, captureLimit: 2000 });
-        let out = output.join("\n");
-        if (out.length > TOOL_OUTPUT_LIMIT) out = `${out.slice(0, TOOL_OUTPUT_LIMIT)}\n[output truncated]`;
-        results.push({
-          type: "tool_result",
-          tool_use_id: call.id,
-          content: `${out}\n[exit code ${code}]`,
-          is_error: code !== 0,
-        });
+        const { content, isError } = await runBashTool(ctx, String(input.command ?? ""));
+        results.push({ type: "tool_result", tool_use_id: call.id, content, is_error: isError });
       }
       messages.push({ role: "user", content: results });
     }
