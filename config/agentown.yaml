@@ -65,7 +65,7 @@ policyProfiles:
     - { action: task.create, scope: team }
     - { action: task.assign, scope: team }
     - { action: task.review, scope: direct-reports }
-    - { action: agent.spawn, scope: self, templates: [engineer-v1, qa-v1, engineer-claude-v1] }
+    - { action: agent.spawn, scope: self, templates: [engineer-v1, qa-v1, engineer-claude-v1, developer-v1, developer-claude-v1] }
     - { action: runtime.control, scope: direct-reports }
     - { action: runtime.logs, scope: direct-reports }
     - { action: runtime.exec, scope: direct-reports }
@@ -84,6 +84,17 @@ policyProfiles:
     - { action: task.create, scope: self }
     - { action: runtime.logs, scope: self }
 
+  # A worker that may read the Agentown repository and propose changes to it.
+  # Proposals become pull requests opened by the server; nobody's token reaches
+  # the agent, and merging stays with humans (protect the default branch).
+  developer:
+    - { action: org.view, scope: self }
+    - { action: task.view, scope: self }
+    - { action: task.create, scope: self }
+    - { action: runtime.logs, scope: self }
+    - { action: code.read, scope: self, repos: [agentown] }
+    - { action: code.propose, scope: self, repos: [agentown] }
+
 agentTemplates:
   - { id: ceo-v1, jobRole: ceo, runtimePreset: script-v1, policyProfile: ceo }
   - { id: leader-v1, jobRole: leader, runtimePreset: script-v1, policyProfile: leader }
@@ -91,6 +102,8 @@ agentTemplates:
   - { id: engineer-v1, jobRole: engineer, runtimePreset: script-v1, policyProfile: worker }
   - { id: qa-v1, jobRole: qa, runtimePreset: script-v1, policyProfile: worker }
   - { id: engineer-claude-v1, jobRole: engineer, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: developer-v1, jobRole: engineer, runtimePreset: script-v1, policyProfile: developer }
+  - { id: developer-claude-v1, jobRole: engineer, runtimePreset: claude-v1, policyProfile: developer }
   - { id: engineer-claude-dedicated-v1, jobRole: engineer, runtimePreset: claude-dedicated-v1, policyProfile: worker }
 
 bootstrap:

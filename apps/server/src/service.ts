@@ -440,7 +440,7 @@ export class Service {
           a.id,
           cap.action,
           JSON.stringify(cap.scope),
-          JSON.stringify(cap.templates ? { templates: cap.templates } : {}),
+          JSON.stringify({ ...(cap.templates ? { templates: cap.templates } : {}), ...(cap.repos ? { repos: cap.repos } : {}) }),
           cap.delegable,
           `template:${template.id}`,
         ],

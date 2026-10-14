@@ -19,6 +19,7 @@ const capabilitySchema = z.object({
   action: z.enum(ACTIONS),
   scope: scopeSchema,
   templates: z.array(z.string()).optional(),
+  repos: z.array(z.string()).optional(),
   delegable: z.boolean().default(false),
 });
 export type CapabilityConfig = z.infer<typeof capabilitySchema>;
@@ -83,6 +84,7 @@ export const orgConfigSchema = z
     for (const [name, caps] of Object.entries(cfg.policyProfiles)) {
       for (const c of caps) {
         if (c.action === "agent.spawn" && !c.templates?.length) ctx.addIssue({ code: "custom", message: `profile ${name}: agent.spawn needs an explicit templates list` });
+        if (c.action.startsWith("code.") && !c.repos?.length) ctx.addIssue({ code: "custom", message: `profile ${name}: ${c.action} needs an explicit repos list` });
         for (const t of c.templates ?? []) if (!templates.has(t)) ctx.addIssue({ code: "custom", message: `profile ${name}: unknown template ${t}` });
       }
     }

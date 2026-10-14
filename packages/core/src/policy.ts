@@ -89,9 +89,11 @@ export function scopeWithin(
 }
 
 export function constraintsWithin(parent: GrantConstraints, child: GrantConstraints): boolean {
-  if (parent.templates) {
-    if (!child.templates) return false;
-    return child.templates.every((t) => parent.templates!.includes(t));
+  for (const key of ["templates", "repos"] as const) {
+    const p = parent[key];
+    if (!p) continue;
+    const c = child[key];
+    if (!c || !c.every((x) => p.includes(x))) return false;
   }
   return true;
 }
@@ -121,6 +123,10 @@ function grantMatches(grant: Grant, action: Action, target: Target, ctx: PolicyC
   if (action === "agent.spawn") {
     // Spawn grants must name their templates explicitly; no template list = no spawn.
     if (!target.templateId || !grant.constraints.templates?.includes(target.templateId)) return false;
+  }
+  if (action.startsWith("code.")) {
+    // Code grants must name their repositories explicitly.
+    if (!target.repoId || !grant.constraints.repos?.includes(target.repoId)) return false;
   }
   return isGrantEffective(grant, ctx);
 }

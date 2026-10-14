@@ -19,6 +19,8 @@ export const ACTIONS = [
   "runtime.logs",
   "runtime.exec", // interactive shell in the target's runtime: a strong permission
   "permission.delegate", // issue a grant to the target
+  "code.read", // download a snapshot of a registered repository (target = self + repoId)
+  "code.propose", // submit changes; the server opens a pull request, never merges
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -39,6 +41,8 @@ export type Scope =
 export interface GrantConstraints {
   /** agent.spawn only: templates the principal may instantiate. */
   templates?: string[];
+  /** code.* only: repository ids the principal may read / propose changes to. */
+  repos?: string[];
 }
 
 export interface Grant {
@@ -76,6 +80,7 @@ export interface Target {
   agentId?: string;
   projectId?: string | null;
   templateId?: string;
+  repoId?: string;
 }
 
 export interface Decision {

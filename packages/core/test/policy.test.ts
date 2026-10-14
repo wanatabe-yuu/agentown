@@ -38,7 +38,7 @@ function fixture(extra: Array<[string, string, string, string]> = []) {
         principalId: id,
         action: c.action,
         scope: c.scope,
-        constraints: c.templates ? { templates: c.templates } : {},
+        constraints: { ...(c.templates ? { templates: c.templates } : {}), ...(c.repos ? { repos: c.repos } : {}) },
         delegable: c.delegable,
         issuer: `template:${templateId}`,
         parentGrantId: null,
@@ -239,5 +239,18 @@ agentTemplates: [{ id: t, jobRole: boss, runtimePreset: p, policyProfile: boss }
 bootstrap: { agents: [] }
 `;
     expect(() => parseOrgConfig(bad)).toThrow(/explicit templates/);
+  });
+});
+
+describe("code grants", () => {
+  it("are limited to named repositories and to the agent itself", () => {
+    const ctx = fixture([["dev-1", "developer-v1", "eng", "lead-eng"]]);
+    expect(authorize(agent("dev-1"), "code.propose", { agentId: "dev-1", repoId: "agentown" }, ctx).allowed).toBe(true);
+    expect(authorize(agent("dev-1"), "code.propose", { agentId: "dev-1", repoId: "other" }, ctx).allowed).toBe(false);
+    expect(authorize(agent("dev-1"), "code.propose", { agentId: "dev-1" }, ctx).allowed).toBe(false);
+    // A plain engineer, the leader and the CEO hold no code grants at all.
+    for (const who of ["eng-1", "lead-eng", "ceo"]) {
+      expect(authorize(agent(who), "code.read", { agentId: who, repoId: "agentown" }, ctx).allowed, who).toBe(false);
+    }
   });
 });
