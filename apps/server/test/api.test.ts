@@ -572,7 +572,7 @@ describe("people and their permissions", () => {
     const { token } = await invite("viewer");
     expect((await env.call(token, "GET", "/api/office/snapshot")).status).toBe(200);
     const me = await env.call(token, "GET", "/api/me");
-    expect(me.body.can).toEqual({ "credential.manage": false, "audit.view": false, "user.manage": false });
+    expect(me.body.can).toEqual({ "credential.manage": false, "audit.view": false, "user.manage": false, "org.design": false });
     expect(me.body.taskTargets).toEqual([]);
     expect((await env.call(token, "POST", "/api/tasks", { title: "x", assigneeAgentId: "lead-eng" })).status).toBe(403);
     expect((await env.call(token, "GET", "/api/audit")).status).toBe(403);

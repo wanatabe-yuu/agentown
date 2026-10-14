@@ -739,3 +739,14 @@ input.invalid {
   overflow: auto;
   padding: 16px;
 }
+
+.upload {
+  display: inline-block;
+  padding: 8px 14px;
+  border: 1px dashed var(--muted);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.upload input {
+  display: none;
+}

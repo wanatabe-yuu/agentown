@@ -4,6 +4,7 @@ import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Agent, Department, WorkState } from "../types.ts";
 import { FLOOR_HEIGHT, type PlacedRoom, type Seat, type WorldLayout } from "./layout.ts";
 import { allowedRooms, inside, type Nav, reachable, route, type Spot, type Waypoint } from "./nav.ts";
+import { loadModels, texture } from "./assets.ts";
 import { chair, character, desk, lookObject, monitor } from "./procedural.ts";
 
 /** A task handed from one agent to another: a sheet of paper flies between their desks. */
@@ -77,6 +78,8 @@ export interface OfficeScene {
   animated: Animated[];
   roamers: Roamer[];
   nav: Nav;
+  /** Animations that came with uploaded models. */
+  mixers: THREE.AnimationMixer[];
   paper: THREE.Mesh;
   dispose(): void;
 }
@@ -97,14 +100,19 @@ function hash(s: string): number {
 function roomMesh(room: PlacedRoom): THREE.Group {
   const g = new THREE.Group();
   g.position.set(room.x, room.y, room.z);
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(room.w, 0.12, room.d), new THREE.MeshStandardMaterial({ color: room.floorColor, roughness: 0.9 }));
+  const floor = new THREE.Mesh(
+    new THREE.BoxGeometry(room.w, 0.12, room.d),
+    new THREE.MeshStandardMaterial(room.floorTexture ? { map: texture(room.floorTexture, room.w, room.d, room.textureRepeat), roughness: 0.9 } : { color: room.floorColor, roughness: 0.9 }),
+  );
   floor.position.set(room.w / 2, -0.06, room.d / 2);
   floor.receiveShadow = true;
   floor.userData.roomId = room.id;
   g.add(floor);
   // Dollhouse cut: full walls on the north and west sides, a low rim on the south and east.
   // Doors are gaps in a wall.
-  const wall = new THREE.MeshStandardMaterial({ color: room.wallColor, roughness: 0.85 });
+  const wall = new THREE.MeshStandardMaterial(
+    room.wallTexture ? { map: texture(room.wallTexture, Math.max(room.w, room.d), room.wallHeight, room.textureRepeat), roughness: 0.85 } : { color: room.wallColor, roughness: 0.85 },
+  );
   const t = 0.12;
   const h = room.wallHeight;
   const low = Math.min(0.35, h);
@@ -359,6 +367,10 @@ export function buildScene(
   root.add(paper);
   disposables.push(paper.geometry, paperMat);
 
+  const mixers: THREE.AnimationMixer[] = [];
+  let alive = true;
+  loadModels(root, mixers, () => alive);
+
   return {
     root,
     floors,
@@ -366,8 +378,10 @@ export function buildScene(
     animated,
     roamers,
     nav,
+    mixers,
     paper,
     dispose() {
+      alive = false;
       root.traverse((o) => {
         if (o instanceof CSS2DObject) o.element.remove();
       });
@@ -482,6 +496,8 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
     r.body.position.y = -r.lift;
     r.obj.visible = s.floors.get(Math.round(r.obj.position.y / FLOOR_HEIGHT))?.visible ?? true;
   }
+
+  for (const m of s.mixers) m.update(Math.min(f.dt, 0.1));
 
   // Hand-offs: show the newest flight in progress.
   const flight = f.flights.filter((x) => f.t - x.start < 1400).at(-1);

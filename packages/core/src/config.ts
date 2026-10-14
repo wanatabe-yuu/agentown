@@ -18,7 +18,7 @@ const scopeSchema = z.union([
 ]);
 
 /** Actions that are about the organization rather than an agent: org scope only. */
-export const ORG_ACTIONS: readonly Action[] = ["credential.manage", "audit.view", "user.manage"];
+export const ORG_ACTIONS: readonly Action[] = ["credential.manage", "audit.view", "user.manage", "org.design"];
 /** People sit outside the reporting tree, so only these scopes mean anything for them. */
 export const USER_SCOPE_KINDS: readonly Scope["kind"][] = ["org", "departments", "agents", "projects"];
 

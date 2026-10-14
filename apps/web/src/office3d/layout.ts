@@ -37,6 +37,9 @@ export interface PlacedRoom {
   capacity: number;
   /** Door openings in its walls. */
   cuts: WallCut[];
+  floorTexture: string | null;
+  wallTexture: string | null;
+  textureRepeat: number;
   /** Seat positions in order; agents take them by their seat number. */
   seats: Seat[];
   auto: boolean;
@@ -115,7 +118,7 @@ function defaultWorld(departments: Dept[], agents: AgentLite[]): World {
       z += rowDepth + 2;
       rowDepth = 0;
     }
-    rooms.push({ id: `dept-${d.id}`, name: d.name, department: d.id, area: { x, z, w, d: depth }, wallHeight: 2.6, doors: [] });
+    rooms.push({ id: `dept-${d.id}`, name: d.name, department: d.id, area: { x, z, w, d: depth }, wallHeight: 2.6, textureRepeat: 2, doors: [] });
     x += w + 2;
     rowDepth = Math.max(rowDepth, depth);
   });
@@ -144,6 +147,9 @@ export function layoutWorld(world: World | null, departments: Dept[], agentsAll:
       wallHeight: r.wallHeight ?? 2.6,
       capacity: capacity({ w: r.area.w, d: r.area.d, seats: r.seats }),
       cuts: [],
+      floorTexture: r.floorTexture ?? null,
+      wallTexture: r.wallTexture ?? null,
+      textureRepeat: r.textureRepeat ?? 2,
       seats: [],
       auto: !world,
     })),
@@ -172,6 +178,9 @@ export function layoutWorld(world: World | null, departments: Dept[], agentsAll:
       wallHeight: 2.6,
       capacity: n,
       cuts: [],
+      floorTexture: null,
+      wallTexture: null,
+      textureRepeat: 2,
       seats: [],
       auto: true,
     });

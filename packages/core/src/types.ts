@@ -25,6 +25,7 @@ export const ACTIONS = [
   "credential.manage", // add / refresh / revoke the organization's LLM API keys
   "audit.view", // read the audit log
   "user.manage", // invite people, reset their tokens, edit their permissions
+  "org.design", // upload art assets and edit the world (floors, rooms, objects); never permissions
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 

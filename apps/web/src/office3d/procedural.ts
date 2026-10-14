@@ -120,6 +120,8 @@ export function lookObject(look: Look, fallbackColor: string): THREE.Group {
   if ("parts" in look) return partsObject(look.parts);
   const g = partsObject([{ shape: "box", size: [0.6, 0.6, 0.6], offset: [0, 0.3, 0], rotation: [0, 0, 0], color: "#9aa3ad" }]);
   g.userData.asset = look.asset;
+  g.userData.assetScale = look.scale;
+  g.userData.assetRotationY = look.rotationY;
   return g;
 }
 

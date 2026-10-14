@@ -324,6 +324,22 @@ const MIGRATIONS: string[] = [
     created_at timestamptz NOT NULL DEFAULT now()
   );
   `,
+  `
+  -- Art for the office: binary glTF models and textures, per organization.
+  CREATE TABLE assets (
+    id text PRIMARY KEY,
+    org_id text NOT NULL REFERENCES organizations(id),
+    kind text NOT NULL,                      -- model | texture
+    name text NOT NULL,
+    content_type text NOT NULL,              -- decided from the bytes, never the client
+    size int NOT NULL,
+    sha256 text NOT NULL,
+    content bytea NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (org_id, sha256)
+  );
+  `,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

@@ -23,8 +23,9 @@ const ACTIONS = [
   "credential.manage",
   "audit.view",
   "user.manage",
+  "org.design",
 ];
-const ORG_ACTIONS = ["credential.manage", "audit.view", "user.manage"];
+const ORG_ACTIONS = ["credential.manage", "audit.view", "user.manage", "org.design"];
 type ScopeKind = "org" | "departments" | "agents" | "projects";
 
 /** People and their permissions. A role only fills in a starting set; each permission is then added or removed on its own. */

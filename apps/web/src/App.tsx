@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AdminDialog } from "./Admin.tsx";
 import { AgentPanel } from "./AgentPanel.tsx";
+import { AssetsDialog } from "./Assets.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
 import { OrgEditor } from "./OrgEditor.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
@@ -134,6 +135,7 @@ function OrgApp({
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showOrg, setShowOrg] = useState(false);
+  const [showAssets, setShowAssets] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [openTask, setOpenTask] = useState<string | null>(null);
@@ -247,6 +249,11 @@ function OrgApp({
             Organization
           </button>
         )}
+        {me.can["org.design"] && (
+          <button type="button" onClick={() => setShowAssets(true)}>
+            Art
+          </button>
+        )}
         {account.user?.admin && (
           <button type="button" onClick={() => setShowAdmin(true)}>
             Organizations
@@ -345,6 +352,7 @@ function OrgApp({
       )}
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
       {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
+      {showAssets && <AssetsDialog onClose={() => setShowAssets(false)} notify={notify} />}
       {showOrg && <OrgEditor orgId={orgId} catalog={catalog} snapshot={snapshot} onClose={() => setShowOrg(false)} notify={notify} />}
       {showAdmin && (
         <AdminDialog

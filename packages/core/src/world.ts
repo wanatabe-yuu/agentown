@@ -84,6 +84,10 @@ const roomSchema = z.object({
   area: z.object({ x: num(-500, 500), z: num(-500, 500), w: num(2, 200), d: num(2, 200) }),
   floorColor: color.optional(),
   wallColor: color.optional(),
+  /** Images from the asset library, tiled every `textureRepeat` meters. */
+  floorTexture: z.string().min(1).max(64).optional(),
+  wallTexture: z.string().min(1).max(64).optional(),
+  textureRepeat: num(0.25, 50).default(2),
   wallHeight: num(0.2, 10).default(2.6),
   /** Seats for agents; by default as many as fit. */
   seats: z.number().int().min(0).max(200).optional(),
@@ -179,4 +183,13 @@ export function checkWorld(world: World, departments: Set<string>, issue: (messa
   };
   avatar(world.avatars.default, "avatars.default");
   for (const [role, id] of Object.entries(world.avatars.byJobRole)) avatar(id, `avatar of ${role}`);
+}
+
+/** Asset ids a world uses (models and textures), to check they exist in the organization. */
+export function worldAssets(world: World | undefined): string[] {
+  if (!world) return [];
+  const ids = new Set<string>();
+  for (const k of Object.values(world.kinds)) if ("asset" in k.look) ids.add(k.look.asset);
+  for (const f of world.floors) for (const r of f.rooms) for (const t of [r.floorTexture, r.wallTexture]) if (t) ids.add(t);
+  return [...ids];
 }

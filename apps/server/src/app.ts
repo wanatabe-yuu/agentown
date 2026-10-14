@@ -5,6 +5,7 @@ import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
+import { MODEL_MAX } from "./assets.ts";
 import { PROVIDERS } from "./providers.ts";
 import type { RuntimeDriver } from "./runtime/driver.ts";
 import type { Instance, Principal } from "./instance.ts";
@@ -113,6 +114,8 @@ const S = {
   updateOrg: z.object({ name: z.string().trim().min(1).max(80).optional(), ownerUserId: z.string().optional(), archived: z.boolean().optional() }),
   addMember: z.object({ userId: z.string() }),
   orgConfig: z.object({ revision: z.number().int(), doc: z.record(z.string(), z.unknown()) }),
+  orgWorld: z.object({ revision: z.number().int(), world: z.record(z.string(), z.unknown()).nullable() }),
+  assetQuery: z.object({ kind: z.enum(["model", "texture"]), name: z.string().max(200).default("") }),
   saveTemplate: z.object({ name: z.string().trim().min(1).max(80), description: z.string().max(500).default("") }),
   importTemplate: z.object({ yaml: z.string().min(1).max(256 * 1024) }),
   createUser: z.object({ displayName: z.string().trim().min(1).max(60), roleId: z.string().nullable().optional() }),
@@ -262,6 +265,37 @@ export async function buildApp(opts: AppOptions) {
       r.post("/templates", async (req, reply) => {
         reply.status(201);
         return instance.saveOrgAsTemplate(principalOf(req), svcOf(req), actorOf(req), parse(S.saveTemplate, req.body));
+      });
+
+      // The world (org.design) and its art. Uploads are raw bytes with their own size limit.
+      r.get("/world", async (req) => svcOf(req).getWorld(actorOf(req)));
+      r.put("/world", async (req) => changed(await instance.updateOrgWorld(svcOf(req), actorOf(req), parse(S.orgWorld, req.body))));
+      r.addContentTypeParser(["application/octet-stream", "model/gltf-binary", "image/png", "image/jpeg", "image/webp"], { parseAs: "buffer", bodyLimit: MODEL_MAX + 1 }, (_req, body, done) =>
+        done(null, body),
+      );
+      r.get("/assets", async (req) => svcOf(req).listAssets(actorOf(req)));
+      r.post("/assets", { bodyLimit: MODEL_MAX + 1 }, async (req, reply) => {
+        if (!Buffer.isBuffer(req.body)) throw badRequest("send the file's bytes (content-type application/octet-stream)");
+        const q = parse(S.assetQuery, req.query);
+        reply.status(201);
+        return svcOf(req).uploadAsset(actorOf(req), { kind: q.kind, name: q.name, content: req.body });
+      });
+      r.get<{ Params: { id: string } }>("/assets/:id", async (req, reply) => {
+        const a = await svcOf(req).getAsset(actorOf(req), req.params.id);
+        if (req.headers["if-none-match"] === `"${a.sha256}"`) return reply.status(304).send();
+        // Content is immutable (a new upload is a new id) and only ever art: never render it as a page.
+        reply
+          .header("content-type", a.contentType)
+          .header("cache-control", "private, max-age=31536000, immutable")
+          .header("etag", `"${a.sha256}"`)
+          .header("x-content-type-options", "nosniff")
+          .header("content-security-policy", "default-src 'none'; sandbox")
+          .header("content-disposition", "inline");
+        return reply.send(a.content);
+      });
+      r.delete<{ Params: { id: string } }>("/assets/:id", async (req, reply) => {
+        await svcOf(req).deleteAsset(actorOf(req), req.params.id);
+        return reply.status(204).send();
       });
     }
 

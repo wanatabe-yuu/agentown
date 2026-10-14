@@ -12,8 +12,8 @@ type Tab = "departments" | "projects" | "jobs" | "profiles" | "roles" | "templat
 
 // Mirrors ACTIONS in packages/core (code.* needs a repo list and is left to the YAML file).
 const AGENT_ACTIONS = ["org.view", "task.view", "task.create", "task.assign", "task.review", "agent.spawn", "agent.update", "agent.retire", "agent.configure", "runtime.control", "runtime.logs", "runtime.exec", "permission.delegate"];
-const PERSON_ACTIONS = [...AGENT_ACTIONS, "credential.manage", "audit.view"];
-const ORG_ONLY = ["credential.manage", "audit.view"];
+const PERSON_ACTIONS = [...AGENT_ACTIONS, "credential.manage", "audit.view", "org.design"];
+const ORG_ONLY = ["credential.manage", "audit.view", "org.design"];
 // Agents sit in the reporting tree, so tree-relative scopes make sense for them; people get org/departments/agents/projects.
 const AGENT_SCOPES = ["self", "direct-reports", "descendants", "team", "department", "org", "departments", "agents", "projects"];
 const PERSON_SCOPES = ["org", "departments", "agents", "projects"];

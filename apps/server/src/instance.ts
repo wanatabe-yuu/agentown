@@ -278,6 +278,12 @@ export class Instance {
     await this.auditInstance(p, "template.delete", id, {});
   }
 
+  /** Change an organization's world (org.design), validated like any document. */
+  async updateOrgWorld(service: Service, actor: Actor, input: { revision: number; world: Record<string, unknown> | null }) {
+    const org = (await this.db.query("SELECT name FROM organizations WHERE id=$1", [service.orgId])).rows[0];
+    return service.replaceWorld(actor, input, (doc) => orgConfigFrom(doc, { id: service.orgId, name: org.name }, this.file.catalog));
+  }
+
   /** Change an organization's structure, validated against this install's runtime catalog. */
   async updateOrgConfig(service: Service, actor: Actor, input: { revision: number; doc: Record<string, unknown> }) {
     const org = (await this.db.query("SELECT name FROM organizations WHERE id=$1", [service.orgId])).rows[0];

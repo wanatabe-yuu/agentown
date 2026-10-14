@@ -14,6 +14,8 @@ import {
   type Target,
   type WorkState,
   OrgGraph,
+  worldAssets,
+  type World,
   PLAYBOOK_ARG_NAME,
   PLAYBOOK_NAME,
   EFFORTS,
@@ -30,6 +32,7 @@ import {
 } from "@agentown/core";
 import type pg from "pg";
 import { z } from "zod";
+import { AssetRejected, type AssetKind, ORG_QUOTA, sniffAsset } from "./assets.ts";
 import type { AgentEventRow, EventBus } from "./bus.ts";
 import { type Db, type Queryable, tx } from "./db.ts";
 import { type ModelLister, normalizeBaseUrl, PROVIDER_INFO, PROVIDERS, type Provider, providerBaseUrl, providerInfo, WORKSPACE_ID_PATTERN } from "./providers.ts";
@@ -420,6 +423,7 @@ export class Service {
         [this.orgId],
       );
       for (const { p } of open.rows) if (!projects.has(p)) throw badRequest(`project ${p} still has open tasks`);
+      await this.requireAssets(ctx.c, next.world);
       const upd = await ctx.c.query<{ config_revision: number }>(
         "UPDATE organizations SET config=$2, config_revision=config_revision+1 WHERE id=$1 RETURNING config_revision",
         [this.orgId, JSON.stringify(doc)],
@@ -436,6 +440,112 @@ export class Service {
       await this.emit(ctx, { type: "org.config", payload: { revision } });
       return { revision, doc };
     });
+  }
+
+  /** Every asset a world uses must be in this organization's library. */
+  private async requireAssets(q: Queryable, world: World | undefined) {
+    const ids = worldAssets(world);
+    if (!ids.length) return;
+    const { rows } = await q.query<{ id: string }>("SELECT id FROM assets WHERE org_id=$1 AND id = ANY($2)", [this.orgId, ids]);
+    const have = new Set(rows.map((r) => r.id));
+    const missing = ids.filter((id) => !have.has(id));
+    if (missing.length) throw badRequest(`the world uses assets that are not in this organization's library: ${missing.join(", ")}`);
+  }
+
+  // ---------------------------------------------------------------- world & art (org.design)
+
+  private requireMember(actor: Actor, what: string) {
+    if (actor.kind !== "human") throw deny(`${what}: for people`);
+  }
+
+  async getWorld(actor: Actor) {
+    this.requireMember(actor, "world");
+    const { rows } = await this.db.query("SELECT config, config_revision FROM organizations WHERE id=$1", [this.orgId]);
+    return { revision: rows[0].config_revision as number, world: (rows[0].config.world ?? null) as Record<string, unknown> | null };
+  }
+
+  /**
+   * Replace the world (floors, rooms, objects, looks) and nothing else. A
+   * world never grants anything, so org.design is enough; the rest of the
+   * document stays the owner's.
+   */
+  async replaceWorld(actor: Actor, input: { revision: number; world: Record<string, unknown> | null }, parse: (doc: Record<string, unknown>) => OrgConfig) {
+    await this.require(actor, "org.design", {}, { auditAs: "org.world.update" });
+    return this.withTx(async (ctx) => {
+      const { rows } = await ctx.c.query("SELECT config, config_revision FROM organizations WHERE id=$1 FOR UPDATE", [this.orgId]);
+      if (rows[0].config_revision !== input.revision) throw conflict("stale", "the organization was changed meanwhile; reload and try again");
+      const { world: _old, ...rest } = rows[0].config as Record<string, unknown>;
+      const doc = input.world ? { ...rest, world: input.world } : rest;
+      let next: OrgConfig;
+      try {
+        next = parse(doc);
+      } catch (err) {
+        throw badRequest(err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message);
+      }
+      await this.requireAssets(ctx.c, next.world);
+      const upd = await ctx.c.query<{ config_revision: number }>(
+        "UPDATE organizations SET config=$2, config_revision=config_revision+1 WHERE id=$1 RETURNING config_revision",
+        [this.orgId, JSON.stringify(doc)],
+      );
+      const revision = upd.rows[0]!.config_revision;
+      await this.emit(ctx, { type: "org.config", payload: { revision, part: "world" } });
+      return { revision, world: input.world };
+    });
+  }
+
+  private presentAsset(r: Record<string, any>) {
+    return { id: r.id as string, kind: r.kind as AssetKind, name: r.name as string, contentType: r.content_type as string, size: r.size as number, sha256: r.sha256 as string, createdAt: (r.created_at as Date).toISOString() };
+  }
+
+  async listAssets(actor: Actor) {
+    this.requireMember(actor, "assets");
+    const { rows } = await this.db.query("SELECT id, kind, name, content_type, size, sha256, created_at FROM assets WHERE org_id=$1 ORDER BY created_at", [this.orgId]);
+    const used = await this.db.query("SELECT COALESCE(sum(size),0)::bigint AS n FROM assets WHERE org_id=$1", [this.orgId]);
+    return { assets: rows.map((r) => this.presentAsset(r)), used: Number(used.rows[0].n), quota: ORG_QUOTA };
+  }
+
+  /** Members only (the office draws it); agents have no use for art. */
+  async getAsset(actor: Actor, id: string) {
+    this.requireMember(actor, "assets");
+    const { rows } = await this.db.query("SELECT content_type, sha256, content FROM assets WHERE id=$1 AND org_id=$2", [id, this.orgId]);
+    if (!rows[0]) throw notFound("asset");
+    return { contentType: rows[0].content_type as string, sha256: rows[0].sha256 as string, content: rows[0].content as Buffer };
+  }
+
+  async uploadAsset(actor: Actor, input: { kind: AssetKind; name: string; content: Buffer }) {
+    await this.require(actor, "org.design", {}, { auditAs: "asset.upload", detail: { name: input.name, size: input.content.length } });
+    let sniffed;
+    try {
+      sniffed = sniffAsset(input.content, input.kind);
+    } catch (err) {
+      if (err instanceof AssetRejected) throw badRequest(err.message);
+      throw err;
+    }
+    const name = input.name.replace(/[^\w .()-]+/g, "").slice(0, 80) || sniffed.kind;
+    return this.withTx(async (ctx) => {
+      const hash = sha256(input.content);
+      const dup = await ctx.c.query("SELECT id, kind, name, content_type, size, sha256, created_at FROM assets WHERE org_id=$1 AND sha256=$2", [this.orgId, hash]);
+      if (dup.rows[0]) return this.presentAsset(dup.rows[0]);
+      // Serialize uploads per org so two at once cannot both slip under the quota.
+      await ctx.c.query("SELECT 1 FROM organizations WHERE id=$1 FOR UPDATE", [this.orgId]);
+      const used = await ctx.c.query("SELECT COALESCE(sum(size),0)::bigint AS n FROM assets WHERE org_id=$1", [this.orgId]);
+      if (Number(used.rows[0].n) + input.content.length > ORG_QUOTA) throw new ApiError(413, "quota", "the organization's asset library is full (200 MiB)");
+      const id = newId("as");
+      const { rows } = await ctx.c.query(
+        `INSERT INTO assets(id, org_id, kind, name, content_type, size, sha256, content, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         RETURNING id, kind, name, content_type, size, sha256, created_at`,
+        [id, this.orgId, sniffed.kind, name, sniffed.contentType, input.content.length, hash, input.content, actorRef(actor)],
+      );
+      await this.emit(ctx, { type: "org.asset", payload: { assetId: id, name, kind: sniffed.kind } });
+      return this.presentAsset(rows[0]);
+    });
+  }
+
+  /** Removing art the world still uses is allowed: the office falls back to plain shapes. */
+  async deleteAsset(actor: Actor, id: string) {
+    await this.require(actor, "org.design", {}, { auditAs: "asset.delete", detail: { assetId: id } });
+    const r = await this.db.query("DELETE FROM assets WHERE id=$1 AND org_id=$2", [id, this.orgId]);
+    if (!r.rowCount) throw notFound("asset");
   }
 
   /** This organization as a template: its document plus today's agent tree as the bootstrap. */
