@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentown</title>
+<meta name="description" content="Văn phòng AI agent có cấp bậc, runtime riêng và quyền do server thực thi. Cài trên một máy Linux bằng một lệnh.">
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1d1c1a; --muted: #5f5b54; --line: #e4e0d8;
+    --card: #ffffff; --code-bg: #f2efe8; --accent: #2f6fd0; --ok: #2f8a5f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151517; --fg: #ecebe8; --muted: #a29f98; --line: #2c2c30;
+      --card: #1c1c1f; --code-bg: #232327; --accent: #7aa7ee; --ok: #5cc192; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 46rem; margin: 0 auto; padding: 3.5rem 1rem 4rem; }
+  h1 { font-size: 2.4rem; line-height: 1.15; margin: 0 0 .5rem; letter-spacing: -.02em; }
+  h2 { font-size: 1.15rem; margin: 2.6rem 0 .6rem; }
+  p, li { color: var(--muted); }
+  strong { color: var(--fg); font-weight: 600; }
+  a { color: var(--accent); }
+  code { font: .9em/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--code-bg); padding: .1em .35em; border-radius: 4px; color: var(--fg); }
+  .lead { font-size: 1.1rem; margin: 0 0 2rem; }
+  .cmd { display: flex; align-items: center; gap: .5rem; background: var(--card);
+    border: 1px solid var(--line); border-radius: 10px; padding: .75rem .75rem .75rem 1rem; }
+  .cmd code { flex: 1; background: none; padding: 0; overflow-x: auto; white-space: nowrap; }
+  .cmd button { font: inherit; font-size: .85rem; border: 1px solid var(--line); background: var(--code-bg);
+    color: var(--fg); border-radius: 6px; padding: .3rem .7rem; cursor: pointer; }
+  .cmd button:hover { border-color: var(--accent); }
+  pre { background: var(--code-bg); border-radius: 8px; padding: .9rem 1rem; overflow-x: auto; margin: .6rem 0 1rem; }
+  pre code { background: none; padding: 0; font-size: .85rem; }
+  .note { font-size: .92rem; }
+  ul { padding-left: 1.2rem; }
+  li { margin: .3rem 0; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin-top: .8rem; }
+  @media (max-width: 34rem) { .grid { grid-template-columns: 1fr; } h1 { font-size: 2rem; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem; }
+  .card strong { display: block; margin-bottom: .2rem; }
+  .card p { margin: 0; font-size: .92rem; }
+  footer { margin-top: 3.5rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: .88rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Agentown</h1>
+  <p class="lead">Văn phòng AI agent có cấp bậc. Mỗi agent có danh tính, runtime và workspace riêng, và <strong>quyền do server thực thi</strong>: chức danh CEO hay leader không tự sinh ra quyền.</p>
+
+  <h2>Cài trên một máy Linux bằng một lệnh</h2>
+  <div class="cmd">
+    <code id="cmd">curl -fsSL https://agentown.site/install.sh | sudo bash</code>
+    <button type="button" id="copy">Copy</button>
+  </div>
+  <p class="note">Ubuntu 24.04, x86_64, gợi ý 4 vCPU / 16 GB (ví dụ GCP <code>e2-standard-4</code>). Script tải bản release mới nhất từ GitHub, <strong>kiểm chữ ký Sigstore và checksum</strong>, cài Node 22, PostgreSQL, k3s, rồi chạy server thành service <code>agentown</code>. Chạy lại lệnh này để nâng cấp; cấu hình, dữ liệu và khoá vẫn được giữ.</p>
+
+  <h2>Sau khi cài</h2>
+<pre><code>sudo agentownctl token        # owner token để đăng nhập UI
+agentownctl status            # phiên bản, service, health
+sudo agentownctl logs         # log server
+sudo agentownctl upgrade      # bản mới nhất (hoặc: upgrade v0.2.0)
+sudo agentownctl rollback     # quay lại bản trước</code></pre>
+  <p>UI chạy ở cổng 8080 trên máy chủ. <strong>Không mở cổng này ra Internet</strong>; mở qua SSH tunnel từ máy của bạn:</p>
+<pre><code>ssh -L 8080:localhost:8080 user@your-vm
+# rồi mở http://localhost:8080 và dán owner token</code></pre>
+  <p class="note">Dùng Docker thay cho k3s: <code>curl -fsSL https://agentown.site/install.sh | sudo AGENTOWN_DRIVER=docker bash</code>. Cài một phiên bản cố định: thêm <code>AGENTOWN_VERSION=v0.1.0</code>.</p>
+
+  <h2>Kiểm chứng bản release</h2>
+  <div class="grid">
+    <div class="card"><strong>Chữ ký Sigstore</strong><p><code>SHA256SUMS</code> được ký keyless bởi workflow release của repo; script cài từ chối mọi thứ khác.</p></div>
+    <div class="card"><strong>Provenance</strong><p>Mỗi file có attestation SLSA build provenance trên GitHub.</p></div>
+    <div class="card"><strong>SBOM</strong><p>Danh sách phụ thuộc dạng CycloneDX đi kèm mỗi release.</p></div>
+    <div class="card"><strong>Pin phụ thuộc</strong><p>GitHub Actions pin theo commit SHA, image gốc pin theo digest, lockfile cố định.</p></div>
+  </div>
+  <p>Muốn tự kiểm trước khi chạy gì:</p>
+<pre><code># cần gh đã đăng nhập
+gh attestation verify agentown-v0.1.0.tar.gz --repo wanatabe-yuu/Agentown
+
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/wanatabe-yuu/Agentown/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing</code></pre>
+  <p class="note">Chính <code>install.sh</code> cũng nằm trong mỗi release và được ký cùng, nên có thể tải từ trang release, kiểm như trên, rồi mới chạy thay vì pipe từ trang này.</p>
+
+  <h2>Tài liệu</h2>
+  <ul>
+    <li><a href="https://github.com/wanatabe-yuu/Agentown#readme">README</a>: kiến trúc, mô hình quyền, API</li>
+    <li><a href="https://github.com/wanatabe-yuu/Agentown/blob/main/docs/GCP.md">Chạy trên GCP</a>: cấu hình máy, thêm node riêng cho agent</li>
+    <li><a href="https://github.com/wanatabe-yuu/Agentown/blob/main/docs/RELEASING.md">Phát hành và chuỗi cung ứng</a>: cách ra bản, cách kiểm</li>
+    <li><a href="https://github.com/wanatabe-yuu/Agentown/releases">Releases</a></li>
+  </ul>
+
+  <footer>Agentown · giấy phép MIT · <a href="https://github.com/wanatabe-yuu/Agentown">GitHub</a></footer>
+</main>
+<script>
+  document.getElementById("copy").addEventListener("click", async (e) => {
+    try {
+      await navigator.clipboard.writeText(document.getElementById("cmd").textContent);
+      e.target.textContent = "Copied";
+      setTimeout(() => (e.target.textContent = "Copy"), 1500);
+    } catch { /* clipboard unavailable: the command is selectable */ }
+  });
+</script>
+</body>
+</html>

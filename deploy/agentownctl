@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Day-to-day commands for an Agentown host installed with deploy/install.sh.
+set -euo pipefail
+STATE=/var/lib/agentown
+PREFIX=/opt/agentown
+
+usage() {
+  cat <<EOF
+usage: agentownctl <command>
+
+  status            service state, installed version, health check
+  logs [args]       follow the server log (journalctl args allowed, e.g. -n 200)
+  token             print the owner token (root)
+  restart           restart the server
+  upgrade [vX.Y.Z]  install the latest (or given) signed release
+  rollback          switch back to the previously installed release
+  kubectl ...       kubectl as cluster admin, for debugging (root, k3s only)
+EOF
+}
+
+need_root() { [ "$(id -u)" = 0 ] || { echo "agentownctl $1: run with sudo" >&2; exit 1; }; }
+
+case "${1:-}" in
+  status)
+    sed -n 's/^version=//p' "$PREFIX/current/VERSION" 2>/dev/null | sed 's/^/version: /'
+    systemctl --no-pager --lines=0 status agentown || true
+    if curl -fsS --noproxy "*" http://127.0.0.1:8080/healthz >/dev/null 2>&1; then echo "health: ok"; else echo "health: not responding"; fi
+    ;;
+  logs) shift; exec journalctl -u agentown -f "$@" ;;
+  token) need_root token; cat "$STATE/owner-token" 2>/dev/null || { echo "no owner token yet (it is created on first start)" >&2; exit 1; } ;;
+  restart) need_root restart; systemctl restart agentown ;;
+  upgrade)
+    need_root upgrade
+    # The installer shipped inside the current release is used, so the upgrade
+    # path is itself covered by the signature that was verified at install time.
+    AGENTOWN_VERSION="${2:-}" AGENTOWN_DRIVER="$(sed -n 's/^AGENTOWN_RUNTIME_DRIVER=//p' /etc/agentown/agentown.env)" \
+      exec bash "$PREFIX/current/install.sh"
+    ;;
+  rollback)
+    need_root rollback
+    cur="$(readlink "$PREFIX/current")"
+    # shellcheck disable=SC2010 # release directory names are validated vX.Y.Z tags
+    prev="$(ls -1dt "$PREFIX"/releases/v* | grep -vxF "$PREFIX/$cur" | head -n 1 || true)"
+    [ -n "$prev" ] || { echo "no previous release to roll back to" >&2; exit 1; }
+    ln -sfn "releases/$(basename "$prev")" "$PREFIX/current.new" && mv -T "$PREFIX/current.new" "$PREFIX/current"
+    systemctl restart agentown
+    echo "rolled back to $(basename "$prev"); the agent image, cluster manifests and database schema were not rolled back"
+    ;;
+  kubectl) need_root kubectl; shift; exec k3s kubectl "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

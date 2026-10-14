@@ -5,3 +5,4 @@ dist/
 .agentown/
 apps/web/dist/
 coverage/
+dist-release/

@@ -25,7 +25,7 @@ echo "owner -> ceo: $task"
 deadline=$((SECONDS + ${DEMO_TIMEOUT:-300}))
 while :; do
   status=$(api "$API/api/tasks/$task" | j "d['status']")
-  [ "$status" = review ] || [ "$status" = failed ] || [ "$status" = done ] && break
+  [ "$status" = review ] || [ "$status" = failed ] || [ "$status" = "done" ] && break
   [ $SECONDS -gt $deadline ] && { echo "timed out (status $status)"; exit 1; }
   sleep 3
 done

@@ -15,26 +15,27 @@ import { Service } from "./service.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const env = process.env;
+// Release installs keep mutable state outside the read-only release directory.
+const stateDir = env.AGENTOWN_STATE_DIR ?? resolve(root, ".agentown");
 
 const config = parseOrgConfig(readFileSync(env.AGENTOWN_CONFIG ?? resolve(root, "config/agentown.yaml"), "utf8"));
 const db = createPool(env.DATABASE_URL ?? "postgres://agentown:agentown@127.0.0.1:5432/agentown");
 await migrate(db);
 
 const bus = new EventBus();
-const secrets = SecretBox.fromEnvOrFile(env.AGENTOWN_SECRET_KEY, resolve(root, ".agentown/secret-key"));
+const secrets = SecretBox.fromEnvOrFile(env.AGENTOWN_SECRET_KEY, resolve(stateDir, "secret-key"));
 const service = new Service(db, config, bus, secrets, listModels);
 const { ownerToken } = await service.bootstrap({ ownerToken: env.AGENTOWN_OWNER_TOKEN });
 if (ownerToken && !env.AGENTOWN_OWNER_TOKEN) {
-  const stateDir = resolve(root, ".agentown");
   mkdirSync(stateDir, { recursive: true });
   writeFileSync(resolve(stateDir, "owner-token"), `${ownerToken}\n`, { mode: 0o600 });
-  console.log(`[agentown] owner token written to .agentown/owner-token (shown once)`);
+  console.log(`[agentown] owner token written to ${resolve(stateDir, "owner-token")} (shown once)`);
 }
 
 const driverKind = env.AGENTOWN_RUNTIME_DRIVER ?? "kubernetes";
 let driver: RuntimeDriver | null = null;
 if (driverKind === "kubernetes") driver = new KubernetesDriver(env.AGENTOWN_KUBECONFIG);
-else if (driverKind === "docker") driver = new DockerDriver(resolve(root, ".agentown/runtime-secrets"));
+else if (driverKind === "docker") driver = new DockerDriver(resolve(stateDir, "runtime-secrets"));
 else if (driverKind !== "none") throw new Error(`unknown AGENTOWN_RUNTIME_DRIVER ${driverKind}`);
 
 const controller = driver

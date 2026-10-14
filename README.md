@@ -5,6 +5,15 @@ Văn phòng gồm nhiều AI agent có cấp bậc. Mỗi agent có danh tính b
 - Bối cảnh: [`docs/AGENTOWN_HANDOFF.md`](docs/AGENTOWN_HANDOFF.md)
 - Quyết định và giả định: [`docs/DECISIONS.md`](docs/DECISIONS.md)
 - Chạy trên GCP (cấu hình máy, thêm node): [`docs/GCP.md`](docs/GCP.md)
+- Phát hành và chuỗi cung ứng (chữ ký, provenance, SBOM): [`docs/RELEASING.md`](docs/RELEASING.md)
+
+## Cài trên một máy chủ
+
+```bash
+curl -fsSL https://agentown.site/install.sh | sudo bash
+```
+
+Cần Ubuntu 24.04, x86_64. Script cài bản release mới nhất do GitHub Actions build, kiểm chữ ký Sigstore và checksum trước khi cài, rồi chạy service `agentown` (k3s, PostgreSQL, Node 22). Chạy lại lệnh để nâng cấp. Quản lý bằng `agentownctl`; chi tiết ở [`docs/GCP.md`](docs/GCP.md).
 
 ## Trạng thái (v0.1)
 
@@ -42,10 +51,12 @@ apps/server        Fastify + Postgres: org service, audit, SSE, terminal proxy, 
 apps/harness       chạy trong runtime: vòng claim → run → report, adapter script/claude, CLI `agentown`, playbooks
 apps/web           React + Canvas 2D: văn phòng, bảng agent, panel, terminal (xterm)
 config/agentown.yaml  cấu hình tổ chức do owner viết: phòng ban, catalog runtime, profile quyền, template, bootstrap
-scripts/           dev-k3s.sh, dev-server.sh, demo.sh, verify-k8s-guardrails.sh
+deploy/            install.sh (cài một lệnh), agentownctl, gcp/setup-vm.sh
+site/              agentown.site (GitHub Pages)
+scripts/           dev-k3s.sh, dev-server.sh, demo.sh, verify-k8s-guardrails.sh, package-release.sh
 ```
 
-## Chạy thử (máy Linux, Docker driver)
+## Chạy từ mã nguồn (máy Linux, Docker driver)
 
 Yêu cầu: Node 22, pnpm, Docker, PostgreSQL 16.
 

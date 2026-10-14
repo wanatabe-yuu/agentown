@@ -7,6 +7,13 @@ model is documented in `README.md` (permission model) and `docs/DECISIONS.md`.
 
 Agentown is pre-1.0. Only the latest `main` receives fixes.
 
+## Verifying releases
+
+Release checksums are signed with Sigstore by this repository's release
+workflow and every asset carries a GitHub build-provenance attestation;
+`deploy/install.sh` refuses anything else. How to verify by hand:
+`docs/RELEASING.md`.
+
 ## Reporting a vulnerability
 
 Please report privately using GitHub's **"Report a vulnerability"** button

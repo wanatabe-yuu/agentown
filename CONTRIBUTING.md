@@ -30,6 +30,9 @@ the way they are.
 | `apps/harness` | Process inside each agent runtime, `agentown` CLI, playbooks |
 | `apps/web` | 2D office UI (React + Canvas) |
 | `config/agentown.yaml` | Owner-authored org config: catalog, templates, policy profiles |
+| `deploy/` | One-command host installer (`install.sh`) and `agentownctl` |
+| `site/` | agentown.site (GitHub Pages) |
+| `scripts/package-release.sh` | Builds release assets; see `docs/RELEASING.md` |
 
 ## Pull requests
 

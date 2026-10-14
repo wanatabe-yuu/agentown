@@ -45,8 +45,37 @@ gcloud compute ssh agentown-1 --zone=$ZONE -- -L 8080:localhost:8080
 
 ## Cài đặt trên VM
 
+SSH vào VM rồi chạy một lệnh:
+
 ```bash
-git clone <repo> agentown && cd agentown
+curl -fsSL https://agentown.site/install.sh | sudo bash
+```
+
+Script tải bản release mới nhất do GitHub Actions build, kiểm chữ ký Sigstore và checksum (xem [RELEASING.md](RELEASING.md)), cài Node 22, PostgreSQL và k3s, nạp image agent vào k3s, áp guard rails (RBAC, Pod Security, admission policy, NetworkPolicy), rồi chạy server thành service systemd `agentown`. Script cài lại được nhiều lần; chạy lại tức là nâng cấp.
+
+| Đường dẫn | Nội dung |
+|---|---|
+| `/opt/agentown/current` | bản release đang chạy (giữ thêm 2 bản cũ để rollback) |
+| `/etc/agentown/agentown.yaml` | cấu hình tổ chức. Chỉ tạo ở lần cài đầu, sau đó là của bạn |
+| `/etc/agentown/agentown.env` | biến môi trường do installer ghi lại mỗi lần cài; thêm biến riêng vào `/etc/agentown/local.env` |
+| `/var/lib/agentown` | owner token, `secret-key`, kubeconfig của controller |
+
+```bash
+sudo agentownctl token      # owner token
+agentownctl status          # phiên bản, service, health
+sudo agentownctl logs       # journalctl -u agentown -f
+sudo agentownctl upgrade    # bản mới nhất, hoặc: upgrade v0.2.0
+sudo agentownctl rollback   # quay về bản trước (không lùi schema DB)
+```
+
+Biến tuỳ chọn: `AGENTOWN_VERSION=v0.1.0` để cài một bản cố định, `AGENTOWN_DRIVER=docker` để dùng Docker thay cho k3s (ví dụ `curl -fsSL https://agentown.site/install.sh | sudo AGENTOWN_DRIVER=docker bash`).
+
+**Sao lưu `/var/lib/agentown/secret-key`.** Các API key lưu trong DB được mã hoá bằng khoá này, mất khoá là mất key.
+
+### Cài từ mã nguồn (để phát triển)
+
+```bash
+git clone https://github.com/wanatabe-yuu/Agentown agentown && cd agentown
 sudo bash deploy/gcp/setup-vm.sh          # Docker, Node 22, pnpm, Postgres, k3s
 pnpm install && pnpm build:web
 sudo AGENTOWN_K3S_MODE=native scripts/dev-k3s.sh up      # image agent, guard rails, kubeconfig cho controller
@@ -55,7 +84,7 @@ AGENTOWN_K3S_MODE=native scripts/dev-server.sh           # server dùng driver k
 scripts/demo.sh                                          # CEO → leader → engineer → QA chạy thật trên Pod
 ```
 
-Cho môi trường thật, đặt `AGENTOWN_SECRET_KEY` (32 byte, base64: `openssl rand -base64 32`) thay cho file khoá dev tự sinh `.agentown/secret-key`. Lưu khoá này ở nơi an toàn: mất khoá là mất các API key đã lưu.
+Khi chạy từ mã nguồn trong môi trường thật, đặt `AGENTOWN_SECRET_KEY` (32 byte, base64: `openssl rand -base64 32`) thay cho file khoá dev tự sinh `.agentown/secret-key`. Lưu khoá này ở nơi an toàn: mất khoá là mất các API key đã lưu.
 
 ## Thêm node (mỗi nhân viên một node)
 
@@ -71,11 +100,14 @@ Node dedicated được gắn nhãn và taint nên chỉ Pod dedicated chạy �
 
 Khi có nhiều node, image agent phải có trên từng node: đẩy `agentown/harness` lên Artifact Registry và sửa `image` trong `runtimeCatalog`, đồng thời giữ danh sách image trong admission policy (tự sinh từ catalog).
 
-## Cho phép một coding agent vào VM qua SSH
+## Cho một coding agent làm việc trên VM
+
+Phiên Claude Code chạy trên cloud không SSH ra ngoài được, vì môi trường của nó chỉ cho đi HTTPS qua proxy. Hãy chạy Claude Code ngay trên VM:
 
 ```bash
-gcloud compute instances add-metadata agentown-1 --zone=$ZONE \
-  --metadata=ssh-keys="agentown:<public key của agent>"
+sudo apt-get install -y nodejs   # đã có nếu bạn chạy install.sh
+sudo npm install -g @anthropic-ai/claude-code
+claude                           # trong thư mục làm việc của bạn
 ```
 
-Key của một phiên Claude Code trên cloud chỉ sống cùng container của phiên đó, và môi trường cloud phải được cấp Network access ra cổng 22 của VM. Cách ổn định hơn là chạy Claude Code trực tiếp trên VM.
+Agent đó dùng được `agentownctl status`, `sudo agentownctl logs` và `curl http://127.0.0.1:8080/healthz` để xem service.
