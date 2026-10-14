@@ -1,7 +1,7 @@
 # Agent runtime image: harness + agentown CLI + owner-approved playbooks.
 # Build with `pnpm --filter @agentown/harness image` (bundles first).
 # Pinned by digest (multi-arch index); Dependabot bumps it.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a
 COPY dist/harness.mjs dist/cli.mjs /opt/agentown/
 COPY playbooks/ /opt/agentown/playbooks/
 RUN mkdir -p /workspace && chown 1000:1000 /workspace \
