@@ -145,6 +145,13 @@ Example permission matrix: see `policyProfiles` in [`config/agentown.yaml`](conf
 - The web UI shows only what the signed-in person may do (`GET /api/me`, the per-agent `can` map and the per-task `can`); the server re-checks every request regardless.
 - Owner-only, by design: tasks with no assignee, hiring at the top of the tree or into another department, detaching an agent from the tree.
 
+## Organizations, templates and the 3D office
+
+- One install hosts many organizations. The instance admin creates them from a template (Organizations); each runs in its own namespace `agentown-o-<id>`, created by the cluster provisioner (`agentown-provision.timer`, or `scripts/dev-k3s.sh provision`).
+- Built-in templates live in [`config/templates/`](config/templates): company, factory, science lab, hospital, coffee store. The owner edits their organization in the UI (Organization) and can save it as a template, export it as YAML or import one.
+- A template's optional `world` decides the office: `floors` → `rooms` (position and size in meters, which department sits there), `kinds` of objects (`character` people or animals, `static` furniture, `dynamic` things that move or glow), placed `objects`, and `avatars` per job title. Objects are composed of primitives (`box`, `cylinder`, `sphere`, `cone`, `torus`) or a built-in character (`person`, `cat`, `dog`, `robot`); behaviors are `spin`, `bob`, `pulse`, `blink`, `sway`, `wander`. See [`coffee-store.yaml`](config/templates/coffee-store.yaml). Without a world, every department gets a room on one floor.
+- The office is drawn with three.js: pan (left drag), turn (right drag), zoom (wheel); pick a floor, or a room (list or its name) to fly there.
+
 ## Main API
 
 | Endpoint | Purpose |

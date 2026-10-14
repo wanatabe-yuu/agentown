@@ -122,7 +122,7 @@ describe("templates", () => {
     const other = await env.call(env.owner, "POST", "/api/admin/orgs", { id: "other", name: "Other", templateId: "lab", owner: { displayName: "Olu" } });
     const t = other.body.ownerToken;
     const list = (await env.call(t, "GET", "/api/templates")).body.templates.map((x: Doc) => x.id);
-    expect(list.sort()).toEqual(["company", "factory", "hospital", "lab"]);
+    expect(list.sort()).toEqual(["coffee-store", "company", "factory", "hospital", "lab"]);
     const mine = (await env.call(env.owner, "GET", "/api/templates")).body.templates.find((x: Doc) => !x.builtIn);
     expect((await env.app.inject({ method: "GET", url: `/api/templates/${mine.id}/export`, headers: { authorization: `Bearer ${t}` } })).statusCode).toBe(404);
     expect((await env.call(t, "DELETE", `/api/templates/${mine.id}`)).status).toBe(404);

@@ -1,0 +1,254 @@
+# Organization template: a two-floor coffee store. The template decides
+# everything: departments, jobs, permissions, floors and rooms, what lives in
+# them (people, a shop cat, a jukebox), and how each job looks. Runtime presets
+# (script-v1, claude-v1) come from the install's catalog.
+format: agentown.template/v1
+meta:
+  id: coffee-store
+  name: Coffee store
+  description: A two-floor café. Counter, bar, kitchen and patio downstairs; office, roastery and a content studio upstairs. Mocha the cat runs social media.
+
+departments:
+  - { id: front, name: Front of house, color: "#d9733d" }
+  - { id: bar, name: Coffee bar, color: "#7c4a1e" }
+  - { id: kitchen, name: Kitchen, color: "#3fa37a" }
+  - { id: management, name: Management, color: "#c9a227" }
+  - { id: roastery, name: Roastery, color: "#a33f2f" }
+  - { id: studio, name: Content studio, color: "#8e6bbf" }
+
+projects:
+  - { id: autumn-menu, name: Autumn menu }
+  - { id: socials, name: Social media }
+
+policyProfiles:
+  store-manager:
+    - { action: org.view, scope: org }
+    - { action: task.view, scope: org }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: descendants }
+    - { action: runtime.control, scope: descendants }
+    - { action: runtime.logs, scope: descendants }
+    - { action: agent.configure, scope: descendants }
+    - { action: agent.spawn, scope: team, templates: [shift-lead-v1, barista-v1, baker-v1, roaster-v1, marketer-claude-v1, mascot-claude-v1] }
+  lead:
+    - { action: org.view, scope: team }
+    - { action: task.view, scope: team }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: direct-reports }
+    - { action: agent.spawn, scope: self, templates: [barista-v1, baker-v1] }
+    - { action: runtime.control, scope: direct-reports }
+    - { action: runtime.logs, scope: direct-reports }
+  worker:
+    - { action: org.view, scope: self }
+    - { action: task.view, scope: self }
+    - { action: task.create, scope: self }
+    - { action: runtime.logs, scope: self }
+
+agentTemplates:
+  - { id: store-manager-v1, jobRole: store-manager, runtimePreset: script-v1, policyProfile: store-manager }
+  - { id: shift-lead-v1, jobRole: shift-lead, runtimePreset: script-v1, policyProfile: lead }
+  - { id: barista-v1, jobRole: barista, runtimePreset: script-v1, policyProfile: worker }
+  - { id: baker-v1, jobRole: baker, runtimePreset: script-v1, policyProfile: worker }
+  - { id: roaster-v1, jobRole: roaster, runtimePreset: script-v1, policyProfile: worker }
+  - { id: marketer-claude-v1, jobRole: marketer, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: mascot-claude-v1, jobRole: mascot, runtimePreset: claude-v1, policyProfile: worker }
+
+humanRoles:
+  shift-supervisor:
+    name: Shift supervisor
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: { departments: [front, bar, kitchen] } }
+      - { action: task.create, scope: { departments: [front, bar, kitchen] } }
+      - { action: task.review, scope: { departments: [front, bar, kitchen] } }
+      - { action: runtime.control, scope: { departments: [front, bar, kitchen] } }
+  viewer:
+    name: Viewer
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: org }
+
+bootstrap:
+  agents:
+    - { key: manager, displayName: Rosa, template: store-manager-v1, department: management }
+    - { key: shift-lead, displayName: Kai, template: shift-lead-v1, department: front, reportsTo: manager }
+    - { key: barista-1, displayName: Linh, template: barista-v1, department: bar, reportsTo: shift-lead }
+    - { key: barista-2, displayName: Omar, template: barista-v1, department: bar, reportsTo: shift-lead }
+    - { key: baker, displayName: Ines, template: baker-v1, department: kitchen, reportsTo: shift-lead }
+    - { key: roaster, displayName: Bao, template: roaster-v1, department: roastery, reportsTo: manager }
+    - { key: mocha, displayName: Mocha, template: mascot-claude-v1, department: studio, reportsTo: manager }
+
+world:
+  floors:
+    - id: f1
+      name: Floor 1
+      rooms:
+        - { id: 1a, name: "1A · Counter & seating", department: front, area: { x: 0, z: 0, w: 12, d: 8 }, floorColor: "#e8d5b9", wallColor: "#b9825a", seats: 2 }
+        - { id: 1b, name: "1B · Coffee bar", department: bar, area: { x: 13, z: 0, w: 8, d: 8 }, floorColor: "#d8c3a5", wallColor: "#7c4a1e" }
+        - { id: 1c, name: "1C · Kitchen", department: kitchen, area: { x: 0, z: 9, w: 10, d: 6 }, floorColor: "#dfe7e1", wallColor: "#3fa37a" }
+        - { id: 1d, name: "1D · Patio", area: { x: 11, z: 9, w: 10, d: 6 }, floorColor: "#cfd8c0", wallColor: "#8a9a6b", wallHeight: 0.6, seats: 0 }
+    - id: f2
+      name: Floor 2
+      rooms:
+        - { id: 2a, name: "2A · Office", department: management, area: { x: 0, z: 0, w: 10, d: 8 }, floorColor: "#ece3cf", wallColor: "#c9a227" }
+        - { id: 2b, name: "2B · Roastery", department: roastery, area: { x: 11, z: 0, w: 10, d: 8 }, floorColor: "#e3d2c8", wallColor: "#a33f2f" }
+        - { id: 2c, name: "2C · Content studio", department: studio, area: { x: 0, z: 9, w: 10, d: 6 }, floorColor: "#e7def2", wallColor: "#8e6bbf" }
+
+  kinds:
+    # Characters: how the jobs look, and the shop cat.
+    barista: { name: Barista, category: character, look: { character: person, color: "#6b4226", accent: "#2b1d14" } }
+    manager: { name: Manager, category: character, look: { character: person, color: "#334155", accent: "#111827" } }
+    roaster: { name: Roaster, category: character, look: { character: robot, color: "#a33f2f" } }
+    cat-agent: { name: Cat, category: character, look: { character: cat, color: "#d9a066", accent: "#5a3a1a" } }
+    shop-cat:
+      name: Shop cat
+      category: dynamic
+      look: { character: cat, color: "#3b3b3b", accent: "#1a1a1a" }
+      behaviors:
+        - { type: wander, speed: 0.6, amount: 2.5 }
+
+    # Static furniture, composed of primitives.
+    counter:
+      name: Counter
+      category: static
+      look:
+        parts:
+          - { shape: box, size: [5, 1.05, 0.8], offset: [0, 0.525, 0], color: "#7c4a1e" }
+          - { shape: box, size: [5.1, 0.06, 0.9], offset: [0, 1.08, 0], color: "#e8e1d5" }
+          - { shape: box, size: [0.5, 0.35, 0.4], offset: [-1.8, 1.28, 0], color: "#2b2f36" }
+    cafe-table:
+      name: Café table
+      category: static
+      look:
+        parts:
+          - { shape: cylinder, size: [0.9, 0.05, 0.9], offset: [0, 0.75, 0], color: "#f4efe6" }
+          - { shape: cylinder, size: [0.08, 0.72, 0.08], offset: [0, 0.36, 0], color: "#3b2a20" }
+          - { shape: cylinder, size: [0.5, 0.04, 0.5], offset: [0, 0.02, 0], color: "#3b2a20" }
+          - { shape: cylinder, size: [0.12, 0.14, 0.12], offset: [0.15, 0.85, 0.05], color: "#ffffff" }
+    sofa:
+      name: Sofa
+      category: static
+      look:
+        parts:
+          - { shape: box, size: [2, 0.45, 0.85], offset: [0, 0.3, 0], color: "#8e6b4f" }
+          - { shape: box, size: [2, 0.6, 0.2], offset: [0, 0.7, 0.33], color: "#7a5a40" }
+          - { shape: box, size: [0.2, 0.55, 0.85], offset: [-0.95, 0.5, 0], color: "#7a5a40" }
+          - { shape: box, size: [0.2, 0.55, 0.85], offset: [0.95, 0.5, 0], color: "#7a5a40" }
+    plant:
+      name: Plant
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.45, 0.45, 0.45], offset: [0, 0.22, 0], color: "#b5651d" }
+          - { shape: sphere, size: [0.8, 0.9, 0.8], offset: [0, 0.9, 0], color: "#3f8f4f", part: leaves }
+      behaviors:
+        - { type: sway, part: leaves, speed: 0.3, amount: 0.4 }
+    shelf:
+      name: Shelf
+      category: static
+      look:
+        parts:
+          - { shape: box, size: [1.8, 1.8, 0.4], offset: [0, 0.9, 0], color: "#9b7653" }
+          - { shape: box, size: [0.3, 0.3, 0.3], offset: [-0.5, 1.35, 0], color: "#c0392b" }
+          - { shape: box, size: [0.3, 0.3, 0.3], offset: [0.1, 1.35, 0], color: "#2e86de" }
+          - { shape: box, size: [0.3, 0.35, 0.3], offset: [0.5, 0.75, 0], color: "#f1c40f" }
+
+    # Dynamic objects: things that move or glow.
+    espresso-machine:
+      name: Espresso machine
+      category: dynamic
+      look:
+        parts:
+          - { shape: box, size: [1.2, 0.7, 0.6], offset: [0, 1.4, 0], color: "#c9ced6" }
+          - { shape: box, size: [1.3, 1.05, 0.7], offset: [0, 0.525, 0], color: "#3b2a20" }
+          - { shape: sphere, size: [0.12, 0.12, 0.05], offset: [0.4, 1.55, -0.31], color: "#ff5a36", emissive: "#ff3b1f", part: led }
+          - { shape: cylinder, size: [0.18, 0.12, 0.18], offset: [-0.25, 1.0, -0.2], color: "#ffffff", part: cup }
+      behaviors:
+        - { type: blink, part: led, speed: 1.5 }
+        - { type: bob, part: cup, speed: 0.5, amount: 0.3 }
+    jukebox:
+      name: Jukebox
+      category: dynamic
+      look:
+        parts:
+          - { shape: box, size: [1, 1.5, 0.6], offset: [0, 0.75, 0], color: "#8b1e3f" }
+          - { shape: cylinder, size: [1, 0.6, 0.6], offset: [0, 1.5, 0], rotation: [90, 0, 0], color: "#d4af37" }
+          - { shape: box, size: [0.8, 0.5, 0.05], offset: [0, 0.95, -0.31], color: "#ffd166", emissive: "#ffb703", part: lights }
+          - { shape: torus, size: [0.6, 0.6, 0.6], offset: [0, 0.45, -0.32], color: "#111111", part: record }
+      behaviors:
+        - { type: blink, part: lights, speed: 2 }
+        - { type: spin, part: record, speed: 0.5 }
+        - { type: pulse, speed: 2, amount: 0.4 }
+    roaster-drum:
+      name: Coffee roaster
+      category: dynamic
+      look:
+        parts:
+          - { shape: box, size: [1.4, 0.9, 1], offset: [0, 0.45, 0], color: "#2b2f36" }
+          - { shape: cylinder, size: [0.9, 1.1, 0.9], offset: [0, 1.35, 0], rotation: [0, 0, 90], color: "#a33f2f", part: drum }
+          - { shape: cone, size: [0.6, 0.5, 0.6], offset: [0.3, 2.05, 0], rotation: [180, 0, 0], color: "#c9ced6" }
+      behaviors:
+        - { type: spin, part: drum, speed: 0.4 }
+    oven:
+      name: Oven
+      category: dynamic
+      look:
+        parts:
+          - { shape: box, size: [1.2, 1.2, 0.8], offset: [0, 0.6, 0], color: "#c9ced6" }
+          - { shape: box, size: [0.9, 0.5, 0.05], offset: [0, 0.65, -0.41], color: "#ff8c42", emissive: "#ff6b1a", part: window }
+      behaviors:
+        - { type: blink, part: window, speed: 0.4, amount: 0.6 }
+    fan:
+      name: Fan
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.08, 1.3, 0.08], offset: [0, 0.65, 0], color: "#2b2f36" }
+          - { shape: torus, size: [0.8, 0.8, 0.8], offset: [0, 1.4, 0], color: "#9aa3ad", part: blades }
+      behaviors:
+        - { type: spin, part: blades, speed: 1.5 }
+
+  objects:
+    # 1A counter & seating
+    - { kind: counter, room: 1a, at: [6, 1.4] }
+    - { kind: cafe-table, room: 1a, at: [2, 5] }
+    - { kind: cafe-table, room: 1a, at: [4.5, 6.2] }
+    - { kind: cafe-table, room: 1a, at: [8, 5.5] }
+    - { kind: sofa, room: 1a, at: [10.4, 4], rotationY: 90 }
+    - { kind: jukebox, room: 1a, at: [11.2, 7], rotationY: -90, label: Jukebox }
+    - { kind: plant, room: 1a, at: [0.6, 7.4] }
+    - { kind: shop-cat, room: 1a, at: [6, 5], label: Bean }
+    # 1B coffee bar
+    - { kind: espresso-machine, room: 1b, at: [4, 6.8] }
+    - { kind: shelf, room: 1b, at: [6.8, 0.4] }
+    - { kind: plant, room: 1b, at: [7.4, 7.4] }
+    # 1C kitchen
+    - { kind: oven, room: 1c, at: [8.5, 1] }
+    - { kind: oven, room: 1c, at: [8.5, 2.6] }
+    - { kind: shelf, room: 1c, at: [5, 0.4] }
+    # 1D patio
+    - { kind: cafe-table, room: 1d, at: [2, 2] }
+    - { kind: cafe-table, room: 1d, at: [5, 3.5] }
+    - { kind: cafe-table, room: 1d, at: [8, 2] }
+    - { kind: plant, room: 1d, at: [0.6, 5.4] }
+    - { kind: plant, room: 1d, at: [9.4, 5.4] }
+    # 2A office
+    - { kind: shelf, room: 2a, at: [8, 0.4] }
+    - { kind: plant, room: 2a, at: [9.4, 7.4] }
+    - { kind: fan, room: 2a, at: [9.2, 4] }
+    # 2B roastery
+    - { kind: roaster-drum, room: 2b, at: [7.5, 5.5] }
+    - { kind: shelf, room: 2b, at: [8, 0.4] }
+    # 2C studio
+    - { kind: sofa, room: 2c, at: [7, 4.8] }
+    - { kind: plant, room: 2c, at: [9.4, 0.6] }
+
+  avatars:
+    default: barista
+    byJobRole:
+      store-manager: manager
+      shift-lead: manager
+      roaster: roaster
+      mascot: cat-agent

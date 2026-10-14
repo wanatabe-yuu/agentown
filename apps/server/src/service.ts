@@ -1652,6 +1652,7 @@ export class Service {
       me: actor,
       departments: this.config.departments,
       projects: this.config.projects,
+      world: this.config.world ?? null,
       agents,
       tasks,
       serverTime: new Date().toISOString(),

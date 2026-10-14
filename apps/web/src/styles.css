@@ -652,3 +652,90 @@ textarea {
 input.invalid {
   outline: 2px solid var(--bad, #d33);
 }
+
+/* ---- 3D office */
+.office-3d canvas {
+  display: block;
+  touch-action: none;
+}
+.office-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.room-label {
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font: 600 12px system-ui, sans-serif;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.72);
+  white-space: nowrap;
+}
+.room-label:hover {
+  background: rgba(14, 116, 144, 0.9);
+}
+.agent-label {
+  text-align: center;
+  font: 11px system-ui, sans-serif;
+  color: var(--text);
+  text-shadow: 0 0 3px var(--stage), 0 0 3px var(--stage);
+  white-space: nowrap;
+  line-height: 1.15;
+}
+.agent-label b {
+  display: block;
+  font-size: 12px;
+}
+.agent-label small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.agent-label.selected b {
+  color: #38bdf8;
+}
+.agent-bubble {
+  min-width: 22px;
+  padding: 2px 7px;
+  border-radius: 12px;
+  font: 700 13px system-ui, sans-serif;
+  text-align: center;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+.agent-bubble[data-tone="bad"] {
+  background: #ef4444;
+  color: #fff;
+}
+.agent-bubble[data-tone="review"] {
+  background: #facc15;
+  color: #422006;
+}
+.object-label {
+  font: 600 11px system-ui, sans-serif;
+  color: var(--text);
+  text-shadow: 0 0 3px var(--stage), 0 0 3px var(--stage);
+  white-space: nowrap;
+}
+.world-nav {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  z-index: 2;
+}
+.world-nav select {
+  background: var(--surface);
+}
+.no-webgl {
+  overflow: auto;
+  padding: 16px;
+}

@@ -1,3 +1,4 @@
+import type { World } from "@agentown/core";
 export type WorkState = "idle" | "thinking" | "executing" | "waiting" | "blocked" | "offline" | "error";
 
 export interface Agent {
@@ -140,6 +141,8 @@ export interface Snapshot {
   me: { kind: string; id: string };
   departments: Department[];
   projects: Array<{ id: string; name: string }>;
+  /** Floors, rooms and objects from the organization's template; null = one room per department. */
+  world: World | null;
   agents: Agent[];
   tasks: Task[];
   serverTime: string;

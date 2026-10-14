@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AdminDialog } from "./Admin.tsx";
 import { AgentPanel } from "./AgentPanel.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
-import { OfficeCanvas } from "./OfficeCanvas.tsx";
 import { OrgEditor } from "./OrgEditor.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
 import { UsersDialog } from "./Users.tsx";
 import { HttpError, api, setOrg } from "./api.ts";
-import type { Flight } from "./office.ts";
+import type { Flight } from "./office3d/scene.ts";
+
+// three.js is only downloaded when the office is shown.
+const Office3D = lazy(() => import("./office3d/Office3D.tsx"));
 import { STRUCTURAL, useOffice } from "./store.ts";
 import type { Account, AgentEvent, Catalog, Me } from "./types.ts";
 import { Modal, StatusPill, ago } from "./ui.tsx";
@@ -266,7 +268,9 @@ function OrgApp({
       <main className="main">
         <section className="stage">
           {view === "office" ? (
-            <OfficeCanvas snapshot={snapshot} workOf={effectiveWork} needsOwner={needsOwner} selected={selected} onSelect={setSelected} flights={flights} dark={dark} />
+            <Suspense fallback={<div className="center muted">Loading the office…</div>}>
+              <Office3D snapshot={snapshot} workOf={effectiveWork} needsOwner={needsOwner} selected={selected} onSelect={setSelected} flights={flights} dark={dark} />
+            </Suspense>
           ) : (
             <AgentTable snapshot={snapshot} workOf={effectiveWork} now={now} onSelect={setSelected} selected={selected} />
           )}

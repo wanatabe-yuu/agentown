@@ -1,6 +1,7 @@
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ACTIONS, type Action, type Scope } from "./types.ts";
+import { checkWorld, worldSchema } from "./world.ts";
 
 /**
  * Organization config. This file is authored by the human owner; the catalog and
@@ -83,6 +84,8 @@ export const orgConfigSchema = z
      */
     humanRoles: z.record(idSchema, z.object({ name: z.string(), permissions: z.array(capabilitySchema) })).default({}),
     bootstrap: z.object({ agents: z.array(bootstrapAgentSchema) }),
+    /** Floors, rooms and objects; without it the office lays out one room per department. */
+    world: worldSchema.optional(),
   })
   .superRefine((cfg, ctx) => {
     const presets = new Set(cfg.runtimeCatalog.map((p) => p.id));
@@ -100,6 +103,7 @@ export const orgConfigSchema = z
       }
     }
     const projects = new Set(cfg.projects.map((p) => p.id));
+    if (cfg.world) checkWorld(cfg.world, departments, (message) => ctx.addIssue({ code: "custom", message }));
     const scopeRefs = (where: string, scope: Scope) => {
       if (scope.kind === "departments") for (const d of scope.ids) if (!departments.has(d)) ctx.addIssue({ code: "custom", message: `${where}: unknown department ${d}` });
       if (scope.kind === "projects") for (const p of scope.ids) if (!projects.has(p)) ctx.addIssue({ code: "custom", message: `${where}: unknown project ${p}` });
