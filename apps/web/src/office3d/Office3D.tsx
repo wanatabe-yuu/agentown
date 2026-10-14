@@ -1,12 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { World } from "@agentown/core/world";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { MapControls } from "three/addons/controls/MapControls.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
+import { HttpError, api } from "../api.ts";
 import { CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Agent, Snapshot, WorkState } from "../types.ts";
-import { bounds, layoutWorld, type PlacedRoom } from "./layout.ts";
+import { bounds, FLOOR_HEIGHT, layoutWorld, type PlacedRoom } from "./layout.ts";
 import { buildNav } from "./nav.ts";
 import { disposeMaterials } from "./procedural.ts";
-import { buildScene, type Flight, type OfficeScene, updateScene } from "./scene.ts";
+import { buildScene, type Flight, objectIndexOf, type OfficeScene, updateScene } from "./scene.ts";
+import type { Draft } from "./WorldEditor.tsx";
+
+// The editor (and its validation) is only downloaded when someone opens it.
+type EditorModule = typeof import("./WorldEditor.tsx");
 
 interface Props {
   snapshot: Snapshot;
@@ -16,7 +23,13 @@ interface Props {
   onSelect: (id: string | null) => void;
   flights: Flight[];
   dark: boolean;
+  /** May edit the world (org.design). */
+  canDesign?: boolean;
+  notify?: (msg: string, kind?: "error" | "info") => void;
+  /** The editor wants the whole stage: the page hides its side panel meanwhile. */
+  onEditingChange?: (editing: boolean) => void;
 }
+
 
 const VIEW = 10; // half-height of the camera's view at zoom 1, in meters
 const ISO = new THREE.Vector3(1, 1.15, 1).normalize().multiplyScalar(80);
@@ -32,14 +45,44 @@ export default function Office3D(props: Props) {
   const [floor, setFloor] = useState<number | "all">("all");
   const [focusRoom, setFocusRoom] = useState("");
   const { snapshot } = props;
+
+  // ---- world editor state (org.design)
+  const [editing, setEditing] = useState(false);
+  const [editor, setEditor] = useState<EditorModule | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [history, setHistory] = useState<Draft[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [selectedObj, setSelectedObj] = useState<number | null>(null);
+  const [mode, setMode] = useState<"translate" | "rotate">("translate");
+  const checked = useMemo(() => (draft && editor ? editor.validate(draft, snapshot.departments.map((d) => d.id)) : null), [draft, editor, snapshot.departments]);
+  const lastGood = useRef<World | null>(null);
+  if (checked?.world) lastGood.current = checked.world;
+  const shownWorld = editing ? (checked?.world ?? lastGood.current) : (snapshot.world ?? null);
+
+  // Edits apply to a copy of the current draft (no state updaters: they must stay pure).
+  const draftRef = useRef<Draft | null>(null);
+  draftRef.current = draft;
+  const edit = useCallback((fn: (w: Draft) => void) => {
+    const current = draftRef.current;
+    if (!current) return;
+    const next = structuredClone(current);
+    fn(next);
+    draftRef.current = next;
+    setHistory((h) => [...h.slice(-49), current]);
+    setDraft(next);
+    setDirty(true);
+  }, []);
+
   const layout = useMemo(
-    () => layoutWorld(snapshot.world ?? null, snapshot.departments, snapshot.agents),
+    () => layoutWorld(shownWorld, snapshot.departments, snapshot.agents),
     // Rebuild only when the structure or the roster changes, not on every heartbeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [snapshot.world, snapshot.departments, snapshot.agents.map((a) => `${a.id}:${a.departmentId}:${a.seat}:${a.lifecycleState}:${a.jobRole}`).join("|")],
+    [shownWorld, snapshot.departments, snapshot.agents.map((a) => `${a.id}:${a.departmentId}:${a.seat}:${a.lifecycleState}:${a.jobRole}`).join("|")],
   );
-  const latest = useRef({ props, layout });
-  latest.current = { props, layout };
+  const latest = useRef({ props, layout, editing, edit });
+  latest.current = { props, layout, editing, edit };
   const engine = useRef<{
     renderer: THREE.WebGLRenderer;
     labels: CSS2DRenderer;
@@ -49,6 +92,7 @@ export default function Office3D(props: Props) {
     office: OfficeScene | null;
     hover: string | null;
     tween: { from: THREE.Vector3; to: THREE.Vector3; z0: number; z1: number; start: number } | null;
+    gizmo: TransformControls | null;
   } | null>(null);
 
   /** Fly the camera to frame these rooms. */
@@ -77,7 +121,7 @@ export default function Office3D(props: Props) {
     }
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     el.prepend(renderer.domElement);
     const labels = new CSS2DRenderer();
     labels.domElement.className = "office-labels";
@@ -103,7 +147,7 @@ export default function Office3D(props: Props) {
     controls.maxPolarAngle = 1.2;
     controls.screenSpacePanning = false;
 
-    engine.current = { renderer, labels, scene, camera, controls, office: null, hover: null, tween: null };
+    engine.current = { renderer, labels, scene, camera, controls, office: null, hover: null, tween: null, gizmo: null };
 
     const resize = () => {
       const w = el.clientWidth;
@@ -145,6 +189,7 @@ export default function Office3D(props: Props) {
           flights: p.flights,
           t: now,
           dt,
+          frozen: latest.current.editing,
         });
       }
       renderer.render(scene, camera);
@@ -153,20 +198,41 @@ export default function Office3D(props: Props) {
 
     // Picking: a click (not a drag) on an agent selects it.
     const ray = new THREE.Raycaster();
+    /** Aim the ray; matrices are refreshed here, since frames may be paused while the page is hidden. */
+    const aim = (ev: PointerEvent) => {
+      const r = renderer.domElement.getBoundingClientRect();
+      controls.update();
+      camera.updateMatrixWorld();
+      scene.updateMatrixWorld();
+      ray.setFromCamera(new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), camera);
+    };
     const pickAt = (ev: PointerEvent): string | null => {
       const e = engine.current!;
       if (!e.office) return null;
-      const r = renderer.domElement.getBoundingClientRect();
-      ray.setFromCamera(new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), camera);
+      aim(ev);
       const picks = [...e.office.agents.values()].filter((n) => n.actor.visible).map((n) => n.pick);
       return (ray.intersectObjects(picks, false)[0]?.object.userData.agentId as string | undefined) ?? null;
     };
     let down: { x: number; y: number } | null = null;
     const onDown = (ev: PointerEvent) => (down = { x: ev.clientX, y: ev.clientY });
     const onUp = (ev: PointerEvent) => {
-      if (ev.button === 0 && down && Math.hypot(ev.clientX - down.x, ev.clientY - down.y) < 4) {
-        const id = pickAt(ev);
-        if (id) latest.current.props.onSelect(id);
+      if (ev.button === 0 && down && Math.hypot(ev.clientX - down.x, ev.clientY - down.y) < 4 && !engine.current?.gizmo?.dragging) {
+        if (latest.current.editing) {
+          // Editing: pick a placed object, or the room whose floor was clicked.
+          const e = engine.current!;
+          aim(ev);
+          const hits = e.office ? ray.intersectObject(e.office.root, true).filter((h) => h.object.visible && (h.object as THREE.Mesh).isMesh) : [];
+          const obj = hits.map((h) => objectIndexOf(h.object)).find((i) => i !== null);
+          if (obj !== undefined && obj !== null) setSelectedObj(obj);
+          else {
+            const room = hits.find((h) => h.object.userData.roomId)?.object.userData.roomId as string | undefined;
+            setSelectedObj(null);
+            if (room) setFocusRoom(room);
+          }
+        } else {
+          const id = pickAt(ev);
+          if (id) latest.current.props.onSelect(id);
+        }
       }
       down = null;
     };
@@ -235,6 +301,116 @@ export default function Office3D(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRoom]);
 
+  // Move/turn handles while editing, attached to the selected object after every rebuild.
+  useEffect(() => {
+    const e = engine.current;
+    if (!e) return;
+    if (!editing) {
+      e.gizmo?.detach();
+      e.gizmo?.getHelper().removeFromParent();
+      e.gizmo?.dispose();
+      e.gizmo = null;
+      return;
+    }
+    if (!e.gizmo) {
+      const g = new TransformControls(e.camera, e.renderer.domElement);
+      g.setTranslationSnap(0.25);
+      g.setRotationSnap(Math.PI / 12);
+      g.addEventListener("dragging-changed", (ev) => (e.controls.enabled = !ev.value));
+      g.addEventListener("mouseUp", () => {
+        const o = g.object;
+        const i = o ? objectIndexOf(o) : null;
+        if (!o || i === null) return;
+        const { layout: l } = latest.current;
+        const floor = Math.round(o.position.y / FLOOR_HEIGHT);
+        latest.current.edit((w) => {
+          const placed = w.objects[i];
+          const room =
+            l.rooms.find((r) => r.floorIndex === floor && o.position.x >= r.x && o.position.x <= r.x + r.w && o.position.z >= r.z && o.position.z <= r.z + r.d) ??
+            l.rooms.find((r) => r.id === placed.room)!;
+          placed.room = room.id;
+          placed.at = [+Math.min(room.w, Math.max(0, o.position.x - room.x)).toFixed(2), +Math.min(room.d, Math.max(0, o.position.z - room.z)).toFixed(2)];
+          placed.rotationY = Math.round((o.rotation.y * 180) / Math.PI);
+        });
+      });
+      e.scene.add(g.getHelper());
+      e.gizmo = g;
+    }
+    e.gizmo.setMode(mode);
+    e.gizmo.showY = mode === "rotate";
+    e.gizmo.showX = e.gizmo.showZ = mode === "translate";
+    let target: THREE.Object3D | null = null;
+    if (selectedObj !== null) e.office?.root.traverse((o) => {
+      if (!target && o.userData.objectIndex === selectedObj) target = o;
+    });
+    if (target) e.gizmo.attach(target);
+    else e.gizmo.detach();
+  }, [editing, selectedObj, mode, layout]);
+
+  // Ctrl+Z while editing (not while typing in a field).
+  const historyRef = useRef<Draft[]>([]);
+  historyRef.current = history;
+  const undo = useCallback(() => {
+    const h = historyRef.current;
+    if (!h.length) return;
+    setDraft(h.at(-1)!);
+    setHistory(h.slice(0, -1));
+  }, []);
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === "z" && !(ev.target instanceof HTMLInputElement || ev.target instanceof HTMLSelectElement)) {
+        ev.preventDefault();
+        undo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing, undo]);
+
+  const notify = props.notify ?? (() => {});
+  const startEditing = async () => {
+    try {
+      if (!editor) setEditor(await import("./WorldEditor.tsx"));
+      const r = await api<{ revision: number; world: Draft | null }>("GET", "/api/world");
+      // No world yet: start from today's layout (one room per department).
+      const base: Draft = r.world ?? {
+        floors: [{ id: "main", name: "Office", rooms: layout.rooms.map((rm) => ({ id: rm.id, name: rm.name, department: rm.department ?? undefined, area: { x: rm.x, z: rm.z, w: rm.w, d: rm.d } })) }],
+        kinds: {},
+        objects: [],
+      };
+      setDraft(structuredClone(base));
+      setRevision(r.revision);
+      setHistory([]);
+      setDirty(!r.world);
+      setSelectedObj(null);
+      setEditing(true);
+      props.onEditingChange?.(true);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  };
+  const stopEditing = () => {
+    if (dirty && !confirm("Discard your changes to the world?")) return;
+    setEditing(false);
+    setDraft(null);
+    setSelectedObj(null);
+    props.onEditingChange?.(false);
+  };
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await api<{ revision: number }>("PUT", "/api/world", { revision, world: draft });
+      setRevision(r.revision);
+      setDirty(false);
+      notify("World saved", "info");
+    } catch (e) {
+      notify(e instanceof HttpError && e.status === 409 ? "Someone changed the organization meanwhile: close the editor and open it again." : (e as Error).message, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (failed) return <NoWebGL {...props} />;
 
   const zoomBy = (k: number) => {
@@ -266,6 +442,11 @@ export default function Office3D(props: Props) {
             ))}
           </div>
         )}
+        {props.canDesign && !editing && (
+          <button type="button" onClick={() => void startEditing()}>
+            Edit world
+          </button>
+        )}
         <select
           value={focusRoom}
           onChange={(ev) => {
@@ -288,7 +469,29 @@ export default function Office3D(props: Props) {
           ))}
         </select>
       </div>
-      <div className="zoom-controls">
+      {editing && draft && editor && (
+        <editor.EditorHost
+          draft={draft}
+          edit={edit}
+          errors={checked?.errors ?? []}
+          dirty={dirty}
+          saving={saving}
+          selected={selectedObj}
+          setSelected={setSelectedObj}
+          roomId={focusRoom}
+          setRoomId={setFocusRoom}
+          mode={mode}
+          setMode={setMode}
+          departments={snapshot.departments}
+          jobRoles={[...new Set(snapshot.agents.map((a) => a.jobRole))].sort()}
+          onSave={() => void save()}
+          onDiscard={stopEditing}
+          onUndo={undo}
+          canUndo={history.length > 0}
+          notify={notify}
+        />
+      )}
+      <div className={`zoom-controls ${editing ? "editing" : ""}`}>
         <button type="button" onClick={() => zoomBy(1.25)} aria-label="Zoom in">
           +
         </button>

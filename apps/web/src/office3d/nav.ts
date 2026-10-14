@@ -1,4 +1,4 @@
-import type { Access, World } from "@agentown/core";
+import type { Access, World } from "@agentown/core/world";
 import type { PlacedRoom, WorldLayout } from "./layout.ts";
 
 /**

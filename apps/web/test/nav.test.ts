@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { worldSchema } from "@agentown/core";
+import { worldSchema } from "@agentown/core/world";
 import { FLOOR_HEIGHT, layoutWorld } from "../src/office3d/layout.ts";
 import { allowedRooms, buildNav, reachable, route } from "../src/office3d/nav.ts";
 

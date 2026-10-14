@@ -1,4 +1,4 @@
-import type { Look, Primitive } from "@agentown/core";
+import type { Look, Primitive } from "@agentown/core/world";
 import * as THREE from "three";
 
 /**

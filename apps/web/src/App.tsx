@@ -136,6 +136,7 @@ function OrgApp({
   const [showAdmin, setShowAdmin] = useState(false);
   const [showOrg, setShowOrg] = useState(false);
   const [showAssets, setShowAssets] = useState(false);
+  const [worldEditing, setWorldEditing] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [openTask, setOpenTask] = useState<string | null>(null);
@@ -276,7 +277,18 @@ function OrgApp({
         <section className="stage">
           {view === "office" ? (
             <Suspense fallback={<div className="center muted">Loading the office…</div>}>
-              <Office3D snapshot={snapshot} workOf={effectiveWork} needsOwner={needsOwner} selected={selected} onSelect={setSelected} flights={flights} dark={dark} />
+              <Office3D
+                snapshot={snapshot}
+                workOf={effectiveWork}
+                needsOwner={needsOwner}
+                selected={selected}
+                onSelect={setSelected}
+                flights={flights}
+                dark={dark}
+                canDesign={!!me.can["org.design"]}
+                notify={notify}
+                onEditingChange={setWorldEditing}
+              />
             </Suspense>
           ) : (
             <AgentTable snapshot={snapshot} workOf={effectiveWork} now={now} onSelect={setSelected} selected={selected} />
@@ -284,7 +296,7 @@ function OrgApp({
           <Legend />
         </section>
 
-        {selected ? (
+        {worldEditing ? null : selected ? (
           <AgentPanel
             agentId={selected}
             snapshot={snapshot}

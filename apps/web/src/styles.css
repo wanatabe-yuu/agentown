@@ -662,6 +662,9 @@ input.invalid {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* CSS2DRenderer gives every label a z-index: keep them below the overlays. */
+  z-index: 1;
+  isolation: isolate;
 }
 .room-label {
   pointer-events: auto;
@@ -749,4 +752,92 @@ input.invalid {
 }
 .upload input {
   display: none;
+}
+
+/* ---- world editor */
+.world-editor {
+  position: absolute;
+  top: 56px;
+  right: 56px;
+  bottom: 12px;
+  width: min(380px, calc(100% - 80px));
+  overflow: auto;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border, #334155);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 3;
+  font-size: 13px;
+}
+.world-editor h4 {
+  margin: 12px 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.world-editor .errors {
+  margin: 8px 0;
+  padding: 6px 10px 6px 22px;
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+  border-radius: 6px;
+}
+.editor-card {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--border, #334155);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+}
+.nums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.num {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.num input[type="number"] {
+  width: 64px;
+}
+.num.wide,
+.num.wide input,
+.num.wide select {
+  width: 100%;
+}
+.vec3 {
+  display: inline-flex;
+  gap: 2px;
+}
+.vec3 input {
+  width: 46px;
+}
+.part-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--border, #334155);
+}
+input.short {
+  width: 70px;
+}
+.palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.task-row.active {
+  outline: 2px solid #38bdf8;
+}
+.zoom-controls.editing {
+  right: 12px;
 }

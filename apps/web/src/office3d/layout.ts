@@ -1,4 +1,4 @@
-import type { Room, World } from "@agentown/core";
+import type { Room, World } from "@agentown/core/world";
 
 /**
  * Where everything stands, in meters: rooms on floors and a seat per agent.

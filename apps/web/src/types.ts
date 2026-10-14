@@ -1,4 +1,4 @@
-import type { World } from "@agentown/core";
+import type { World } from "@agentown/core/world";
 export type WorkState = "idle" | "thinking" | "executing" | "waiting" | "blocked" | "offline" | "error";
 
 export interface Agent {

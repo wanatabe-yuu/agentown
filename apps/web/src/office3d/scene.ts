@@ -1,4 +1,4 @@
-import type { Behavior, World } from "@agentown/core";
+import type { Behavior, World } from "@agentown/core/world";
 import * as THREE from "three";
 import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Agent, Department, WorkState } from "../types.ts";
@@ -231,6 +231,8 @@ export function buildScene(
     const obj = lookObject(kind.look, "#9aa3ad");
     obj.position.set(room.x + o.at[0], room.y, room.z + o.at[1]);
     obj.rotation.y = (o.rotationY * Math.PI) / 180;
+    // The world editor finds placed objects by this index.
+    obj.userData.objectIndex = i;
     obj.scale.multiplyScalar(o.scale);
     if (o.label) {
       const { obj: tag } = label("object-label", o.label);
@@ -241,6 +243,8 @@ export function buildScene(
     if (roam) {
       // Roamers live in world space: they change rooms and floors.
       const body = new THREE.Group();
+      body.userData.objectIndex = i;
+      delete obj.userData.objectIndex;
       body.position.copy(obj.position);
       body.rotation.y = obj.rotation.y;
       obj.position.set(0, 0, 0);
@@ -401,6 +405,8 @@ export interface FrameInput {
   t: number; // ms
   /** Seconds since the previous frame. */
   dt: number;
+  /** World editor open: everything holds still where it was placed. */
+  frozen?: boolean;
 }
 
 /** Per-frame: agent state, behaviors, flights. Only transforms and materials change here. */
@@ -413,7 +419,7 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
     const offline = work === "offline";
     // Idle agents with a roaming avatar take a walk; any work brings them back to their chair.
     if (node.roamer) {
-      if (offline) seat(node.roamer);
+      if (offline || f.frozen) seat(node.roamer);
       else stepRoamer(s.nav, node.roamer, f.t, f.dt, work !== "idle");
     }
     const floorShown = s.floors.get(Math.round(node.actor.position.y / FLOOR_HEIGHT))?.visible ?? true;
@@ -453,7 +459,7 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
     node.bubble.style.display = text ? "" : "none";
   }
 
-  for (const an of s.animated) {
+  for (const an of f.frozen ? [] : s.animated) {
     const { target: o, behavior: b, base } = an;
     const phase = sec * b.speed * TAU + an.seed;
     switch (b.type) {
@@ -492,12 +498,12 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
 
   for (const r of s.roamers) {
     if (r.home) continue; // agents were stepped above
-    stepRoamer(s.nav, r, f.t, f.dt, false);
+    if (!f.frozen) stepRoamer(s.nav, r, f.t, f.dt, false);
     r.body.position.y = -r.lift;
     r.obj.visible = s.floors.get(Math.round(r.obj.position.y / FLOOR_HEIGHT))?.visible ?? true;
   }
 
-  for (const m of s.mixers) m.update(Math.min(f.dt, 0.1));
+  if (!f.frozen) for (const m of s.mixers) m.update(Math.min(f.dt, 0.1));
 
   // Hand-offs: show the newest flight in progress.
   const flight = f.flights.filter((x) => f.t - x.start < 1400).at(-1);
@@ -600,4 +606,10 @@ function stepRoamer(nav: Nav, r: Roamer, now: number, dt: number, goHome: boolea
       r.waitUntil = now + 1500 + Math.random() * 4000;
     }
   }
+}
+
+/** The placed object (index into world.objects) under a hit mesh, if any. */
+export function objectIndexOf(o: THREE.Object3D | null): number | null {
+  for (let x = o; x; x = x.parent) if (typeof x.userData.objectIndex === "number") return x.userData.objectIndex as number;
+  return null;
 }
