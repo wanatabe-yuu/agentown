@@ -16,6 +16,7 @@
 | `install.sh` | the installer, also published on its own so `releases/latest/download/install.sh` always points at the newest one |
 | `agentownctl_<os>_<arch>[.exe]` | the cluster CLI for linux/darwin (amd64, arm64) and windows/amd64 |
 | `install-cli.sh` | installs the CLI on macOS/Linux (checks `SHA256SUMS`, and the signature if `cosign` is present) |
+| `uninstall.sh` | removes Agentown from a host; also inside the tarball, used by `agentownctl uninstall` |
 | `agentown-harness-<tag>-amd64.tar.gz` | agent runtime image (`docker save`), loaded straight into k3s' containerd or Docker |
 | `agentown-<tag>.sbom.cdx.json` | CycloneDX SBOM of the repository (from the lockfile) |
 | `SHA256SUMS` | checksums of all the files above |

@@ -70,6 +70,7 @@ Any host can override `user`, `port` and `identityFile`. Paths are relative to t
 | `token` | Print the owner token. |
 | `logs [-n 100] [-f]` | Server log; `-f` follows it. |
 | `ssh [NODE]` | Shell on the server, or on a node by name. |
+| `uninstall [--all] [--yes]` | Remove Agentown and all its data from the server (service, files, database, agents, owner token, secret-key) and the agent image from the nodes. `--all` also removes what the installer added: k3s (server and node agents), PostgreSQL with every database on the server, Node.js, Docker. Asks you to type the cluster name unless `--yes`. |
 | `version` | The CLI's version. |
 
 The cluster file comes from `-c FILE`, then `$AGENTOWN_CLUSTER`, then `./agentown.cluster.yaml`. Put `-c` right after the command: `agentownctl status -c prod.yaml`.
@@ -78,7 +79,7 @@ To upgrade, set `version` (or keep `latest`) and run `agentownctl up`. Nodes rem
 
 ## What happens on the server
 
-`up` runs the same signed installer as the one-line install: it verifies the release's Sigstore signature and checksums, installs Node 24, PostgreSQL and k3s, and runs the `agentown` systemd service. On the server itself the host tool is also called `agentownctl` (`status`, `logs`, `token`, `upgrade`, `rollback`, `kubectl`); see the [docs](https://agentown.site/docs/).
+`up` runs the same signed installer as the one-line install: it verifies the release's Sigstore signature and checksums, installs Node 24, PostgreSQL and k3s, and runs the `agentown` systemd service. On the server itself the host tool is also called `agentownctl` (`status`, `logs`, `token`, `upgrade`, `rollback`, `kubectl`, `uninstall`); see the [docs](https://agentown.site/docs/).
 
 ## Develop
 

@@ -42,18 +42,30 @@ die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 command -v apt-get >/dev/null && command -v systemctl >/dev/null || die "needs a Debian/Ubuntu host with systemd"
 case "$DRIVER" in kubernetes|docker) ;; *) die "AGENTOWN_DRIVER must be kubernetes or docker" ;; esac
 
+# Components the installer adds to the host are recorded in
+# $ETC/installed-components, so `agentownctl uninstall --all` removes exactly
+# those (see uninstall.sh). Each is noted as soon as it is added, so a run that
+# fails halfway and is re-run still remembers it.
+FRESH=""
+[ -f /etc/agentown/agentown.env ] || FRESH=1
+added() { install -d -m 0755 /etc/agentown && echo "$1" >> /etc/agentown/installed-components.pending; }
+
 # ---------------------------------------------------------------------------
 say "Installing base packages"
 export DEBIAN_FRONTEND=noninteractive
+had_postgresql=""; dpkg -s postgresql >/dev/null 2>&1 && had_postgresql=1
 apt-get update -q
 apt-get install -y -q ca-certificates curl gnupg git jq openssl postgresql iproute2 >/dev/null
+[ -n "$had_postgresql" ] || added postgresql
 
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 24 ]; then
   say "Installing Node.js 24 (NodeSource apt repository)"
+  had_node=""; command -v node >/dev/null && had_node=1
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
   echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
   apt-get update -q && apt-get install -y -q nodejs >/dev/null
+  [ -n "$had_node" ] || added nodejs
 fi
 
 if [ "$DRIVER" = docker ] && ! command -v docker >/dev/null; then
@@ -62,12 +74,14 @@ if [ "$DRIVER" = docker ] && ! command -v docker >/dev/null; then
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
   apt-get update -q && apt-get install -y -q docker-ce docker-ce-cli containerd.io >/dev/null
+  added docker
 fi
 
 if [ "$DRIVER" = kubernetes ] && ! command -v k3s >/dev/null; then
   say "Installing k3s $K3S_VERSION"
   curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$K3S_VERSION" sh -s - server \
     --disable traefik --write-kubeconfig-mode 600 --node-label agentown.io/pool=shared
+  added k3s
 fi
 
 # ---------------------------------------------------------------------------
@@ -111,6 +125,13 @@ say "Installing $TAG to $PREFIX"
 id agentown >/dev/null 2>&1 || useradd --system --home-dir "$STATE" --shell /usr/sbin/nologin agentown
 install -d -m 0755 "$PREFIX/releases"
 install -d -m 0750 -o root -g agentown "$ETC"
+# Start the record on a fresh install; on upgrades only extend an existing one
+# (hosts installed before the record existed are handled by uninstall.sh).
+if [ -n "$FRESH" ] || [ -f "$ETC/installed-components" ]; then
+  cat "$ETC/installed-components" "$ETC/installed-components.pending" 2>/dev/null | sort -u > "$ETC/installed-components.tmp" || true
+  mv "$ETC/installed-components.tmp" "$ETC/installed-components"
+fi
+rm -f "$ETC/installed-components.pending"
 install -d -m 0700 -o agentown -g agentown "$STATE"
 rm -rf "$PREFIX/releases/$TAG.new"
 mkdir "$PREFIX/releases/$TAG.new"

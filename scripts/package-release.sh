@@ -35,9 +35,10 @@ cp -r "$ROOT/apps/server/dist/." "$DIR/server/"
 cp -r "$ROOT/apps/web/dist" "$DIR/web"
 cp "$ROOT/config/agentown.yaml" "$DIR/config/"
 cp "$ROOT/deploy/install.sh" "$DIR/install.sh"
+cp "$ROOT/deploy/uninstall.sh" "$DIR/uninstall.sh"
 cp "$ROOT/deploy/agentownctl" "$DIR/bin/agentownctl"
 cp "$ROOT/LICENSE" "$DIR/"
-chmod 0755 "$DIR/install.sh" "$DIR/bin/agentownctl"
+chmod 0755 "$DIR/install.sh" "$DIR/uninstall.sh" "$DIR/bin/agentownctl"
 cat > "$DIR/VERSION" <<EOF
 version=$TAG
 commit=$(git -C "$ROOT" rev-parse HEAD)
