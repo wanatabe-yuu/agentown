@@ -15,6 +15,9 @@ usage: agentownctl <command>
   upgrade [vX.Y.Z]  install the latest (or given) signed release
   rollback          switch back to the previously installed release
   kubectl ...       kubectl as cluster admin, for debugging (root, k3s only)
+  uninstall [--all] [--yes]
+                    remove Agentown and all its data; --all also removes what
+                    the installer added (k3s, PostgreSQL, Node.js, Docker)
 EOF
 }
 
@@ -47,6 +50,17 @@ case "${1:-}" in
     echo "rolled back to $(basename "$prev"); the agent image, cluster manifests and database schema were not rolled back"
     ;;
   kubectl) need_root kubectl; shift; exec k3s kubectl "$@" ;;
+  uninstall)
+    need_root uninstall
+    shift
+    # Run a copy: the script removes $PREFIX, which is where it lives.
+    tmp="$(mktemp)"
+    cp "$PREFIX/current/uninstall.sh" "$tmp"
+    rc=0
+    bash "$tmp" "$@" || rc=$?
+    rm -f "$tmp"
+    exit "$rc"
+    ;;
   ""|-h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

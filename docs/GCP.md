@@ -85,9 +85,12 @@ agentownctl status          # version, service, health
 sudo agentownctl logs       # journalctl -u agentown -f
 sudo agentownctl upgrade    # latest release, or: upgrade v0.2.0
 sudo agentownctl rollback   # go back to the previous release (does not roll back the DB schema)
+sudo agentownctl uninstall  # remove Agentown and all its data; --all also removes k3s, PostgreSQL, Node.js, Docker
 ```
 
 Optional variables: `AGENTOWN_VERSION=v0.1.0` to install a pinned release, `AGENTOWN_DRIVER=docker` to use Docker instead of k3s (for example `curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo AGENTOWN_DRIVER=docker bash`).
+
+**Removing Agentown.** `sudo agentownctl uninstall` removes the service, files, database, agents, image and user. `--all` also removes what the installer added to the host (it records that at install time): k3s, PostgreSQL with **every** database on the host, Node.js, Docker. Hosts installed with 0.2.0 or earlier have no record, so `--all` assumes the installer added them. On those versions the host command has no `uninstall` yet: run `curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/uninstall.sh | sudo bash`, or `agentownctl uninstall` from your machine.
 
 **Back up `/var/lib/agentown/secret-key`.** The API keys stored in the DB are encrypted with this key; lose the key and you lose the API keys.
 

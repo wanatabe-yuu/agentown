@@ -29,6 +29,9 @@ Usage:
   agentownctl token                 print the owner token
   agentownctl logs [-n 100] [-f]    server log
   agentownctl ssh [NODE]            shell on the server (or a node)
+  agentownctl uninstall [--all] [--yes]
+                                    remove Agentown and all its data; --all also removes
+                                    k3s, PostgreSQL, Node.js and Docker where the installer added them
   agentownctl version
 
 Every command reads the cluster file from -c FILE, $AGENTOWN_CLUSTER, or
@@ -139,6 +142,14 @@ func run(args []string) error {
 			return exitCode(code)
 		}
 		return err
+	case "uninstall":
+		all := fs.Bool("all", false, "also remove k3s, PostgreSQL, Node.js and Docker added by the installer")
+		yes := fs.Bool("yes", false, "do not ask for confirmation")
+		c, err := loadWith(fs, rest, file)
+		if err != nil {
+			return err
+		}
+		return uninstall(c, *all, *yes)
 	case "ssh":
 		c, err := loadWith(fs, rest, file)
 		if err != nil {

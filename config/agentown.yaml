@@ -19,7 +19,7 @@ projects:
 runtimeCatalog:
   # Deterministic adapter: runs the task's shell script. No model involved.
   - id: script-v1
-    image: agentown/harness:0.2.0
+    image: agentown/harness:0.3.0
     imagePullPolicy: Never
     harness: script
     workspace: { size: 256Mi }
@@ -27,7 +27,7 @@ runtimeCatalog:
   # LLM adapter (Anthropic Messages API + bash tool). Each agent picks an API
   # credential (added by the owner in the UI) and a model that key can use.
   - id: claude-v1
-    image: agentown/harness:0.2.0
+    image: agentown/harness:0.3.0
     imagePullPolicy: Never
     harness: claude
     model: claude-opus-5-5
@@ -35,7 +35,7 @@ runtimeCatalog:
     resources: { cpu: 500m, memory: 512Mi }
   # Same runtime, but the agent gets a node of its own (see scripts/add-node.sh).
   - id: claude-dedicated-v1
-    image: agentown/harness:0.2.0
+    image: agentown/harness:0.3.0
     imagePullPolicy: Never
     harness: claude
     model: claude-opus-5-5
