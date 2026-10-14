@@ -332,7 +332,7 @@ export async function buildApp(opts: AppOptions) {
   }
 
   if (opts.webDist && existsSync(opts.webDist)) {
-    await app.register(fastifyStatic, { root: opts.webDist, wildcard: false });
+    await app.register(fastifyStatic, { root: opts.webDist });
     app.setNotFoundHandler((req, reply: FastifyReply) => {
       if (req.url.startsWith("/api/")) return reply.status(404).send({ error: "not_found", message: "no such route" });
       return reply.sendFile("index.html");

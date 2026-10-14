@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Local single-machine cluster for Agentown: k3s running in a Docker container.
-# On a real Linux host you can install k3s natively instead and only run the
-# "apply" and "controller kubeconfig" steps below.
+# Local single-machine cluster for Agentown.
+#
+# Two modes:
+#   AGENTOWN_K3S_MODE=docker (default)  k3s inside a privileged Docker container (k3d-style)
+#   AGENTOWN_K3S_MODE=native            k3s already installed on this Linux host
+#                                       (curl -sfL https://get.k3s.io | sh -), run as root
 #
 #   scripts/dev-k3s.sh up        start k3s, preload images, apply guard rails
 #   scripts/dev-k3s.sh images    rebuild + load the harness image
@@ -23,11 +26,19 @@ SYSTEM_IMAGES=(
 )
 mkdir -p "$STATE/k3s-images"
 
-kc() { docker exec -i "$NAME" kubectl "$@"; }
+MODE="${AGENTOWN_K3S_MODE:-docker}"
+
+kc() {
+  if [ "$MODE" = native ]; then k3s kubectl "$@"; else docker exec -i "$NAME" kubectl "$@"; fi
+}
 
 load_image() {
   # Import straight into k3s' containerd so pods never need registry access.
-  docker save "$1" | docker exec -i "$NAME" ctr -n k8s.io images import - >/dev/null
+  if [ "$MODE" = native ]; then
+    docker save "$1" | k3s ctr -n k8s.io images import - >/dev/null
+  else
+    docker save "$1" | docker exec -i "$NAME" ctr -n k8s.io images import - >/dev/null
+  fi
   echo "loaded $1"
 }
 
@@ -38,7 +49,12 @@ build_harness() {
 }
 
 docker_bridge_ip() {
-  docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'
+  if [ "$MODE" = native ]; then
+    # Pods reach the server on the node's primary address.
+    ip -4 route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}'
+  else
+    docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'
+  fi
 }
 
 apply() {
@@ -75,6 +91,15 @@ EOF
 }
 
 up() {
+  if [ "$MODE" = native ]; then
+    kc get nodes >/dev/null || { echo "k3s is not running on this host" >&2; exit 1; }
+    build_harness
+    load_image "$HARNESS_IMAGE"
+    apply
+    controller_kubeconfig
+    echo "API URL for runtimes: http://$(docker_bridge_ip):8080"
+    return
+  fi
   for img in "${SYSTEM_IMAGES[@]}"; do
     docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img"
   done

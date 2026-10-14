@@ -4,7 +4,11 @@
 #   AGENTOWN_RUNTIME_DRIVER=docker: one container per agent on the local Docker daemon
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BRIDGE="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || echo 172.17.0.1)"
+if [ "${AGENTOWN_K3S_MODE:-docker}" = native ]; then
+  BRIDGE="$(ip -4 route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')"
+else
+  BRIDGE="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || echo 172.17.0.1)"
+fi
 export DATABASE_URL="${DATABASE_URL:-postgres://agentown:agentown@127.0.0.1:5432/agentown}"
 export AGENTOWN_RUNTIME_DRIVER="${AGENTOWN_RUNTIME_DRIVER:-kubernetes}"
 export AGENTOWN_KUBECONFIG="${AGENTOWN_KUBECONFIG:-$ROOT/.agentown/controller.kubeconfig}"

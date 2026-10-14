@@ -1,0 +1,64 @@
+import { type ReactNode, useEffect } from "react";
+
+export function ago(iso: string | null, now = Date.now()): string {
+  if (!iso) return "never";
+  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  return `${Math.round(s / 3600)}h ago`;
+}
+
+const TONE: Record<string, string> = {
+  idle: "neutral",
+  thinking: "info",
+  executing: "good",
+  waiting: "info",
+  blocked: "bad",
+  offline: "muted",
+  error: "bad",
+  running: "good",
+  pending: "warn",
+  restarting: "warn",
+  failed: "bad",
+  stopped: "muted",
+  none: "muted",
+  unknown: "warn",
+  queued: "muted",
+  assigned: "neutral",
+  in_progress: "info",
+  review: "warn",
+  done: "good",
+  cancelled: "muted",
+  succeeded: "good",
+  lost: "warn",
+};
+
+export function StatusPill({ state }: { state: string }) {
+  return <span className={`pill pill-${TONE[state] ?? "neutral"}`}>{state.replace("_", " ")}</span>;
+}
+
+export function describeScope(scope: { kind: string; ids?: string[] }): string {
+  return scope.ids ? `${scope.kind}: ${scope.ids.join(", ")}` : scope.kind;
+}
+
+export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+        <header className="modal-head">
+          <h2>{title}</h2>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </header>
+        <div className="modal-body">{children}</div>
+      </div>
+    </div>
+  );
+}

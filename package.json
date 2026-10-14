@@ -13,7 +13,8 @@
     "dev:server": "pnpm --filter @agentown/server dev",
     "dev:web": "pnpm --filter @agentown/web dev",
     "build:web": "pnpm --filter @agentown/web build",
-    "build:harness": "pnpm --filter @agentown/harness build"
+    "build:harness": "pnpm --filter @agentown/harness build",
+    "check": "tsc -p tsconfig.json --noEmit && vitest run"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

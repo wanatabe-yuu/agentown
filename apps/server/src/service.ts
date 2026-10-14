@@ -213,13 +213,12 @@ export class Service {
   }
 
   async loadPolicy(q: Queryable = this.db): Promise<LoadedPolicy> {
-    const [agents, grants, org] = await Promise.all([
-      q.query<{ id: string; department_id: string; reports_to: string | null; lifecycle_state: AgentNode["lifecycleState"] }>(
-        "SELECT id, department_id, reports_to, lifecycle_state FROM agents",
-      ),
-      q.query<GrantRow>("SELECT * FROM grants WHERE revoked_at IS NULL"),
-      q.query<{ policy_revision: string }>("SELECT policy_revision FROM organizations LIMIT 1"),
-    ]);
+    // Sequential on purpose: q may be a single transaction client.
+    const agents = await q.query<{ id: string; department_id: string; reports_to: string | null; lifecycle_state: AgentNode["lifecycleState"] }>(
+      "SELECT id, department_id, reports_to, lifecycle_state FROM agents",
+    );
+    const grants = await q.query<GrantRow>("SELECT * FROM grants WHERE revoked_at IS NULL");
+    const org = await q.query<{ policy_revision: string }>("SELECT policy_revision FROM organizations LIMIT 1");
     return {
       graph: new OrgGraph(
         agents.rows.map((a) => ({
