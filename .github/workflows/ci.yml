@@ -49,7 +49,28 @@ jobs:
       - name: Render cluster manifests
         run: npx tsx apps/server/src/tools/render-manifests.ts > /dev/null
       - name: Lint shell scripts
-        run: shellcheck -S warning deploy/install.sh deploy/agentownctl scripts/*.sh deploy/gcp/*.sh
+        run: shellcheck -S warning deploy/install.sh deploy/install-cli.sh deploy/agentownctl scripts/*.sh deploy/gcp/*.sh
+
+  cli:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Build all platforms
+        working-directory: .
+        run: scripts/build-cli.sh dev dist-cli
 
   image:
     runs-on: ubuntu-24.04

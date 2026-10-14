@@ -30,7 +30,8 @@ the way they are.
 | `apps/harness` | Process inside each agent runtime, `agentown` CLI, playbooks |
 | `apps/web` | 2D office UI (React + Canvas) |
 | `config/agentown.yaml` | Owner-authored org config: catalog, templates, policy profiles |
-| `deploy/` | One-command host installer (`install.sh`) and `agentownctl` |
+| `cli/` | `agentownctl`, the Go CLI that sets up a cluster over SSH (`go test ./...`) |
+| `deploy/` | Host installer (`install.sh`), CLI installer (`install-cli.sh`), host `agentownctl` |
 | `scripts/package-release.sh` | Builds release assets; see `docs/RELEASING.md` |
 
 ## Pull requests

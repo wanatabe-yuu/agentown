@@ -10,3 +10,6 @@ updates:
   - package-ecosystem: docker
     directory: /apps/harness
     schedule: { interval: weekly }
+  - package-ecosystem: gomod
+    directory: /cli
+    schedule: { interval: weekly }

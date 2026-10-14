@@ -31,9 +31,9 @@ gcloud compute instances create agentown-1 \
   --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
   --boot-disk-size=50GB --boot-disk-type=pd-balanced --tags=agentown
 
-# Only Agentown VMs talk to each other (k3s API, flannel VXLAN, kubelet).
+# Only Agentown VMs talk to each other (k3s API, flannel VXLAN, kubelet, agents -> Agentown API).
 gcloud compute firewall-rules create agentown-internal --network=default \
-  --allow=tcp:6443,udp:8472,tcp:10250 --source-tags=agentown --target-tags=agentown
+  --allow=tcp:6443,udp:8472,tcp:10250,tcp:8080 --source-tags=agentown --target-tags=agentown
 ```
 
 **Do not open port 8080 to the Internet** (this version has no TLS or user login yet). Open the UI through an SSH tunnel:
@@ -42,6 +42,25 @@ gcloud compute firewall-rules create agentown-internal --network=default \
 gcloud compute ssh agentown-1 --zone=$ZONE -- -L 8080:localhost:8080
 # then open http://localhost:8080 on your machine
 ```
+
+## Set up from your machine with agentownctl
+
+The quickest path for one or more VMs. On your laptop:
+
+```bash
+curl -fsSL https://agentown.site/cli.sh | sh
+agentownctl init
+```
+
+Create the VMs and the `agentown-internal` firewall rule as above (every VM with the `agentown` tag). Edit `agentown.cluster.yaml`: the server's external IP, your SSH user (on GCP, the user your key is registered for), and one entry per extra node. Then:
+
+```bash
+agentownctl up
+agentownctl ui        # http://localhost:8080
+agentownctl token
+```
+
+See [`cli/README.md`](../cli/README.md). The next section is the same server install, done by hand on the VM.
 
 ## Install on the VM
 

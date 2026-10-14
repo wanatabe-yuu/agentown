@@ -7,3 +7,4 @@ apps/web/dist/
 coverage/
 dist-release/
 docs/AGENTOWN_HANDOFF.md
+dist-cli/

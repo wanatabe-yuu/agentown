@@ -6,13 +6,26 @@ An office of AI agents with a real hierarchy. Each agent has a durable identity,
 - Running on GCP (machine sizing, adding nodes): [`docs/GCP.md`](docs/GCP.md)
 - Releases and supply chain (signatures, provenance, SBOM): [`docs/RELEASING.md`](docs/RELEASING.md)
 
-## Install on a server
+## Install
+
+**A cluster, from your own machine.** Install the `agentownctl` CLI, describe your VMs in a cluster file, and let it set them up over SSH:
 
 ```bash
-curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://agentown.site/cli.sh | sh     # macOS / Linux; Windows: .exe on the release page
+agentownctl init                                  # writes agentown.cluster.yaml: add your VMs
+agentownctl up                                    # installs the server, joins the nodes
+agentownctl ui                                    # tunnel to the web UI at http://localhost:8080
 ```
 
-Needs Ubuntu 24.04 on x86_64. The script installs the latest release built by GitHub Actions, verifies its Sigstore signature and checksums before installing anything, and runs the `agentown` service (k3s, PostgreSQL, Node 22). Run it again to upgrade. Manage the host with `agentownctl`; details in [`docs/GCP.md`](docs/GCP.md).
+See [`cli/README.md`](cli/README.md).
+
+**A single server, by hand.** SSH into the VM and run:
+
+```bash
+curl -fsSL https://agentown.site/install.sh | sudo bash
+```
+
+Both paths use the same installer. It needs Ubuntu 24.04 on x86_64, installs the latest release built by GitHub Actions, verifies its Sigstore signature and checksums before installing anything, and runs the `agentown` service (k3s, PostgreSQL, Node 22). Running it again upgrades. Details in [`docs/GCP.md`](docs/GCP.md).
 
 ## Status (v0.1)
 
@@ -50,8 +63,9 @@ apps/server        Fastify + Postgres: org service, audit, SSE, terminal proxy, 
 apps/harness       runs inside the runtime: claim → run → report loop, script/claude adapters, `agentown` CLI, playbooks
 apps/web           React + Canvas 2D: office, agent roster, panels, terminal (xterm)
 config/agentown.yaml  owner-authored org config: departments, runtime catalog, policy profiles, templates, bootstrap
-deploy/            install.sh (one-command install), agentownctl, gcp/setup-vm.sh
-scripts/           dev-k3s.sh, dev-server.sh, demo.sh, verify-k8s-guardrails.sh, package-release.sh
+cli/               agentownctl: cluster CLI (Go) that sets up VMs over SSH from your machine
+deploy/            install.sh (server installer), install-cli.sh, host agentownctl, gcp/setup-vm.sh
+scripts/           dev-k3s.sh, dev-server.sh, demo.sh, verify-k8s-guardrails.sh, package-release.sh, build-cli.sh
 ```
 
 ## Run from source (Linux, Docker driver)
