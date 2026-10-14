@@ -641,3 +641,10 @@ textarea {
     padding: 8px 16px;
   }
 }
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: center;
+}

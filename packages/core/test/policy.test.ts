@@ -7,6 +7,7 @@ import {
   OrgGraph,
   authorize,
   canDelegate,
+  canGrantToUser,
   parseOrgConfig,
   scopeWithin,
 } from "../src/index.ts";
@@ -252,5 +253,71 @@ describe("code grants", () => {
     for (const who of ["eng-1", "lead-eng", "ceo"]) {
       expect(authorize(agent(who), "code.read", { agentId: who, repoId: "agentown" }, ctx).allowed, who).toBe(false);
     }
+  });
+});
+
+describe("people", () => {
+  const base = fixture();
+  const userGrant = (id: string, principalId: string, action: Grant["action"], scope: Grant["scope"]): Grant => ({
+    id,
+    principalId,
+    action,
+    scope,
+    constraints: {},
+    delegable: false,
+    issuer: "owner",
+    parentGrantId: null,
+    expiresAt: null,
+    revokedAt: null,
+    revision: 1,
+  });
+  const alice: Actor = { kind: "human", id: "alice", owner: false };
+  const owner: Actor = { kind: "human", id: "owner", owner: true };
+  const ctx = {
+    graph: base.graph,
+    grants: [
+      ...base.grants,
+      userGrant("u1", "user:alice", "runtime.exec", { kind: "departments", ids: ["eng"] }),
+      userGrant("u2", "user:alice", "user.manage", { kind: "org" }),
+      // An agent-shaped grant must never apply to a person, nor the other way round.
+      userGrant("u3", "alice", "runtime.exec", { kind: "org" }),
+    ],
+  };
+
+  it("only the owner holds everything implicitly", () => {
+    expect(authorize(owner, "audit.view", {}, ctx).allowed).toBe(true);
+    expect(authorize({ kind: "human", id: "bob", owner: false }, "org.view", { agentId: "ceo" }, ctx).allowed).toBe(false);
+  });
+
+  it("department scope covers that department only", () => {
+    expect(authorize(alice, "runtime.exec", { agentId: "eng-1" }, ctx).allowed).toBe(true);
+    expect(authorize(alice, "runtime.exec", { agentId: "ops-1" }, ctx).allowed).toBe(false);
+    expect(authorize(agent("alice"), "runtime.exec", { agentId: "ops-1" }, ctx).allowed).toBe(false); // unknown agent
+  });
+
+  it("a user manager cannot hand out more than they hold", () => {
+    const eng: Grant["scope"] = { kind: "departments", ids: ["eng"] };
+    expect(canGrantToUser(alice, { action: "runtime.exec", scope: eng, constraints: {} }, ctx).allowed).toBe(true);
+    expect(canGrantToUser(alice, { action: "runtime.exec", scope: { kind: "agents", ids: ["qa-1"] }, constraints: {} }, ctx).allowed).toBe(true);
+    expect(canGrantToUser(alice, { action: "runtime.exec", scope: { kind: "org" }, constraints: {} }, ctx).allowed).toBe(false);
+    expect(canGrantToUser(alice, { action: "runtime.exec", scope: { kind: "agents", ids: ["ops-1"] }, constraints: {} }, ctx).allowed).toBe(false);
+    expect(canGrantToUser(alice, { action: "audit.view", scope: { kind: "org" }, constraints: {} }, ctx).allowed).toBe(false);
+    expect(canGrantToUser(alice, { action: "user.manage", scope: { kind: "org" }, constraints: {} }, ctx).allowed).toBe(false);
+    expect(canGrantToUser(owner, { action: "user.manage", scope: { kind: "org" }, constraints: {} }, ctx).allowed).toBe(true);
+  });
+
+  it("config roles may only use scopes that mean something for people", () => {
+    const yaml = (perm: string) => `
+organization: { id: x, name: X }
+departments: [{ id: d, name: D }]
+runtimeCatalog: [{ id: p, image: i, harness: script }]
+policyProfiles: { w: [] }
+agentTemplates: [{ id: t, jobRole: w, runtimePreset: p, policyProfile: w }]
+humanRoles: { r: { name: R, permissions: [${perm}] } }
+bootstrap: { agents: [] }
+`;
+    expect(() => parseOrgConfig(yaml("{ action: runtime.exec, scope: { departments: [d] } }"))).not.toThrow();
+    expect(() => parseOrgConfig(yaml("{ action: runtime.exec, scope: team }"))).toThrow(/scope must be/);
+    expect(() => parseOrgConfig(yaml("{ action: audit.view, scope: { departments: [d] } }"))).toThrow(/needs scope org/);
   });
 });

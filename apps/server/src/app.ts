@@ -20,7 +20,37 @@ const scopeSchema = z.union([
   z.object({ kind: z.enum(["self", "direct-reports", "descendants", "team", "department", "org"]) }),
   z.object({ kind: z.literal("agents"), ids: z.array(z.string()).min(1) }),
   z.object({ kind: z.literal("projects"), ids: z.array(z.string()).min(1) }),
+  z.object({ kind: z.literal("departments"), ids: z.array(z.string()).min(1) }),
 ]);
+
+/** The browser keeps the token in an HttpOnly cookie, so page scripts never see it. */
+const SESSION_COOKIE = "agentown_token";
+const SESSION_MAX_AGE = 30 * 24 * 3600;
+
+function readCookie(req: FastifyRequest, name: string): string | undefined {
+  for (const part of (req.headers.cookie ?? "").split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === name) return decodeURIComponent(v.join("="));
+  }
+  return undefined;
+}
+
+function sessionCookie(req: FastifyRequest, value: string, maxAge: number): string {
+  const secure = req.protocol === "https" ? "; Secure" : "";
+  return `${SESSION_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`;
+}
+
+/** Cookie-authenticated writes must come from our own origin (SameSite=Strict plus a belt-and-braces check). */
+function sameOrigin(req: FastifyRequest): boolean {
+  if (req.method === "GET" || req.method === "HEAD") return true;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
 
 const agentConfigSchema = z
   .object({
@@ -68,6 +98,14 @@ const S = {
   assign: z.object({ assigneeAgentId: z.string() }),
   cancel: z.object({ reason: z.string().max(500).default("") }).prefault({}),
   review: z.object({ decision: z.enum(["approve", "reject"]), note: z.string().max(2000).default("") }),
+  session: z.object({ token: z.string().min(1).max(200) }),
+  createUser: z.object({ displayName: z.string().trim().min(1).max(60), roleId: z.string().nullable().optional() }),
+  updateUser: z.object({ displayName: z.string().trim().min(1).max(60).optional(), disabled: z.boolean().optional(), roleId: z.string().optional() }),
+  grantUser: z.object({
+    action: z.enum(ACTIONS),
+    scope: scopeSchema,
+    constraints: z.object({ templates: z.array(z.string()).optional(), repos: z.array(z.string()).optional() }).prefault({}),
+  }),
   delegate: z.object({
     principalId: z.string(),
     action: z.enum(ACTIONS),
@@ -118,6 +156,10 @@ export async function buildApp(opts: AppOptions) {
   app.addHook("onRequest", async (req) => {
     const h = req.headers.authorization;
     if (h?.startsWith("Bearer ")) req.actor = await service.authenticate(h.slice(7).trim());
+    else {
+      const cookie = readCookie(req, SESSION_COOKIE);
+      if (cookie && sameOrigin(req)) req.actor = await service.authenticate(cookie);
+    }
   });
 
   app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
@@ -137,7 +179,44 @@ export async function buildApp(opts: AppOptions) {
   };
 
   app.get("/healthz", async () => ({ ok: true }));
-  app.get("/api/me", async (req) => ({ actor: actorOf(req) }));
+  app.get("/api/me", async (req) => service.me(actorOf(req)));
+
+  // ---- browser session: trade a token for an HttpOnly cookie
+  app.post("/api/session", async (req, reply) => {
+    const { token } = parse(S.session, req.body);
+    const actor = await service.authenticate(token);
+    if (!actor || actor.kind !== "human") throw new ApiError(401, "unauthenticated", "invalid or disabled token");
+    reply.header("set-cookie", sessionCookie(req, token, SESSION_MAX_AGE));
+    return service.me(actor);
+  });
+  app.delete("/api/session", async (req, reply) => {
+    reply.header("set-cookie", sessionCookie(req, "", 0));
+    return reply.status(204).send();
+  });
+
+  // ---- people and their permissions
+  app.get("/api/roles", async (req) => {
+    actorOf(req);
+    return { roles: service.roles() };
+  });
+  app.get("/api/users", async (req) => ({ users: await service.listUsers(actorOf(req)) }));
+  app.post("/api/users", async (req, reply) => {
+    reply.status(201);
+    return changed(await service.createUser(actorOf(req), parse(S.createUser, req.body)));
+  });
+  app.patch<{ Params: { id: string } }>("/api/users/:id", async (req) =>
+    changed(await service.updateUser(actorOf(req), req.params.id, parse(S.updateUser, req.body))),
+  );
+  app.post<{ Params: { id: string } }>("/api/users/:id/token", async (req) => service.resetUserToken(actorOf(req), req.params.id));
+  app.post<{ Params: { id: string } }>("/api/users/:id/grants", async (req, reply) => {
+    reply.status(201);
+    return changed(await service.grantUser(actorOf(req), req.params.id, parse(S.grantUser, req.body)));
+  });
+  app.delete<{ Params: { id: string; gid: string } }>("/api/users/:id/grants/:gid", async (req, reply) => {
+    await service.revokeUserGrant(actorOf(req), req.params.id, req.params.gid);
+    changed(null);
+    return reply.status(204).send();
+  });
   app.get("/api/catalog", async (req) => service.catalog(actorOf(req)));
   app.get("/api/office/snapshot", async (req) => service.snapshot(actorOf(req)));
 
@@ -171,7 +250,7 @@ export async function buildApp(opts: AppOptions) {
     changed(await service.configureAgent(actorOf(req), req.params.id, parse(S.agentConfig, req.body))),
   );
 
-  // ---- credentials (owner-managed; the key is write-only)
+  // ---- credentials (credential.manage; the key is write-only)
   app.get("/api/credentials", async (req) => ({ credentials: await service.listCredentials(actorOf(req)) }));
   app.post("/api/credentials", async (req, reply) => {
     reply.status(201);

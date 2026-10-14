@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, fetchBlob } from "./api.ts";
-import type { Snapshot, TaskDetail } from "./types.ts";
+import type { Me, Snapshot, TaskDetail } from "./types.ts";
 import { Modal, StatusPill, ago } from "./ui.tsx";
 
 type Notify = (msg: string, kind?: "error" | "info") => void;
@@ -79,7 +79,7 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
             )}
           </div>
 
-          {task.status === "review" && (
+          {task.can.review && (
             <section className="review-box">
               <h3>Waiting for your review</h3>
               <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" rows={2} />
@@ -167,12 +167,12 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
           </section>
 
           <div className="btn-row">
-            {["failed", "blocked"].includes(task.status) && (
+            {task.can.retry && (
               <button type="button" onClick={() => act("Retry", `/api/tasks/${taskId}/retry`)}>
                 Retry
               </button>
             )}
-            {!["done", "cancelled"].includes(task.status) && (
+            {task.can.cancel && (
               <button type="button" className="danger" onClick={() => act("Cancel", `/api/tasks/${taskId}/cancel`, { reason: "cancelled from UI" })}>
                 Cancel task
               </button>
@@ -193,8 +193,9 @@ const PLAYBOOKS: Record<string, string[]> = {
   noop: ["MESSAGE"],
 };
 
-export function NewTaskDialog({ snapshot, assignee, onClose, notify, onCreated }: { snapshot: Snapshot; assignee: string | null; onClose: () => void; notify: Notify; onCreated: (id: string) => void }) {
-  const active = snapshot.agents.filter((a) => a.lifecycleState !== "retired");
+export function NewTaskDialog({ snapshot, me, assignee, onClose, notify, onCreated }: { snapshot: Snapshot; me: Me; assignee: string | null; onClose: () => void; notify: Notify; onCreated: (id: string) => void }) {
+  // Only agents this person may give work to.
+  const active = snapshot.agents.filter((a) => a.lifecycleState !== "retired" && me.taskTargets.includes(a.id));
   const [to, setTo] = useState(assignee ?? active[0]?.id ?? "");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -259,7 +260,7 @@ export function NewTaskDialog({ snapshot, assignee, onClose, notify, onCreated }
         </label>
         <fieldset className="seg">
           <legend>Work type</legend>
-          {(["playbook", "prompt", "script"] as const).map((k) => (
+          {(["playbook", "prompt", "script"] as const).filter((k) => k !== "script" || me.execTargets.includes(to)).map((k) => (
             <label key={k}>
               <input type="radio" name="kind" checked={kind === k} onChange={() => setKind(k)} /> {k}
             </label>
@@ -284,7 +285,7 @@ export function NewTaskDialog({ snapshot, assignee, onClose, notify, onCreated }
           </>
         )}
         {kind === "prompt" && <p className="muted small">Free-form work for an agent with an LLM harness (e.g. template engineer-claude-v1). Script-harness agents will report it as blocked.</p>}
-        {kind === "script" && (
+        {kind === "script" && me.execTargets.includes(to) && (
           <label>
             Shell script (counts as exec: needs runtime.exec on the assignee)
             <textarea value={script} onChange={(e) => setScript(e.target.value)} rows={4} className="mono" />

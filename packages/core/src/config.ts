@@ -1,6 +1,6 @@
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { ACTIONS, type Scope } from "./types.ts";
+import { ACTIONS, type Action, type Scope } from "./types.ts";
 
 /**
  * Organization config. This file is authored by the human owner; the catalog and
@@ -13,7 +13,13 @@ const scopeSchema = z.union([
   scopeShorthand.transform((kind) => ({ kind }) as Scope),
   z.object({ agents: z.array(z.string()).min(1) }).transform((s) => ({ kind: "agents", ids: s.agents }) as Scope),
   z.object({ projects: z.array(z.string()).min(1) }).transform((s) => ({ kind: "projects", ids: s.projects }) as Scope),
+  z.object({ departments: z.array(z.string()).min(1) }).transform((s) => ({ kind: "departments", ids: s.departments }) as Scope),
 ]);
+
+/** Actions that are about the organization rather than an agent: org scope only. */
+export const ORG_ACTIONS: readonly Action[] = ["credential.manage", "audit.view", "user.manage"];
+/** People sit outside the reporting tree, so only these scopes mean anything for them. */
+export const USER_SCOPE_KINDS: readonly Scope["kind"][] = ["org", "departments", "agents", "projects"];
 
 const capabilitySchema = z.object({
   action: z.enum(ACTIONS),
@@ -71,6 +77,11 @@ export const orgConfigSchema = z
     runtimeCatalog: z.array(runtimePresetSchema).min(1),
     policyProfiles: z.record(z.string(), z.array(capabilitySchema)),
     agentTemplates: z.array(templateSchema).min(1),
+    /**
+     * Permission presets for people. Picking a role copies its permissions onto
+     * the person; after that each permission can be added or removed one by one.
+     */
+    humanRoles: z.record(idSchema, z.object({ name: z.string(), permissions: z.array(capabilitySchema) })).default({}),
     bootstrap: z.object({ agents: z.array(bootstrapAgentSchema) }),
   })
   .superRefine((cfg, ctx) => {
@@ -86,6 +97,14 @@ export const orgConfigSchema = z
         if (c.action === "agent.spawn" && !c.templates?.length) ctx.addIssue({ code: "custom", message: `profile ${name}: agent.spawn needs an explicit templates list` });
         if (c.action.startsWith("code.") && !c.repos?.length) ctx.addIssue({ code: "custom", message: `profile ${name}: ${c.action} needs an explicit repos list` });
         for (const t of c.templates ?? []) if (!templates.has(t)) ctx.addIssue({ code: "custom", message: `profile ${name}: unknown template ${t}` });
+      }
+    }
+    for (const [name, role] of Object.entries(cfg.humanRoles)) {
+      for (const c of role.permissions) {
+        if (!USER_SCOPE_KINDS.includes(c.scope.kind)) ctx.addIssue({ code: "custom", message: `role ${name}: ${c.action} scope must be org, departments, agents or projects` });
+        if (ORG_ACTIONS.includes(c.action) && c.scope.kind !== "org") ctx.addIssue({ code: "custom", message: `role ${name}: ${c.action} needs scope org` });
+        if (c.action === "agent.spawn" && !c.templates?.length) ctx.addIssue({ code: "custom", message: `role ${name}: agent.spawn needs an explicit templates list` });
+        if (c.action === "user.manage") ctx.addIssue({ code: "custom", message: `role ${name}: user.manage is given by the owner, not by a role` });
       }
     }
     const keys = new Set<string>();

@@ -21,6 +21,10 @@ export const ACTIONS = [
   "permission.delegate", // issue a grant to the target
   "code.read", // download a snapshot of a registered repository (target = self + repoId)
   "code.propose", // submit changes; the server opens a pull request, never merges
+  // Organization-level rights of human users (the owner holds them implicitly).
+  "credential.manage", // add / refresh / revoke the organization's LLM API keys
+  "audit.view", // read the audit log
+  "user.manage", // invite people, reset their tokens, edit their permissions
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -34,6 +38,7 @@ export type Scope =
   | { kind: "descendants" }
   | { kind: "team" } // self + descendants
   | { kind: "department" } // same department as the principal
+  | { kind: "departments"; ids: string[] } // agents in these departments (for people, who sit outside the tree)
   | { kind: "org" }
   | { kind: "agents"; ids: string[] }
   | { kind: "projects"; ids: string[] };
@@ -47,6 +52,7 @@ export interface GrantConstraints {
 
 export interface Grant {
   id: string;
+  /** An agent id, or `user:<id>` for a person (see principalOf). */
   principalId: string;
   action: Action;
   scope: Scope;
@@ -72,8 +78,17 @@ export interface AgentNode {
 export type AgentLifecycle = "provisioning" | "active" | "retired";
 
 export type Actor =
-  | { kind: "human"; id: string; role: "owner" }
+  | { kind: "human"; id: string; owner: boolean }
   | { kind: "agent"; id: string };
+
+/**
+ * The grant principal an actor's permissions are stored under. People are
+ * namespaced with `user:` so they can never collide with an agent id (agent ids
+ * are DNS labels and never contain a colon).
+ */
+export function principalOf(actor: Actor): string {
+  return actor.kind === "human" ? `user:${actor.id}` : actor.id;
+}
 
 /** What an action is aimed at. agentId is the agent the action touches. */
 export interface Target {

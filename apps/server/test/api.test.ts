@@ -372,7 +372,7 @@ describe("events", () => {
     expect(snap.body.cursor).toBeGreaterThan(0);
     await env.call(env.token("lead-eng"), "POST", "/api/agents/lead-eng/pause").catch(() => {});
     const t = await env.call(env.owner, "POST", "/api/tasks", { title: "after-cursor", assigneeAgentId: "ceo" });
-    const after = await env.service.eventsAfter({ kind: "human", id: "owner", role: "owner" }, snap.body.cursor);
+    const after = await env.service.eventsAfter({ kind: "human", id: "owner", owner: true }, snap.body.cursor);
     expect(after.some((e) => e.taskId === t.body.task.id && e.type === "task.created")).toBe(true);
     expect(after.every((e) => e.seq > snap.body.cursor)).toBe(true);
 
@@ -558,5 +558,94 @@ describe("per-agent credentials and model config", () => {
     await env.call(t, "POST", "/api/tasks", { title: "think locally", assigneeAgentId: agent });
     const c = await env.call(env.token(agent), "POST", "/api/runs/claim", { generation: g });
     expect(c.body.config).toMatchObject({ harness: "claude", provider: "custom", model: null, hasCredential: true });
+  });
+});
+
+describe("people and their permissions", () => {
+  async function invite(roleId: string | null, name = "Person") {
+    const r = await env.call(env.owner, "POST", "/api/users", { displayName: name, roleId });
+    expect(r.status).toBe(201);
+    return r.body as { user: { id: string; permissions: Array<{ id: string; action: string }> }; token: string };
+  }
+
+  it("a viewer sees the office but every control is closed", async () => {
+    const { token } = await invite("viewer");
+    expect((await env.call(token, "GET", "/api/office/snapshot")).status).toBe(200);
+    const me = await env.call(token, "GET", "/api/me");
+    expect(me.body.can).toEqual({ "credential.manage": false, "audit.view": false, "user.manage": false });
+    expect(me.body.taskTargets).toEqual([]);
+    expect((await env.call(token, "POST", "/api/tasks", { title: "x", assigneeAgentId: "lead-eng" })).status).toBe(403);
+    expect((await env.call(token, "GET", "/api/audit")).status).toBe(403);
+    expect((await env.call(token, "POST", "/api/credentials", { name: "k", apiKey: "sk-test-1" })).status).toBe(403);
+    expect((await env.call(token, "GET", "/api/users")).status).toBe(403);
+    expect((await env.call(token, "POST", "/api/agents/lead-eng/pause")).status).toBe(403);
+    const agent = await env.call(token, "GET", "/api/agents/lead-eng");
+    expect(agent.body.can["runtime.control"]).toBe(false);
+  });
+
+  it("permissions are added and removed one by one, scoped to a department", async () => {
+    const { user, token } = await invite(null);
+    expect((await env.call(token, "GET", "/api/office/snapshot")).body.agents).toEqual([]);
+    const g = await env.call(env.owner, "POST", `/api/users/${user.id}/grants`, { action: "runtime.control", scope: { kind: "departments", ids: ["eng"] } });
+    expect(g.status).toBe(201);
+    expect((await env.call(token, "POST", "/api/agents/lead-eng/pause")).status).toBe(200);
+    expect((await env.call(token, "POST", "/api/agents/lead-ops/pause")).status).toBe(403);
+    await env.call(env.owner, "POST", "/api/agents/lead-eng/resume");
+    expect((await env.call(env.owner, "DELETE", `/api/users/${user.id}/grants/${g.body.id}`)).status).toBe(204);
+    expect((await env.call(token, "POST", "/api/agents/lead-eng/pause")).status).toBe(403);
+    // People cannot hold tree-relative scopes.
+    expect((await env.call(env.owner, "POST", `/api/users/${user.id}/grants`, { action: "org.view", scope: { kind: "team" } })).status).toBe(400);
+  });
+
+  it("a user manager stays within their own rights", async () => {
+    const mgr = await invite("eng-manager", "Manager");
+    await env.call(env.owner, "POST", `/api/users/${mgr.user.id}/grants`, { action: "user.manage", scope: { kind: "org" } });
+    const other = await invite(null, "Other");
+    const t = mgr.token;
+    expect((await env.call(t, "POST", `/api/users/${other.user.id}/grants`, { action: "runtime.exec", scope: { kind: "departments", ids: ["eng"] } })).status).toBe(201);
+    expect((await env.call(t, "POST", `/api/users/${other.user.id}/grants`, { action: "runtime.exec", scope: { kind: "org" } })).status).toBe(403);
+    expect((await env.call(t, "POST", `/api/users/${other.user.id}/grants`, { action: "audit.view", scope: { kind: "org" } })).status).toBe(403);
+    expect((await env.call(t, "POST", `/api/users/${other.user.id}/grants`, { action: "user.manage", scope: { kind: "org" } })).status).toBe(403);
+    expect((await env.call(t, "POST", `/api/users/${mgr.user.id}/grants`, { action: "org.view", scope: { kind: "org" } })).status).toBe(403);
+    expect((await env.call(t, "PATCH", "/api/users/owner", { disabled: true })).status).toBe(403);
+    // Creating with a role it could not give itself fails as a whole.
+    expect((await env.call(t, "POST", "/api/users", { displayName: "Admin?", roleId: "admin" })).status).toBe(403);
+  });
+
+  it("disabling a person or resetting the token locks the old token out", async () => {
+    const a = await invite("viewer");
+    expect((await env.call(env.owner, "PATCH", `/api/users/${a.user.id}`, { disabled: true })).status).toBe(200);
+    expect((await env.call(a.token, "GET", "/api/me")).status).toBe(401);
+    await env.call(env.owner, "PATCH", `/api/users/${a.user.id}`, { disabled: false });
+    expect((await env.call(a.token, "GET", "/api/me")).status).toBe(200);
+    const reset = await env.call(env.owner, "POST", `/api/users/${a.user.id}/token`);
+    expect((await env.call(a.token, "GET", "/api/me")).status).toBe(401);
+    expect((await env.call(reset.body.token, "GET", "/api/me")).status).toBe(200);
+  });
+
+  it("the browser session lives in an HttpOnly cookie", async () => {
+    const login = await env.app.inject({ method: "POST", url: "/api/session", payload: { token: env.owner } });
+    expect(login.statusCode).toBe(200);
+    const set = String(login.headers["set-cookie"]);
+    expect(set).toMatch(/HttpOnly/);
+    expect(set).toMatch(/SameSite=Strict/);
+    const cookie = set.split(";")[0]!;
+    const me = await env.app.inject({ method: "GET", url: "/api/me", headers: { cookie } });
+    expect(me.json().can["user.manage"]).toBe(true);
+    // A cookie-carrying write from another origin is not authenticated.
+    const cross = await env.app.inject({ method: "POST", url: "/api/agents/lead-eng/pause", headers: { cookie, origin: "https://evil.example", host: "localhost" } });
+    expect(cross.statusCode).toBe(401);
+    expect((await env.app.inject({ method: "POST", url: "/api/session", payload: { token: "aho_nope" } })).statusCode).toBe(401);
+    const out = await env.app.inject({ method: "DELETE", url: "/api/session" });
+    expect(String(out.headers["set-cookie"])).toMatch(/Max-Age=0/);
+  });
+
+  it("task controls follow the caller's rights", async () => {
+    const { token } = await invite("reviewer");
+    const t = await env.call(env.owner, "POST", "/api/tasks", { title: "can I?", assigneeAgentId: "lead-ops" });
+    const asReviewer = await env.call(token, "GET", `/api/tasks/${t.body.task.id}`);
+    expect(asReviewer.body.can).toEqual({ review: false, retry: false, cancel: false });
+    expect((await env.call(env.owner, "GET", `/api/tasks/${t.body.task.id}`)).body.can.cancel).toBe(true);
+    await env.call(env.owner, "POST", `/api/tasks/${t.body.task.id}/cancel`, {});
   });
 });

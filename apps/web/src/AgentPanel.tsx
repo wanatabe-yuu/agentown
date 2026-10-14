@@ -44,6 +44,11 @@ export function AgentPanel(p: Props) {
   const reports = p.snapshot.agents.filter((a) => a.reportsToAgentId === agent.id && a.lifecycleState !== "retired");
   const dept = p.snapshot.departments.find((d) => d.id === agent.departmentId);
   const can = detail?.id === agent.id ? detail.can : {};
+  // Only what this person may do is shown; the server re-checks every request anyway.
+  const visibleTabs = (["overview", "tasks", "logs", "config", "permissions", "terminal"] as Tab[]).filter(
+    (t) => (t !== "logs" || can["runtime.logs"]) && (t !== "config" || can["agent.configure"]) && (t !== "terminal" || can["runtime.exec"]),
+  );
+  const shownTab = visibleTabs.includes(tab) ? tab : "overview";
 
   const act = async (label: string, method: string, path: string, body?: unknown) => {
     try {
@@ -72,15 +77,15 @@ export function AgentPanel(p: Props) {
       </header>
 
       <nav className="tabs" role="tablist">
-        {(["overview", "tasks", "logs", "config", "permissions", "terminal"] as Tab[]).map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)} disabled={t === "terminal" && !can["runtime.exec"]} title={t === "terminal" && !can["runtime.exec"] ? "You do not hold runtime.exec on this agent" : undefined}>
+        {visibleTabs.map((t) => (
+          <button key={t} role="tab" aria-selected={shownTab === t} className={shownTab === t ? "active" : ""} onClick={() => setTab(t)}>
             {t}
           </button>
         ))}
       </nav>
 
       <div className="panel-body">
-        {tab === "overview" && (
+        {shownTab === "overview" && (
           <>
             <section className="kv">
               <div>Work</div>
@@ -111,44 +116,53 @@ export function AgentPanel(p: Props) {
               <div>{reports.length ? reports.map((r) => r.displayName).join(", ") : "none"}</div>
             </section>
 
-            <section className="actions">
-              <h3>Actions</h3>
-              <p className="muted small">Buttons follow your grants; the server re-checks every request.</p>
-              <div className="btn-row">
-                <button type="button" disabled={!can["task.create"]} onClick={() => p.onNewTask(agent.id)}>
-                  Assign task
-                </button>
-                {agent.acceptingWork ? (
-                  <button type="button" disabled={!can["runtime.control"]} onClick={() => act("Pause intake", "POST", `/api/agents/${agent.id}/pause`)}>
-                    Pause intake
-                  </button>
-                ) : (
-                  <button type="button" disabled={!can["runtime.control"]} onClick={() => act("Resume intake", "POST", `/api/agents/${agent.id}/resume`)}>
-                    Resume intake
-                  </button>
-                )}
-                {agent.desiredRuntime === "running" ? (
-                  <button type="button" disabled={!can["runtime.control"]} onClick={() => act("Stop runtime", "POST", `/api/agents/${agent.id}/runtime/stop`)}>
-                    Stop runtime
-                  </button>
-                ) : (
-                  <button type="button" disabled={!can["runtime.control"]} onClick={() => act("Start runtime", "POST", `/api/agents/${agent.id}/runtime/start`)}>
-                    Start runtime
-                  </button>
-                )}
-                <button type="button" disabled={!can["runtime.control"]} onClick={() => act("Replace runtime", "POST", `/api/agents/${agent.id}/runtime/restart`)}>
-                  Replace runtime
-                </button>
-              </div>
-            </section>
+            {(can["task.create"] || can["runtime.control"]) && (
+              <section className="actions">
+                <h3>Actions</h3>
+                <div className="btn-row">
+                  {can["task.create"] && (
+                    <button type="button" onClick={() => p.onNewTask(agent.id)}>
+                      Assign task
+                    </button>
+                  )}
+                  {can["runtime.control"] && (
+                    <>
+                      {agent.acceptingWork ? (
+                        <button type="button" onClick={() => act("Pause intake", "POST", `/api/agents/${agent.id}/pause`)}>
+                          Pause intake
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => act("Resume intake", "POST", `/api/agents/${agent.id}/resume`)}>
+                          Resume intake
+                        </button>
+                      )}
+                      {agent.desiredRuntime === "running" ? (
+                        <button type="button" onClick={() => act("Stop runtime", "POST", `/api/agents/${agent.id}/runtime/stop`)}>
+                          Stop runtime
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => act("Start runtime", "POST", `/api/agents/${agent.id}/runtime/start`)}>
+                          Start runtime
+                        </button>
+                      )}
+                      <button type="button" onClick={() => act("Replace runtime", "POST", `/api/agents/${agent.id}/runtime/restart`)}>
+                        Replace runtime
+                      </button>
+                    </>
+                  )}
+                </div>
+              </section>
+            )}
 
-            {can["agent.spawn"] && p.catalog && <SpawnForm manager={agent} catalog={p.catalog} notify={p.notify} />}
+            {detail?.id === agent.id && detail.spawnTemplates.length > 0 && p.catalog && (
+              <SpawnForm manager={agent} catalog={p.catalog} templates={detail.spawnTemplates} notify={p.notify} />
+            )}
           </>
         )}
 
-        {tab === "tasks" && <AgentTasks agent={agent} snapshot={p.snapshot} onOpenTask={p.onOpenTask} />}
-        {tab === "logs" && <Logs agentId={agent.id} allowed={!!can["runtime.logs"]} />}
-        {tab === "config" && detail && detail.id === agent.id && (
+        {shownTab === "tasks" && <AgentTasks agent={agent} snapshot={p.snapshot} onOpenTask={p.onOpenTask} />}
+        {shownTab === "logs" && <Logs agentId={agent.id} />}
+        {shownTab === "config" && detail && detail.id === agent.id && (
           <AgentConfigForm
             key={`${detail.id}:${detail.config.credentialId}:${detail.config.model}`}
             detail={detail}
@@ -157,7 +171,7 @@ export function AgentPanel(p: Props) {
             notify={p.notify}
           />
         )}
-        {tab === "permissions" && detail && (
+        {shownTab === "permissions" && detail && (
           <section>
             <p className="muted small">
               Effective rights come only from these grants, evaluated against the current reporting line. The job title grants nothing.
@@ -188,7 +202,7 @@ export function AgentPanel(p: Props) {
             </table>
           </section>
         )}
-        {tab === "terminal" && can["runtime.exec"] && (
+        {shownTab === "terminal" && (
           <Suspense fallback={<p className="muted">Loading terminal…</p>}>
             <Terminal agentId={agent.id} />
           </Suspense>
@@ -198,7 +212,8 @@ export function AgentPanel(p: Props) {
   );
 }
 
-function SpawnForm({ manager, catalog, notify }: { manager: Agent; catalog: Catalog; notify: Props["notify"] }) {
+function SpawnForm({ manager, catalog: full, templates: allowed, notify }: { manager: Agent; catalog: Catalog; templates: string[]; notify: Props["notify"] }) {
+  const catalog = { ...full, templates: full.templates.filter((t) => allowed.includes(t.id)) };
   const [template, setTemplate] = useState(catalog.templates.find((t) => t.jobRole === "engineer")?.id ?? catalog.templates[0]!.id);
   const [name, setName] = useState("");
   const [creds, setCreds] = useState<Credential[]>([]);
@@ -283,7 +298,7 @@ function AgentTasks({ agent, snapshot, onOpenTask }: { agent: Agent; snapshot: S
   );
 }
 
-function Logs({ agentId, allowed }: { agentId: string; allowed: boolean }) {
+function Logs({ agentId }: { agentId: string }) {
   const [lines, setLines] = useState<Array<{ seq: number; stream: string; line: string; at: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -310,7 +325,7 @@ function Logs({ agentId, allowed }: { agentId: string; allowed: boolean }) {
       clearInterval(id);
     };
   }, [agentId]);
-  if (!allowed && error) return <p className="error">{error}</p>;
+  if (error && !lines.length) return <p className="error">{error}</p>;
   return (
     <pre className="logs" aria-live="polite">
       {lines.length === 0 && <span className="muted">No work logs yet.</span>}

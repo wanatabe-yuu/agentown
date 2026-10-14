@@ -21,6 +21,10 @@ import {
   authorize,
   isGrantEffective,
   canDelegate,
+  canGrantToUser,
+  principalOf,
+  ORG_ACTIONS,
+  USER_SCOPE_KINDS,
   canTransition,
   isTerminal,
 } from "@agentown/core";
@@ -160,6 +164,21 @@ export function namespaceFor(departmentId: string): string {
   return `agentown-${departmentId}`;
 }
 
+/** The organization owner: holds every permission implicitly. */
+export function isOwner(actor: Actor): boolean {
+  return actor.kind === "human" && actor.owner;
+}
+
+export interface UserRow {
+  id: string;
+  display_name: string;
+  role_id: string | null;
+  is_owner: boolean;
+  disabled_at: Date | null;
+  created_by: string;
+  created_at: Date;
+}
+
 function toGrant(r: GrantRow): Grant {
   return {
     id: r.id,
@@ -297,13 +316,18 @@ export class Service {
 
   async authenticate(token: string | undefined): Promise<Actor | null> {
     if (!token) return null;
-    const { rows } = await this.db.query<{ principal_kind: string; principal_id: string }>(
-      "SELECT principal_kind, principal_id FROM tokens WHERE hash = $1 AND revoked_at IS NULL",
+    const { rows } = await this.db.query<{ principal_kind: string; principal_id: string; is_owner: boolean | null; disabled_at: Date | null }>(
+      `SELECT t.principal_kind, t.principal_id, u.is_owner, u.disabled_at
+         FROM tokens t LEFT JOIN users u ON t.principal_kind = 'human' AND u.id = t.principal_id
+        WHERE t.hash = $1 AND t.revoked_at IS NULL`,
       [sha256(token)],
     );
     const r = rows[0];
     if (!r) return null;
-    if (r.principal_kind === "human") return { kind: "human", id: r.principal_id, role: "owner" };
+    if (r.principal_kind === "human") {
+      if (r.is_owner === null || r.disabled_at) return null;
+      return { kind: "human", id: r.principal_id, owner: r.is_owner };
+    }
     return { kind: "agent", id: r.principal_id };
   }
 
@@ -369,7 +393,7 @@ export class Service {
         });
       }
       let ownerToken: string | null = null;
-      const owners = await c.query("SELECT 1 FROM tokens WHERE principal_kind='human' AND revoked_at IS NULL");
+      const owners = await c.query("SELECT 1 FROM tokens WHERE principal_kind='human' AND principal_id='owner' AND revoked_at IS NULL");
       if (!owners.rowCount) {
         if (opts.ownerToken) {
           await c.query("INSERT INTO tokens(hash, principal_kind, principal_id, label) VALUES ($1,'human','owner','bootstrap')", [
@@ -493,7 +517,7 @@ export class Service {
         return { agent: await this.presentAgentById(rows[0].id), existing: true };
       }
     }
-    if (actor.kind === "agent" && !input.reportsToAgentId) throw deny("agents must place new hires under a manager");
+    if (!isOwner(actor) && !input.reportsToAgentId) throw deny("only the owner can hire at the top of the tree; name a manager");
 
     const id = await this.withTx(async (ctx) => {
       const policy = await this.loadPolicy(ctx.c);
@@ -502,8 +526,8 @@ export class Service {
         const manager = await this.getAgentRow(input.reportsToAgentId, ctx.c);
         if (manager.lifecycle_state === "retired") throw conflict("manager_retired", "manager is retired");
         departmentId ??= manager.department_id;
-        if (actor.kind === "agent" && departmentId !== manager.department_id) {
-          throw deny("agents can only spawn into the manager's department");
+        if (!isOwner(actor) && departmentId !== manager.department_id) {
+          throw deny("new hires join their manager's department");
         }
       }
       if (!departmentId) throw badRequest("departmentId required when there is no manager");
@@ -594,16 +618,17 @@ export class Service {
     // Tell the caller what *they* may do to this agent, so the UI can show/hide
     // controls. The server still re-checks every call.
     const can: Partial<Record<Action, boolean>> = {};
-    for (const a of ["task.create", "task.assign", "runtime.control", "runtime.logs", "runtime.exec", "agent.update", "agent.retire", "agent.configure", "permission.delegate"] as const) {
+    for (const a of ["task.create", "task.assign", "task.review", "runtime.control", "runtime.logs", "runtime.exec", "agent.update", "agent.retire", "agent.configure", "permission.delegate"] as const) {
       can[a] = authorize(actor, a, { agentId: id }, policy).allowed;
     }
-    can["agent.spawn"] = this.config.agentTemplates.some(
-      (t) => authorize(actor, "agent.spawn", { agentId: id, templateId: t.id }, policy).allowed,
-    );
+    const spawnTemplates = this.config.agentTemplates
+      .filter((t) => authorize(actor, "agent.spawn", { agentId: id, templateId: t.id }, policy).allowed)
+      .map((t) => t.id);
+    can["agent.spawn"] = spawnTemplates.length > 0;
     const cred = agent.config.credentialId
       ? (await this.db.query<CredentialRow>("SELECT * FROM credentials WHERE id=$1", [agent.config.credentialId])).rows[0]
       : undefined;
-    return { ...agent, grants, can, credential: cred ? this.presentCredential(cred) : null };
+    return { ...agent, grants, can, spawnTemplates, credential: cred ? this.presentCredential(cred) : null };
   }
 
   async updateAgent(actor: Actor, id: string, input: { displayName?: string; reportsToAgentId?: string | null }) {
@@ -612,7 +637,7 @@ export class Service {
       const policy = await this.require(actor, "agent.update", { agentId: id }, { q: ctx.c, detail: input });
       if (input.reportsToAgentId !== undefined && input.reportsToAgentId !== agent.reports_to) {
         if (input.reportsToAgentId === null) {
-          if (actor.kind !== "human") throw deny("only the owner can detach an agent from the tree");
+          if (!isOwner(actor)) throw deny("only the owner can detach an agent from the tree");
         } else {
           await this.getAgentRow(input.reportsToAgentId, ctx.c);
           // Moving someone under a new manager needs authority over that manager too.
@@ -768,13 +793,8 @@ export class Service {
     return rows[0];
   }
 
-  private async requireOwner(actor: Actor, action: string, target: string | null) {
-    if (actor.kind === "human") {
-      await this.audit(this.db, actor, action, target, true, "organization owner");
-      return;
-    }
-    await this.audit(this.db, actor, action, target, false, "credentials are managed by the owner");
-    throw deny(`${action} denied: credentials are managed by the owner`);
+  private async requireCredentialManage(actor: Actor, action: string, target: string | null) {
+    await this.require(actor, "credential.manage", {}, { auditAs: action, detail: { credential: target } });
   }
 
   private async discoverModels(provider: Provider, apiKey: string, workspaceId: string | null, customBaseUrl: string | null): Promise<string[]> {
@@ -793,15 +813,19 @@ export class Service {
     }
   }
 
-  /** Owner sees every credential; an agent sees metadata only if it may configure someone. Never the key. */
+  /**
+   * Key managers see every credential, revoked ones included; anyone who may
+   * configure some agent sees the active ones' metadata. Never the key.
+   */
   async listCredentials(actor: Actor) {
-    if (actor.kind === "agent") {
-      const policy = await this.loadPolicy();
-      const mayConfigure = policy.grants.some((g) => g.principalId === actor.id && g.action === "agent.configure" && isGrantEffective(g, policy));
-      if (!mayConfigure) throw deny("listing credentials requires an agent.configure grant");
+    const policy = await this.loadPolicy();
+    const me = principalOf(actor);
+    const manages = authorize(actor, "credential.manage", {}, policy).allowed;
+    if (!manages && !policy.grants.some((g) => g.principalId === me && g.action === "agent.configure" && isGrantEffective(g, policy))) {
+      throw deny("listing credentials requires credential.manage or an agent.configure grant");
     }
     const { rows } = await this.db.query<CredentialRow>(
-      `SELECT * FROM credentials ${actor.kind === "agent" ? "WHERE revoked_at IS NULL" : ""} ORDER BY created_at`,
+      `SELECT * FROM credentials ${manages ? "" : "WHERE revoked_at IS NULL"} ORDER BY created_at`,
     );
     return rows.map((r) => this.presentCredential(r));
   }
@@ -817,7 +841,7 @@ export class Service {
       departments: string[] | null;
     },
   ) {
-    await this.requireOwner(actor, "credential.create", input.name);
+    await this.requireCredentialManage(actor, "credential.create", input.name);
     const info = providerInfo(input.provider);
     if (!info || !PROVIDERS.includes(input.provider)) throw badRequest("unsupported provider");
     for (const d of input.departments ?? []) if (!this.config.departments.some((x) => x.id === d)) throw badRequest(`unknown department ${d}`);
@@ -862,7 +886,7 @@ export class Service {
   }
 
   async refreshCredentialModels(actor: Actor, id: string) {
-    await this.requireOwner(actor, "credential.refresh", id);
+    await this.requireCredentialManage(actor, "credential.refresh", id);
     const cred = await this.getCredentialRow(id);
     if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
     const models = await this.discoverModels(cred.provider, this.secrets.open(cred.ciphertext), cred.workspace_id, cred.base_url);
@@ -872,7 +896,7 @@ export class Service {
 
   /** Revoking pulls the key from every runtime that holds it (the controller replaces idle runtimes). */
   async revokeCredential(actor: Actor, id: string) {
-    await this.requireOwner(actor, "credential.revoke", id);
+    await this.requireCredentialManage(actor, "credential.revoke", id);
     await this.withTx(async (ctx) => {
       await this.getCredentialRow(id, ctx.c);
       await ctx.c.query("UPDATE credentials SET revoked_at=now(), revision=revision+1 WHERE id=$1 AND revoked_at IS NULL", [id]);
@@ -988,7 +1012,7 @@ export class Service {
           JSON.stringify(proposed.scope),
           JSON.stringify(proposed.constraints),
           proposed.delegable,
-          actor.kind === "human" ? "owner" : actor.id,
+          isOwner(actor) ? "owner" : principalOf(actor),
           d.parentGrantId,
           input.expiresAt ?? null,
         ],
@@ -1004,7 +1028,7 @@ export class Service {
       const { rows } = await ctx.c.query<GrantRow>("SELECT * FROM grants WHERE id=$1", [grantId]);
       const g = rows[0];
       if (!g) throw notFound("grant");
-      const allowed = actor.kind === "human" || g.issuer === actor.id;
+      const allowed = isOwner(actor) || g.issuer === principalOf(actor);
       await this.audit(allowed ? ctx.c : this.db, actor, "permission.revoke", g.principal_id, allowed, allowed ? "owner or issuer" : "only the owner or the issuer may revoke", {
         grantId,
       });
@@ -1034,8 +1058,8 @@ export class Service {
   }
 
   private canViewTask(actor: Actor, t: TaskRow, policy: PolicyContext, shared: Set<string>): boolean {
-    if (actor.kind === "human") return true;
-    if (t.assignee_agent_id === actor.id || t.created_by === actorRef(actor)) return true;
+    if (isOwner(actor)) return true;
+    if ((actor.kind === "agent" && t.assignee_agent_id === actor.id) || t.created_by === actorRef(actor)) return true;
     if (shared.has(t.id)) return true;
     return authorize(actor, "task.view", { agentId: t.assignee_agent_id ?? undefined, projectId: t.project_id }, policy).allowed;
   }
@@ -1115,7 +1139,7 @@ export class Service {
     const id = await this.withTx(async (ctx) => {
       const policy = await this.loadPolicy(ctx.c);
       const assignee = input.assigneeAgentId ?? null;
-      if (!assignee && actor.kind !== "human") throw badRequest("agents must name an assignee");
+      if (!assignee && !isOwner(actor)) throw badRequest("name an assignee (only the owner can leave a task unassigned)");
       if (input.projectId && !this.config.projects.some((p) => p.id === input.projectId)) throw badRequest("unknown project");
       if (assignee) {
         const a = await this.getAgentRow(assignee, ctx.c);
@@ -1190,11 +1214,22 @@ export class Service {
       this.db.query("SELECT id, name, content_type, sha256, length(content) AS size, created_at, run_id FROM artifacts WHERE task_id=$1 ORDER BY created_at", [id]),
       this.db.query("SELECT from_agent_id, to_agent_id, by_actor, at FROM task_assignments WHERE task_id=$1 ORDER BY id", [id]),
     ]);
+    // What the caller may do with this task, so the UI shows only those controls.
+    const policy = await this.loadPolicy();
+    const target = { agentId: t.assignee_agent_id ?? undefined, projectId: t.project_id };
+    const creatorOrOwner = isOwner(actor) || t.created_by === actorRef(actor);
+    const manage = creatorOrOwner || authorize(actor, "task.assign", target, policy).allowed;
+    const ownWork = actor.kind === "agent" && t.assignee_agent_id === actor.id;
     return {
       ...this.presentTask(t),
       runs: runs.rows,
       artifacts: artifacts.rows.map((a) => ({ ...a, size: Number(a.size) })),
       assignments: assignments.rows,
+      can: {
+        review: t.status === "review" && !ownWork && (creatorOrOwner || authorize(actor, "task.review", target, policy).allowed),
+        retry: ["failed", "blocked"].includes(t.status) && manage,
+        cancel: !isTerminal(t.status) && manage,
+      },
     };
   }
 
@@ -1212,7 +1247,7 @@ export class Service {
 
   /** Who may manage (cancel/retry) a task: its creator, or whoever can assign work to its assignee. */
   private async requireTaskManage(actor: Actor, t: TaskRow, q: Queryable, what: string) {
-    if (actor.kind === "human" || t.created_by === actorRef(actor)) {
+    if (isOwner(actor) || t.created_by === actorRef(actor)) {
       await this.audit(q, actor, what, t.id, true, "owner or task creator");
       return;
     }
@@ -1275,7 +1310,7 @@ export class Service {
       const t = await this.getTaskRow(id, ctx.c, true);
       if (t.status !== "review") throw conflict("bad_state", `task is ${t.status}, not in review`);
       if (actor.kind === "agent" && t.assignee_agent_id === actor.id) throw deny("cannot review your own work");
-      if (actor.kind === "human" || t.created_by === actorRef(actor)) {
+      if (isOwner(actor) || t.created_by === actorRef(actor)) {
         await this.audit(ctx.c, actor, "task.review", id, true, "owner or task creator", { decision });
       } else {
         await this.require(actor, "task.review", { agentId: t.assignee_agent_id ?? undefined, projectId: t.project_id }, { q: ctx.c, detail: { decision } });
@@ -1550,7 +1585,8 @@ export class Service {
   }
 
   async visibleFilter(actor: Actor): Promise<(e: AgentEventRow) => boolean> {
-    if (actor.kind === "human") return () => true;
+    if (isOwner(actor)) return () => true;
+    if (actor.kind === "human" && !(await this.userActive(actor.id))) return () => false;
     const policy = await this.loadPolicy();
     return (e) => !!e.agentId && authorize(actor, "org.view", { agentId: e.agentId }, policy).allowed;
   }
@@ -1575,7 +1611,7 @@ export class Service {
   }
 
   async listAudit(actor: Actor, after: number) {
-    if (actor.kind !== "human") throw deny("audit log is owner-only");
+    await this.require(actor, "audit.view", {});
     const { rows } = await this.db.query("SELECT * FROM audit_events WHERE id > $1 ORDER BY id DESC LIMIT 300", [after]);
     return rows.map((r) => ({ ...r, id: Number(r.id), policy_revision: r.policy_revision === null ? null : Number(r.policy_revision) }));
   }
@@ -1589,6 +1625,177 @@ export class Service {
       projects: this.config.projects,
       providers: PROVIDER_INFO,
     };
+  }
+
+  // ---------------------------------------------------------------- people
+
+  async userActive(id: string, q: Queryable = this.db): Promise<boolean> {
+    const { rows } = await q.query("SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL", [id]);
+    return !!rows[0];
+  }
+
+  /** Who am I and what may I do at the organization level: drives which controls the UI shows. */
+  async me(actor: Actor) {
+    const policy = await this.loadPolicy();
+    const user =
+      actor.kind === "human"
+        ? (await this.db.query<UserRow>("SELECT * FROM users WHERE id=$1", [actor.id])).rows.map((u) => this.presentUser(u, []))[0] ?? null
+        : null;
+    const can: Partial<Record<Action, boolean>> = {};
+    for (const a of ORG_ACTIONS) can[a] = authorize(actor, a, {}, policy).allowed;
+    const agents = (await this.db.query<{ id: string }>("SELECT id FROM agents WHERE lifecycle_state <> 'retired' ORDER BY id")).rows;
+    return {
+      actor,
+      user,
+      can,
+      /** Agents the caller may give a task to, and those it may also run shell work on. */
+      taskTargets: agents.filter((a) => authorize(actor, "task.create", { agentId: a.id }, policy).allowed).map((a) => a.id),
+      execTargets: agents.filter((a) => authorize(actor, "runtime.exec", { agentId: a.id }, policy).allowed).map((a) => a.id),
+    };
+  }
+
+  private presentUser(u: UserRow, grants: Grant[]) {
+    return {
+      id: u.id,
+      displayName: u.display_name,
+      roleId: u.role_id,
+      owner: u.is_owner,
+      disabledAt: u.disabled_at?.toISOString() ?? null,
+      createdBy: u.created_by,
+      createdAt: u.created_at.toISOString(),
+      permissions: grants.map((g) => ({ id: g.id, action: g.action, scope: g.scope, constraints: g.constraints, issuer: g.issuer })),
+    };
+  }
+
+  roles() {
+    return Object.entries(this.config.humanRoles).map(([id, r]) => ({
+      id,
+      name: r.name,
+      permissions: r.permissions.map((c) => ({ action: c.action, scope: c.scope, constraints: capConstraints(c) })),
+    }));
+  }
+
+  async listUsers(actor: Actor) {
+    const policy = await this.require(actor, "user.manage", {});
+    const { rows } = await this.db.query<UserRow>("SELECT * FROM users ORDER BY is_owner DESC, created_at");
+    return rows.map((u) => this.presentUser(u, policy.grants.filter((g) => g.principalId === `user:${u.id}` && isGrantEffective(g, policy))));
+  }
+
+  private async getUserRow(id: string, q: Queryable = this.db): Promise<UserRow> {
+    const { rows } = await q.query<UserRow>("SELECT * FROM users WHERE id=$1", [id]);
+    if (!rows[0]) throw notFound("user");
+    return rows[0];
+  }
+
+  /** Nobody edits the owner, and nobody edits themselves (no granting yourself more). */
+  private async requireUserManage(actor: Actor, target: UserRow, ctx: Ctx, what: string, detail?: Record<string, unknown>): Promise<LoadedPolicy> {
+    const policy = await this.require(actor, "user.manage", {}, { q: ctx.c, auditAs: what, detail: { user: target.id, ...detail } });
+    if (target.is_owner) throw deny(`${what} denied: the owner cannot be changed`);
+    if (actor.kind === "human" && actor.id === target.id) throw deny(`${what} denied: you cannot change your own access`);
+    return policy;
+  }
+
+  private validateUserGrant(p: { action: Action; scope: Scope; constraints: GrantConstraints }) {
+    if (!USER_SCOPE_KINDS.includes(p.scope.kind)) throw badRequest("a person's permission scope must be org, departments, agents or projects");
+    if (ORG_ACTIONS.includes(p.action) && p.scope.kind !== "org") throw badRequest(`${p.action} needs scope org`);
+    if (p.action === "agent.spawn" && !p.constraints.templates?.length) throw badRequest("agent.spawn needs a templates list");
+    if (p.action.startsWith("code.") && !p.constraints.repos?.length) throw badRequest(`${p.action} needs a repos list`);
+    if (p.scope.kind === "departments" && !p.scope.ids.every((d) => this.config.departments.some((x) => x.id === d))) throw badRequest("unknown department");
+    if (p.scope.kind === "projects" && !p.scope.ids.every((d) => this.config.projects.some((x) => x.id === d))) throw badRequest("unknown project");
+    for (const t of p.constraints.templates ?? []) if (!this.config.agentTemplates.some((x) => x.id === t)) throw badRequest(`unknown template ${t}`);
+  }
+
+  /** Inside a transaction that already passed requireUserManage. */
+  private async insertUserGrant(ctx: Ctx, actor: Actor, policy: LoadedPolicy, userId: string, p: { action: Action; scope: Scope; constraints: GrantConstraints }) {
+    this.validateUserGrant(p);
+    const d = canGrantToUser(actor, p, policy);
+    if (!d.allowed) {
+      await this.audit(this.db, actor, "user.grant", userId, false, d.reason, { ...p }, policy.revision);
+      throw deny(`user.grant denied: ${d.reason}`);
+    }
+    const id = newId("g");
+    await ctx.c.query(
+      `INSERT INTO grants(id, principal_id, action, scope, constraints, delegable, issuer, parent_grant_id, expires_at)
+       VALUES ($1,$2,$3,$4,$5,false,$6,NULL,NULL)`,
+      [id, `user:${userId}`, p.action, JSON.stringify(p.scope), JSON.stringify(p.constraints), isOwner(actor) ? "owner" : principalOf(actor)],
+    );
+    await this.audit(ctx.c, actor, "user.grant", userId, true, d.reason, { grantId: id, ...p }, policy.revision);
+    return id;
+  }
+
+  /** Copy a role's permissions onto a person; with replace, their current permissions go first. */
+  private async applyRole(ctx: Ctx, actor: Actor, policy: LoadedPolicy, userId: string, roleId: string, replace: boolean) {
+    const role = this.config.humanRoles[roleId];
+    if (!role) throw badRequest(`unknown role ${roleId}`);
+    if (replace) {
+      await ctx.c.query("UPDATE grants SET revoked_at=now(), revision=revision+1 WHERE principal_id=$1 AND revoked_at IS NULL", [`user:${userId}`]);
+    }
+    for (const c of role.permissions) {
+      await this.insertUserGrant(ctx, actor, policy, userId, { action: c.action, scope: c.scope, constraints: capConstraints(c) });
+    }
+    await ctx.c.query("UPDATE users SET role_id=$2 WHERE id=$1", [userId, roleId]);
+  }
+
+  /** Invite a person. The token is returned once; only its hash is stored. */
+  async createUser(actor: Actor, input: { displayName: string; roleId?: string | null }) {
+    return this.withTx(async (ctx) => {
+      const policy = await this.require(actor, "user.manage", {}, { q: ctx.c, auditAs: "user.create", detail: input });
+      const id = newId("u");
+      await ctx.c.query("INSERT INTO users(id, display_name, created_by) VALUES ($1,$2,$3)", [id, input.displayName, actorRef(actor)]);
+      if (input.roleId) await this.applyRole(ctx, actor, policy, id, input.roleId, false);
+      const token = await this.issueToken(ctx.c, "human", id, "invite", true);
+      await this.bumpRevision(ctx.c);
+      await this.emit(ctx, { type: "user.created", payload: { userId: id, displayName: input.displayName, roleId: input.roleId ?? null } });
+      return { user: await this.presentUserById(id, ctx.c), token };
+    });
+  }
+
+  private async presentUserById(id: string, q: Queryable) {
+    const policy = await this.loadPolicy(q);
+    return this.presentUser(await this.getUserRow(id, q), policy.grants.filter((g) => g.principalId === `user:${id}` && isGrantEffective(g, policy)));
+  }
+
+  async updateUser(actor: Actor, id: string, input: { displayName?: string; disabled?: boolean; roleId?: string }) {
+    return this.withTx(async (ctx) => {
+      const u = await this.getUserRow(id, ctx.c);
+      const policy = await this.requireUserManage(actor, u, ctx, "user.update", input);
+      if (input.displayName) await ctx.c.query("UPDATE users SET display_name=$2 WHERE id=$1", [id, input.displayName]);
+      if (input.disabled !== undefined) {
+        await ctx.c.query("UPDATE users SET disabled_at = CASE WHEN $2 THEN COALESCE(disabled_at, now()) ELSE NULL END WHERE id=$1", [id, input.disabled]);
+      }
+      if (input.roleId) await this.applyRole(ctx, actor, policy, id, input.roleId, true);
+      await this.bumpRevision(ctx.c);
+      await this.emit(ctx, { type: "user.updated", payload: { userId: id } });
+      return this.presentUserById(id, ctx.c);
+    });
+  }
+
+  /** New token for a person; the old ones stop working at once. */
+  async resetUserToken(actor: Actor, id: string) {
+    return this.withTx(async (ctx) => {
+      await this.requireUserManage(actor, await this.getUserRow(id, ctx.c), ctx, "user.token");
+      return { token: await this.issueToken(ctx.c, "human", id, "reset", true) };
+    });
+  }
+
+  async grantUser(actor: Actor, id: string, input: { action: Action; scope: Scope; constraints?: GrantConstraints }) {
+    return this.withTx(async (ctx) => {
+      const policy = await this.requireUserManage(actor, await this.getUserRow(id, ctx.c), ctx, "user.grant");
+      const grantId = await this.insertUserGrant(ctx, actor, policy, id, { action: input.action, scope: input.scope, constraints: input.constraints ?? {} });
+      await this.bumpRevision(ctx.c);
+      await this.emit(ctx, { type: "user.updated", payload: { userId: id } });
+      return { id: grantId };
+    });
+  }
+
+  async revokeUserGrant(actor: Actor, id: string, grantId: string) {
+    await this.withTx(async (ctx) => {
+      await this.requireUserManage(actor, await this.getUserRow(id, ctx.c), ctx, "user.revoke", { grantId });
+      const r = await ctx.c.query("UPDATE grants SET revoked_at=now(), revision=revision+1 WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL", [grantId, `user:${id}`]);
+      if (!r.rowCount) throw notFound("permission");
+      await this.bumpRevision(ctx.c);
+      await this.emit(ctx, { type: "user.updated", payload: { userId: id } });
+    });
   }
 
   // ---------------------------------------------------------------- terminal sessions
@@ -1635,10 +1842,12 @@ export class Service {
 
   parseActorRef(ref: string): Actor {
     const [kind, id] = ref.split(":") as [string, string];
-    return kind === "human" ? { kind: "human", id, role: "owner" } : { kind: "agent", id };
+    // The owner row is seeded with id "owner" and is the only one (users_one_owner).
+    return kind === "human" ? { kind: "human", id, owner: id === "owner" } : { kind: "agent", id };
   }
 
   private async terminalStillAllowed(actor: Actor, agentId: string, generation: number, q: Queryable): Promise<string | null> {
+    if (actor.kind === "human" && !(await this.userActive(actor.id, q))) return "user is disabled";
     const policy = await this.loadPolicy(q);
     const d = authorize(actor, "runtime.exec", { agentId }, policy);
     if (!d.allowed) return `exec permission no longer held: ${d.reason}`;
@@ -1671,6 +1880,10 @@ export class Service {
     }
     return out;
   }
+}
+
+function capConstraints(c: { templates?: string[]; repos?: string[] }): GrantConstraints {
+  return { ...(c.templates ? { templates: c.templates } : {}), ...(c.repos ? { repos: c.repos } : {}) };
 }
 
 function emptyConfig(): AgentConfig {

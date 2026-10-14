@@ -224,6 +224,22 @@ const MIGRATIONS: string[] = [
   -- OpenAI-compatible providers: the owner's endpoint for provider "custom" (presets resolve theirs in code).
   ALTER TABLE credentials ADD COLUMN base_url text;
   `,
+  `
+  -- People. The owner is the one row with is_owner; everyone else holds only the
+  -- grants stored under principal "user:<id>" (no FK: principals are agents or people).
+  CREATE TABLE users (
+    id text PRIMARY KEY,
+    display_name text NOT NULL,
+    role_id text,                            -- preset the permissions were copied from (informational)
+    is_owner boolean NOT NULL DEFAULT false,
+    disabled_at timestamptz,
+    created_by text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE UNIQUE INDEX users_one_owner ON users(is_owner) WHERE is_owner;
+  INSERT INTO users(id, display_name, is_owner, created_by) VALUES ('owner', 'Owner', true, 'system:migration');
+  ALTER TABLE grants DROP CONSTRAINT grants_principal_id_fkey;
+  `,
 ];
 
 export async function migrate(db: Db): Promise<void> {

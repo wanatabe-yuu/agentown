@@ -109,6 +109,53 @@ agentTemplates:
   - { id: developer-claude-v1, jobRole: engineer, runtimePreset: claude-v1, policyProfile: developer }
   - { id: engineer-claude-dedicated-v1, jobRole: engineer, runtimePreset: claude-dedicated-v1, policyProfile: worker }
 
+# Permission presets for people (the owner adds them in the UI → Users).
+# A role is only a starting point: picking it copies these permissions onto the
+# person, and the owner can then add or remove permissions one by one.
+# Scopes for people: org, {departments: [...]}, {agents: [...]}, {projects: [...]}.
+humanRoles:
+  admin:
+    name: Admin
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: org }
+      - { action: task.create, scope: org }
+      - { action: task.assign, scope: org }
+      - { action: task.review, scope: org }
+      - { action: agent.spawn, scope: org, templates: [leader-v1, po-v1, engineer-v1, qa-v1, engineer-claude-v1, developer-v1, developer-claude-v1, engineer-claude-dedicated-v1] }
+      - { action: agent.update, scope: org }
+      - { action: agent.retire, scope: org }
+      - { action: agent.configure, scope: org }
+      - { action: runtime.control, scope: org }
+      - { action: runtime.logs, scope: org }
+      - { action: runtime.exec, scope: org }
+      - { action: credential.manage, scope: org }
+      - { action: audit.view, scope: org }
+  eng-manager:
+    name: Engineering manager
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: { departments: [eng] } }
+      - { action: task.create, scope: { departments: [eng] } }
+      - { action: task.assign, scope: { departments: [eng] } }
+      - { action: task.review, scope: { departments: [eng] } }
+      - { action: agent.spawn, scope: { departments: [eng] }, templates: [engineer-v1, qa-v1, engineer-claude-v1, developer-v1, developer-claude-v1] }
+      - { action: agent.configure, scope: { departments: [eng] } }
+      - { action: runtime.control, scope: { departments: [eng] } }
+      - { action: runtime.logs, scope: { departments: [eng] } }
+      - { action: runtime.exec, scope: { departments: [eng] } }
+  reviewer:
+    name: Reviewer
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: org }
+      - { action: task.review, scope: org }
+  viewer:
+    name: Viewer
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: org }
+
 bootstrap:
   agents:
     - { key: ceo, displayName: Ava, template: ceo-v1, department: exec }

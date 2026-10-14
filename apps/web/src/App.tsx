@@ -3,16 +3,17 @@ import { AgentPanel } from "./AgentPanel.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
 import { OfficeCanvas } from "./OfficeCanvas.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
-import { api, getToken, setToken } from "./api.ts";
+import { UsersDialog } from "./Users.tsx";
+import { HttpError, api } from "./api.ts";
 import type { Flight } from "./office.ts";
-import { useOffice } from "./store.ts";
-import type { AgentEvent, Catalog } from "./types.ts";
+import { STRUCTURAL, useOffice } from "./store.ts";
+import type { AgentEvent, Catalog, Me } from "./types.ts";
 import { Modal, StatusPill, ago } from "./ui.tsx";
 
 const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null) => string) => string> = {
   "agent.spawned": (e, n) => `${n(e.agentId)} joined as ${e.payload.jobRole}${e.payload.reportsTo ? ` under ${n(e.payload.reportsTo)}` : ""}`,
   "agent.active": (e, n) => `${n(e.agentId)}'s runtime is ready`,
-  "task.created": (e, n) => `${e.payload.createdBy?.startsWith("agent:") ? n(e.payload.createdBy.slice(6)) : "Owner"} → ${n(e.agentId)}: ${e.payload.title}`,
+  "task.created": (e, n) => `${e.payload.createdBy?.startsWith("agent:") ? n(e.payload.createdBy.slice(6)) : "A person"} → ${n(e.agentId)}: ${e.payload.title}`,
   "task.status": (e, n) => `${e.payload.title} · ${e.payload.from} → ${e.payload.to}${e.agentId ? ` (${n(e.agentId)})` : ""}`,
   "run.started": (e, n) => `${n(e.agentId)} started ${e.payload.title} (attempt ${e.payload.attempt}, g${e.payload.generation})`,
   "run.finished": (e, n) => `${n(e.agentId)} finished: ${e.payload.outcome}${e.payload.summary ? ` — ${e.payload.summary}` : ""}`,
@@ -28,10 +29,19 @@ const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null) => st
   "agent.configured": (e, n) => `${n(e.agentId)} now uses ${e.payload.model ?? "the default model"}${e.payload.effort ? ` (${e.payload.effort})` : ""}`,
   "credential.created": (e) => `API key "${e.payload.name}" added (${e.payload.models} models)`,
   "credential.revoked": () => `an API key was revoked`,
+  "user.created": (e) => `${e.payload.displayName} was invited`,
 };
 
+// Tokens used to live in localStorage; the session is an HttpOnly cookie now.
+try {
+  localStorage.removeItem("agentown.token");
+} catch {}
+
 export function App() {
-  const [token, setTok] = useState<string | null>(getToken());
+  // undefined: still asking the server; null: signed out.
+  const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [showUsers, setShowUsers] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [openTask, setOpenTask] = useState<string | null>(null);
   const [newTaskFor, setNewTaskFor] = useState<string | null | undefined>(undefined);
@@ -49,7 +59,16 @@ export function App() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 7000 : 3500);
   }, []);
 
+  const reloadMe = useCallback(() => {
+    api<Me>("GET", "/api/me")
+      .then(setMe)
+      .catch((e) => e instanceof HttpError && e.status === 401 && setMe(null));
+  }, []);
+  useEffect(reloadMe, [reloadMe]);
+
   const onEvent = useCallback((e: AgentEvent) => {
+    // Permissions may have changed: re-read what this person may do.
+    if (STRUCTURAL.test(e.type)) reloadMe();
     if (e.type === "task.created" && e.agentId && e.payload.createdBy?.startsWith("agent:")) {
       const from = e.payload.createdBy.slice(6);
       if (from !== e.agentId) {
@@ -57,29 +76,35 @@ export function App() {
         setFlights((f) => [...f.filter((x) => start - x.start < 1500), { from, to: e.agentId!, start, label: e.payload.title }]);
       }
     }
-  }, []);
+  }, [reloadMe]);
 
-  const { snapshot, status, feed, effectiveWork, now } = useOffice(token, onEvent);
+  const { snapshot, status, feed, effectiveWork, now } = useOffice(!!me, onEvent);
 
   useEffect(() => {
-    if (token && status === "live" && !catalog) api<Catalog>("GET", "/api/catalog").then(setCatalog).catch(() => {});
-  }, [token, status, catalog]);
+    if (me && status === "live" && !catalog) api<Catalog>("GET", "/api/catalog").then(setCatalog).catch(() => {});
+  }, [me, status, catalog]);
+  useEffect(() => {
+    if (status === "unauthorized") setMe(null);
+  }, [status]);
 
-  const needsOwner = useMemo(() => {
-    const s = new Set<string>();
-    for (const t of snapshot?.tasks ?? []) if (t.status === "review" && t.createdBy.startsWith("human:") && t.assigneeAgentId) s.add(t.assigneeAgentId);
-    return s;
-  }, [snapshot?.tasks]);
-  const reviewTasks = useMemo(() => (snapshot?.tasks ?? []).filter((t) => t.status === "review" && t.createdBy.startsWith("human:")), [snapshot?.tasks]);
+  // "Needs you": work this person asked for that is now waiting for review.
+  const mine = me ? `human:${me.actor.id}` : "";
+  const reviewTasks = useMemo(() => (snapshot?.tasks ?? []).filter((t) => t.status === "review" && t.createdBy === mine), [snapshot?.tasks, mine]);
+  const needsOwner = useMemo(() => new Set(reviewTasks.flatMap((t) => (t.assigneeAgentId ? [t.assigneeAgentId] : []))), [reviewTasks]);
 
-  if (!token || status === "unauthorized") {
+  if (me === undefined) return <div className="center muted">Loading…</div>;
+  if (!me) {
     return (
       <Login
-        error={status === "unauthorized" ? "That token was rejected." : null}
-        onToken={(t) => {
-          setToken(t);
-          setTok(t);
-        }}
+        error={loginError}
+        onToken={(t) =>
+          api<Me>("POST", "/api/session", { token: t })
+            .then((m) => {
+              setLoginError(null);
+              setMe(m);
+            })
+            .catch((e) => setLoginError(e instanceof HttpError && e.status === 401 ? "That token was rejected." : (e as Error).message))
+        }
       />
     );
   }
@@ -113,23 +138,30 @@ export function App() {
             Table
           </button>
         </div>
-        <button type="button" className="primary" onClick={() => setNewTaskFor(null)}>
-          New task
-        </button>
-        <button type="button" onClick={() => setShowKeys(true)}>
-          API keys
-        </button>
-        <button type="button" onClick={() => setShowAudit(true)}>
-          Audit
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => {
-            setToken(null);
-            setTok(null);
-          }}
-        >
+        {me.taskTargets.length > 0 && (
+          <button type="button" className="primary" onClick={() => setNewTaskFor(null)}>
+            New task
+          </button>
+        )}
+        {me.can["credential.manage"] && (
+          <button type="button" onClick={() => setShowKeys(true)}>
+            API keys
+          </button>
+        )}
+        {me.can["user.manage"] && (
+          <button type="button" onClick={() => setShowUsers(true)}>
+            Users
+          </button>
+        )}
+        {me.can["audit.view"] && (
+          <button type="button" onClick={() => setShowAudit(true)}>
+            Audit
+          </button>
+        )}
+        <span className="muted small" title={me.actor.id}>
+          {me.user?.displayName ?? me.actor.id}
+        </span>
+        <button type="button" className="ghost" onClick={() => void api("DELETE", "/api/session").finally(() => setMe(null))}>
           Sign out
         </button>
       </header>
@@ -200,6 +232,7 @@ export function App() {
       {newTaskFor !== undefined && (
         <NewTaskDialog
           snapshot={snapshot}
+          me={me}
           assignee={newTaskFor}
           onClose={() => setNewTaskFor(undefined)}
           notify={notify}
@@ -211,6 +244,7 @@ export function App() {
       )}
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
       {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
+      {showUsers && <UsersDialog me={me} catalog={catalog} snapshot={snapshot} onClose={() => setShowUsers(false)} notify={notify} />}
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast-${t.kind}`}>
@@ -345,8 +379,11 @@ function Login({ onToken, error }: { onToken: (t: string) => void; error: string
         }}
       >
         <h1>Agentown</h1>
-        <p className="muted">Paste the owner token (written to <code>.agentown/owner-token</code> on first server start).</p>
-        <input ref={ref} type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="aho_…" aria-label="Owner token" />
+        <p className="muted">
+          Paste your access token. The owner gets theirs from a terminal with <code>agentownctl token</code> (or{" "}
+          <code>.agentown/owner-token</code> when running from source); everyone else gets one from the owner under Users.
+        </p>
+        <input ref={ref} type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="aho_…" aria-label="Access token" />
         {error && <p className="error">{error}</p>}
         <button type="submit" className="primary">
           Enter the office
