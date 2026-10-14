@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KCFG="${KUBECONFIG_CONTROLLER:-$ROOT/.agentown/controller.kubeconfig}"
 KUBECTL="${KUBECTL:-kubectl}"
 NS="${NS:-agentown-eng}"
-IMAGE="${IMAGE:-agentown/harness:0.1.0}"
+IMAGE="${IMAGE:-agentown/harness:$(node -p "require('$ROOT/package.json').version")}"
 k() { "$KUBECTL" --kubeconfig "$KCFG" "$@"; }
 
 pass=0

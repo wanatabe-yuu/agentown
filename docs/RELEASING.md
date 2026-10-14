@@ -2,10 +2,10 @@
 
 ## Cutting a release
 
-1. Set the new version in `package.json` (root) and in the `image:` entries of `runtimeCatalog` in `config/agentown.yaml`. `scripts/package-release.sh` stops if either does not match the tag. Also update the image tag in the `image` script of `apps/harness/package.json` and in `scripts/dev-k3s.sh`; development still uses those two and they would otherwise keep the old tag.
+1. Set the new version in every `package.json` (root, `packages/*`, `apps/*`) and in the `image:` entries of `runtimeCatalog` in `config/agentown.yaml`. `scripts/package-release.sh` stops if the root version or the catalog does not match the tag. The dev scripts read the version from `package.json`. On upgrade, `install.sh` moves `agentown/harness:` images in the host's `/etc/agentown/agentown.yaml` to the new tag (keeping a backup); other images are left alone.
 2. Merge to `main`, then start the release, either way:
    - **Actions → Release → Run workflow** on `main`. The workflow reads the version from `package.json`, refuses if that tag already exists, and creates the tag `v<version>` at the commit it built.
-   - or push the tag yourself: `git tag v0.1.0 && git push origin v0.1.0`.
+   - or push the tag yourself, e.g. `git tag v0.2.0 && git push origin v0.2.0`.
 
    Do not create the release by hand on GitHub: the workflow creates it, and the installer only accepts what the workflow signed.
 3. The `.github/workflows/release.yml` workflow runs the tests, builds, signs, and creates a GitHub Release with these files:

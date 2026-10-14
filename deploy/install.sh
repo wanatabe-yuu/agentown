@@ -126,8 +126,17 @@ HARNESS_IMAGE="$(sed -n 's/^harness_image=//p' "$PREFIX/current/VERSION")"
 if [ ! -f "$ETC/agentown.yaml" ]; then
   install -m 0640 -o root -g agentown "$PREFIX/current/config/agentown.yaml" "$ETC/agentown.yaml"
 elif ! grep -q "image: $HARNESS_IMAGE\$" "$ETC/agentown.yaml"; then
-  install -m 0640 -o root -g agentown "$PREFIX/current/config/agentown.yaml" "$ETC/agentown.yaml.new"
-  echo "note: $ETC/agentown.yaml does not use $HARNESS_IMAGE; compare it with $ETC/agentown.yaml.new"
+  # Upgrade: move Agentown's own agent image to this release's tag. Images the
+  # owner put in the catalog themselves are left alone.
+  if grep -qE "image: agentown/harness:[^[:space:]]+\$" "$ETC/agentown.yaml"; then
+    cp -p "$ETC/agentown.yaml" "$ETC/agentown.yaml.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+    sed -i -E "s#(image: )agentown/harness:[^[:space:]]+\$#\1$HARNESS_IMAGE#" "$ETC/agentown.yaml"
+    echo "updated the agent image in $ETC/agentown.yaml to $HARNESS_IMAGE (backup kept next to it)"
+  fi
+  if ! grep -q "image: $HARNESS_IMAGE\$" "$ETC/agentown.yaml"; then
+    install -m 0640 -o root -g agentown "$PREFIX/current/config/agentown.yaml" "$ETC/agentown.yaml.new"
+    echo "note: $ETC/agentown.yaml does not use $HARNESS_IMAGE; compare it with $ETC/agentown.yaml.new"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

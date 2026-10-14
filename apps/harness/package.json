@@ -1,12 +1,12 @@
 {
   "name": "@agentown/harness",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "esbuild src/harness.ts src/cli.ts --bundle --platform=node --target=node24 --format=esm --outdir=dist --out-extension:.js=.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
-    "image": "pnpm build && docker build -t agentown/harness:0.1.0 ."
+    "image": "pnpm build && docker build -t agentown/harness:$npm_package_version ."
   },
   "dependencies": {
     "@agentown/core": "workspace:*",
