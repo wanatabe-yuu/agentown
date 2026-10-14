@@ -3,10 +3,11 @@
 ## Cutting a release
 
 1. Set the new version in `package.json` (root) and in the `image:` entries of `runtimeCatalog` in `config/agentown.yaml`. `scripts/package-release.sh` stops if either does not match the tag. Also update the image tag in the `image` script of `apps/harness/package.json` and in `scripts/dev-k3s.sh`; development still uses those two and they would otherwise keep the old tag.
-2. Merge to `main`, then push the tag:
-   ```bash
-   git tag v0.1.0 && git push origin v0.1.0
-   ```
+2. Merge to `main`, then start the release, either way:
+   - **Actions → Release → Run workflow** on `main`. The workflow reads the version from `package.json`, refuses if that tag already exists, and creates the tag `v<version>` at the commit it built.
+   - or push the tag yourself: `git tag v0.1.0 && git push origin v0.1.0`.
+
+   Do not create the release by hand on GitHub: the workflow creates it, and the installer only accepts what the workflow signed.
 3. The `.github/workflows/release.yml` workflow runs the tests, builds, signs, and creates a GitHub Release with these files:
 
 | File | Contents |
@@ -28,7 +29,7 @@ To try a release build locally: `scripts/package-release.sh v0.1.0 out/` (needs 
 
 | Risk | Mitigation |
 |---|---|
-| Release files swapped in transit or on GitHub | `install.sh` verifies the Sigstore signature on `SHA256SUMS`. The certificate must have been issued by GitHub Actions OIDC to **exactly** `wanatabe-yuu/Agentown/.github/workflows/release.yml` running from a `v*` tag. Only then is each file checked with `sha256sum`. Any failure stops the install. |
+| Release files swapped in transit or on GitHub | `install.sh` verifies the Sigstore signature on `SHA256SUMS`. The certificate must have been issued by GitHub Actions OIDC to **exactly** `wanatabe-yuu/Agentown/.github/workflows/release.yml` running from a `v*` tag or from `main`. Only then is each file checked with `sha256sum`. Any failure stops the install. |
 | The signature verification tool swapped | `install.sh` pins `cosign` by version and SHA-256. |
 | Not knowing which commit a build came from | Every file has a SLSA build-provenance attestation (`actions/attest-build-provenance`) recording the repository, commit, workflow and runner. `VERSION` inside the tarball records the commit. |
 | A third-party action compromised and its tag moved | Every GitHub Action is pinned to a commit SHA (the tag is noted in a comment). Dependabot opens PRs for new versions. |
@@ -43,7 +44,7 @@ Remaining gaps to be aware of:
 - `curl … install.sh | sudo bash` trusts TLS and GitHub for the installer itself: the script that does the verifying is not verified before it runs. If you need more, download `install.sh` and `SHA256SUMS*` from the Release page, verify them as shown below, and run it then. `install.sh` is listed in the signed `SHA256SUMS`. From the second install on, `agentownctl upgrade` uses the `install.sh` inside the already-verified release.
 - NodeSource, Docker and k3s are installed through their official channels: apt repositories with GPG signatures, and the k3s installer checks the binary's SHA-256. Agentown does not pin these.
 - The runtime image is built for `linux/amd64` only.
-- Turn on **branch protection** for `main` and **tag protection** (a ruleset) for `v*`: anyone who can push a tag can produce a validly signed release.
+- Turn on **branch protection** for `main` and **tag protection** (a ruleset) for `v*`. Anyone who can push a `v*` tag, or run the Release workflow on `main` (anyone with write access), can produce a validly signed release.
 
 ## Verifying a release yourself
 
@@ -56,7 +57,7 @@ gh attestation verify "agentown-$TAG.tar.gz" --repo wanatabe-yuu/Agentown
 
 # 2) Signature + checksums, exactly as install.sh does it
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp '^https://github\.com/wanatabe-yuu/Agentown/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-identity-regexp '^https://github\.com/wanatabe-yuu/Agentown/\.github/workflows/release\.yml@refs/(tags/v|heads/main$)' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum -c SHA256SUMS
 ```
