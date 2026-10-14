@@ -22,8 +22,7 @@ const spec = {
   storageRef: `agent-${agentId}-workspace`,
   displayName: "Smoke",
   jobRole: "engineer",
-  providerKey: "sk-smoke-not-a-real-key",
-  providerWorkspaceId: "wrkspc_smoke",
+  llm: { provider: "anthropic", apiKey: "sk-smoke-not-a-real-key", workspaceId: "wrkspc_smoke", baseUrl: null },
 };
 let issued = 0;
 await driver.ensureIdentity(spec, async () => {

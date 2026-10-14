@@ -5,7 +5,7 @@ import { EventBus } from "../src/bus.ts";
 import { createPool, migrate } from "../src/db.ts";
 import { RuntimeController } from "../src/runtime/controller.ts";
 import type { ExecStreams, PodInfo, RuntimeDriver, RuntimeSpec } from "../src/runtime/driver.ts";
-import { podName } from "../src/runtime/driver.ts";
+import { llmEnv, podName } from "../src/runtime/driver.ts";
 import type { ModelLister } from "../src/providers.ts";
 import { SecretBox } from "../src/secrets.ts";
 import { Service } from "../src/service.ts";
@@ -13,7 +13,10 @@ import { Service } from "../src/service.ts";
 /** In-memory driver: pods become Ready immediately. Records issued tokens so tests can act as runtimes. */
 export class FakeDriver implements RuntimeDriver {
   readonly kind = "fake";
-  pods = new Map<string, PodInfo & { agentId: string; namespace: string; providerKey: string | null; providerWorkspaceId: string | null }>();
+  pods = new Map<
+    string,
+    PodInfo & { agentId: string; namespace: string; providerKey: string | null; providerWorkspaceId: string | null; llmEnv: Record<string, string> }
+  >();
   tokens = new Map<string, string>();
   identities = new Set<string>();
 
@@ -32,8 +35,9 @@ export class FakeDriver implements RuntimeDriver {
       name,
       agentId: spec.agentId,
       namespace: spec.namespace,
-      providerKey: spec.providerKey,
-      providerWorkspaceId: spec.providerWorkspaceId,
+      providerKey: spec.llm?.apiKey ?? null,
+      providerWorkspaceId: spec.llm?.workspaceId ?? null,
+      llmEnv: spec.llm ? { ...llmEnv(spec.llm).secret, ...llmEnv(spec.llm).plain } : {},
       generation: spec.generation,
       phase: "Running",
       ready: true,
@@ -64,8 +68,11 @@ export async function setup() {
   const bus = new EventBus();
   // Fake provider: keys starting with "sk-test-" are valid; the suffix picks the model set.
   // "sk-test-orgwide-" keys are not scoped to a workspace and need one named on each request.
-  const modelLister: ModelLister = async (_provider, apiKey, workspaceId) => {
+  // OpenAI-compatible providers list "<provider>-chat"; a custom endpoint at an "/ollama" URL needs no key.
+  const modelLister: ModelLister = async ({ provider, apiKey, workspaceId, baseUrl }) => {
+    if (provider === "custom" && baseUrl?.endsWith("/ollama/v1")) return ["llama3.3", "qwen3"];
     if (!apiKey.startsWith("sk-test-")) throw new Error("401 invalid x-api-key");
+    if (provider !== "anthropic") return [`${provider}-chat`, `${provider}-mini`];
     if (apiKey.startsWith("sk-test-orgwide-") && !workspaceId) {
       throw new Error('400 {"type":"error","error":{"type":"invalid_request_error","message":"This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header"}}');
     }

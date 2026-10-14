@@ -5,6 +5,7 @@ import type { Adapter, RunContext, RunResult } from "./types.ts";
 
 const PLAYBOOK_DIR = process.env.AGENTOWN_PLAYBOOK_DIR ?? "/opt/agentown/playbooks";
 const EXIT_BLOCKED = 3;
+const SECRET_ENV = new Set(["ANTHROPIC_API_KEY", "AGENTOWN_LLM_API_KEY"]);
 
 /** Run a shell command for a task, streaming its output to the work log. */
 export function runShell(
@@ -17,7 +18,7 @@ export function runShell(
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) {
       // Provider credentials are for the LLM adapter only, never for task processes.
-      if (v !== undefined && k !== "ANTHROPIC_API_KEY") env[k] = v;
+      if (v !== undefined && !SECRET_ENV.has(k)) env[k] = v;
     }
     const child = spawn(argv[0]!, argv.slice(1), {
       cwd: ctx.workdir,

@@ -220,6 +220,10 @@ const MIGRATIONS: string[] = [
   -- Anthropic keys created at the organization level must name a workspace on every request.
   ALTER TABLE credentials ADD COLUMN workspace_id text;
   `,
+  `
+  -- OpenAI-compatible providers: the owner's endpoint for provider "custom" (presets resolve theirs in code).
+  ALTER TABLE credentials ADD COLUMN base_url text;
+  `,
 ];
 
 export async function migrate(db: Db): Promise<void> {

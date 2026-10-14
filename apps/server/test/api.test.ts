@@ -512,4 +512,51 @@ describe("per-agent credentials and model config", () => {
     expect(podOf(ws)).toMatchObject({ providerKey: orgKey, providerWorkspaceId: "wrkspc_01AbC" });
     expect(podOf(bot).providerWorkspaceId).toBeNull();
   });
+
+  it("OpenAI-compatible providers: preset endpoints, custom base URLs, and what reaches the runtime", async () => {
+    const add = (body: Record<string, unknown>) => env.call(env.owner, "POST", "/api/credentials", body);
+    expect((await env.call(env.owner, "GET", "/api/catalog")).body.providers.map((p: any) => p.id)).toEqual(
+      expect.arrayContaining(["anthropic", "openai", "deepseek", "xai", "gemini", "custom"]),
+    );
+    expect((await add({ name: "x", provider: "openai" })).status).toBe(400); // key required
+    expect((await add({ name: "x", provider: "openai", apiKey: "sk-test-oai-1", workspaceId: "wrkspc_1" })).status).toBe(400);
+    expect((await add({ name: "x", provider: "openai", apiKey: "sk-test-oai-1", baseUrl: "https://evil.example/v1" })).status).toBe(400);
+    expect((await add({ name: "x", provider: "nope", apiKey: "sk-test-oai-1" })).status).toBe(400);
+    const oai = await add({ name: "OpenAI", provider: "openai", apiKey: "sk-test-oai-1234" });
+    expect(oai.status).toBe(201);
+    expect(oai.body).toMatchObject({ provider: "openai", baseUrl: "https://api.openai.com/v1", models: ["openai-chat", "openai-mini"], keyHint: "…1234" });
+
+    expect((await add({ name: "x", provider: "custom" })).status).toBe(400); // base URL required
+    expect((await add({ name: "x", provider: "custom", baseUrl: "ftp://host/v1" })).status).toBe(400);
+    expect((await add({ name: "x", provider: "custom", baseUrl: "http://u:p@host/v1" })).status).toBe(400);
+    const local = await add({ name: "Ollama", provider: "custom", baseUrl: " http://10.0.0.5:11434/ollama/v1/ " });
+    expect(local.status).toBe(201);
+    expect(local.body).toMatchObject({ provider: "custom", baseUrl: "http://10.0.0.5:11434/ollama/v1", keyHint: "(no key)", models: ["llama3.3", "qwen3"] });
+
+    const s = await spawnUnder(env.token("lead-eng"), "engineer-claude-v1", "Gwen", "lead-eng", "claude-oai");
+    expect(s.status).toBe(202);
+    const agent = s.body.agent.id;
+    await env.settle();
+    const t = env.token("lead-eng");
+    expect((await env.call(t, "PUT", `/api/agents/${agent}/config`, { credentialId: oai.body.id, model: "claude-opus-5-5" })).status).toBe(400);
+    expect((await env.call(t, "PUT", `/api/agents/${agent}/config`, { credentialId: oai.body.id, model: "openai-mini" })).status).toBe(200);
+    await env.settle();
+    await env.settle();
+    expect(podOf(agent).llmEnv).toEqual({
+      AGENTOWN_LLM_PROVIDER: "openai",
+      AGENTOWN_LLM_BASE_URL: "https://api.openai.com/v1",
+      AGENTOWN_LLM_API_KEY: "sk-test-oai-1234",
+    });
+
+    // A keyless custom endpoint: no secret, and no Claude default model is handed to the adapter.
+    expect((await env.call(t, "PUT", `/api/agents/${agent}/config`, { credentialId: local.body.id })).status).toBe(200);
+    await env.settle();
+    await env.settle();
+    expect(podOf(agent).llmEnv).toEqual({ AGENTOWN_LLM_PROVIDER: "custom", AGENTOWN_LLM_BASE_URL: "http://10.0.0.5:11434/ollama/v1" });
+    const g = await gen(agent);
+    await env.call(env.token(agent), "POST", "/api/runtime/heartbeat", { generation: g, state: "idle" });
+    await env.call(t, "POST", "/api/tasks", { title: "think locally", assigneeAgentId: agent });
+    const c = await env.call(env.token(agent), "POST", "/api/runs/claim", { generation: g });
+    expect(c.body.config).toMatchObject({ harness: "claude", provider: "custom", model: null, hasCredential: true });
+  });
 });

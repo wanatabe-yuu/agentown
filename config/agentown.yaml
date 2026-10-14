@@ -24,8 +24,11 @@ runtimeCatalog:
     harness: script
     workspace: { size: 256Mi }
     resources: { cpu: 250m, memory: 256Mi }
-  # LLM adapter (Anthropic Messages API + bash tool). Each agent picks an API
-  # credential (added by the owner in the UI) and a model that key can use.
+  # LLM harness. Each agent picks an API credential (added by the owner in the
+  # UI) and a model that key can use; the credential's provider picks the
+  # adapter: Anthropic Messages API, or OpenAI-compatible Chat Completions
+  # (OpenAI, DeepSeek, Grok, Gemini, Mistral, Groq, OpenRouter, Together, custom).
+  # `model` below is the default for Anthropic keys only.
   - id: claude-v1
     image: agentown/harness:0.3.0
     imagePullPolicy: Never

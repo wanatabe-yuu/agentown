@@ -3,7 +3,7 @@ import http from "node:http";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import type { ExecStreams, PodInfo, RuntimeDriver, RuntimeSpec } from "./driver.ts";
-import { podName } from "./driver.ts";
+import { llmEnv, podName } from "./driver.ts";
 
 /**
  * Docker Engine driver: one container per agent runtime generation, one named
@@ -135,8 +135,10 @@ export class DockerDriver implements RuntimeDriver {
       "HOME=/workspace/home",
     ];
     if (spec.preset.model) env.push(`AGENTOWN_MODEL=${spec.preset.model}`);
-    if (spec.providerKey) env.push(`ANTHROPIC_API_KEY=${spec.providerKey}`);
-    if (spec.providerWorkspaceId) env.push(`ANTHROPIC_WORKSPACE_ID=${spec.providerWorkspaceId}`);
+    if (spec.llm) {
+      const { secret, plain } = llmEnv(spec.llm);
+      for (const [k, v] of Object.entries({ ...secret, ...plain })) env.push(`${k}=${v}`);
+    }
     const cpu = parseCpu(spec.preset.resources.cpu);
     const mem = parseMemory(spec.preset.resources.memory);
     const { status } = await this.call(
