@@ -224,16 +224,134 @@ const MIGRATIONS: string[] = [
   -- OpenAI-compatible providers: the owner's endpoint for provider "custom" (presets resolve theirs in code).
   ALTER TABLE credentials ADD COLUMN base_url text;
   `,
+  `
+  -- People. The owner is the one row with is_owner; everyone else holds only the
+  -- grants stored under principal "user:<id>" (no FK: principals are agents or people).
+  CREATE TABLE users (
+    id text PRIMARY KEY,
+    display_name text NOT NULL,
+    role_id text,                            -- preset the permissions were copied from (informational)
+    is_owner boolean NOT NULL DEFAULT false,
+    disabled_at timestamptz,
+    created_by text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE UNIQUE INDEX users_one_owner ON users(is_owner) WHERE is_owner;
+  INSERT INTO users(id, display_name, is_owner, created_by) VALUES ('owner', 'Owner', true, 'system:migration');
+  ALTER TABLE grants DROP CONSTRAINT grants_principal_id_fkey;
+  `,
+  `
+  -- Many organizations per install. Each org carries its own structure document
+  -- (departments, projects, agent templates, policy profiles, role presets) in
+  -- config, edited in the UI; rows of every org-owned table name their org.
+  ALTER TABLE organizations
+    ADD COLUMN config jsonb,
+    ADD COLUMN config_revision int NOT NULL DEFAULT 1,
+    ADD COLUMN template_id text,
+    ADD COLUMN created_by text,
+    ADD COLUMN created_at timestamptz NOT NULL DEFAULT now(),
+    ADD COLUMN archived_at timestamptz,
+    ADD COLUMN runtime_namespace text UNIQUE;
+
+  ALTER TABLE agents ADD COLUMN org_id text REFERENCES organizations(id);
+  ALTER TABLE tasks ADD COLUMN org_id text REFERENCES organizations(id);
+  ALTER TABLE credentials ADD COLUMN org_id text REFERENCES organizations(id);
+  ALTER TABLE grants ADD COLUMN org_id text REFERENCES organizations(id);
+  ALTER TABLE agent_events ADD COLUMN org_id text REFERENCES organizations(id);
+  ALTER TABLE terminal_sessions ADD COLUMN org_id text REFERENCES organizations(id);
+  ALTER TABLE audit_events ADD COLUMN org_id text REFERENCES organizations(id); -- NULL: instance-level
+  UPDATE agents SET org_id = (SELECT id FROM organizations ORDER BY id LIMIT 1);
+  UPDATE tasks SET org_id = (SELECT id FROM organizations ORDER BY id LIMIT 1);
+  UPDATE credentials SET org_id = (SELECT id FROM organizations ORDER BY id LIMIT 1);
+  UPDATE grants SET org_id = (SELECT id FROM organizations ORDER BY id LIMIT 1);
+  UPDATE agent_events SET org_id = (SELECT id FROM organizations ORDER BY id LIMIT 1);
+  UPDATE terminal_sessions SET org_id = (SELECT id FROM organizations ORDER BY id LIMIT 1);
+  UPDATE audit_events SET org_id = (SELECT id FROM organizations ORDER BY id LIMIT 1);
+  ALTER TABLE agents ALTER COLUMN org_id SET NOT NULL;
+  ALTER TABLE tasks ALTER COLUMN org_id SET NOT NULL;
+  ALTER TABLE credentials ALTER COLUMN org_id SET NOT NULL;
+  ALTER TABLE grants ALTER COLUMN org_id SET NOT NULL;
+  ALTER TABLE agent_events ALTER COLUMN org_id SET NOT NULL;
+  ALTER TABLE terminal_sessions ALTER COLUMN org_id SET NOT NULL;
+  CREATE INDEX agents_org ON agents(org_id);
+  CREATE INDEX grants_org ON grants(org_id);
+  CREATE INDEX tasks_org ON tasks(org_id, status);
+  CREATE INDEX agent_events_org ON agent_events(org_id, seq);
+  CREATE INDEX audit_events_org ON audit_events(org_id, id);
+
+  -- Idempotency keys are per organization.
+  ALTER TABLE agents DROP CONSTRAINT agents_spawn_key_key;
+  ALTER TABLE agents ADD CONSTRAINT agents_org_spawn_key UNIQUE (org_id, spawn_key);
+  ALTER TABLE tasks DROP CONSTRAINT tasks_idempotency_key_key;
+  ALTER TABLE tasks ADD CONSTRAINT tasks_org_idempotency_key UNIQUE (org_id, idempotency_key);
+
+  -- Departments and projects live in the org's config document now.
+  ALTER TABLE agents DROP CONSTRAINT agents_department_id_fkey;
+  ALTER TABLE tasks DROP CONSTRAINT tasks_project_id_fkey;
+  DROP TABLE departments;
+  DROP TABLE projects;
+
+  -- People are accounts on the install; what they may do is per organization.
+  CREATE TABLE org_members (
+    org_id text NOT NULL REFERENCES organizations(id),
+    user_id text NOT NULL REFERENCES users(id),
+    is_owner boolean NOT NULL DEFAULT false,
+    role_id text,                            -- preset the permissions were copied from (informational)
+    disabled_at timestamptz,
+    created_by text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, user_id)
+  );
+  CREATE UNIQUE INDEX org_members_one_owner ON org_members(org_id) WHERE is_owner;
+  INSERT INTO org_members(org_id, user_id, is_owner, role_id, disabled_at, created_by, created_at)
+    SELECT o.id, u.id, u.is_owner, u.role_id, u.disabled_at, u.created_by, u.created_at FROM users u CROSS JOIN organizations o;
+  -- The single owner of the old install becomes the instance admin.
+  UPDATE users SET disabled_at = NULL;
+  ALTER TABLE users RENAME COLUMN is_owner TO is_admin;
+  ALTER TABLE users DROP COLUMN role_id;
+  ALTER INDEX users_one_owner RENAME TO users_one_admin;
+  `,
+  `
+  -- Organization templates people saved or imported (built-ins ship as files).
+  -- Visible to their author and the instance admin only.
+  CREATE TABLE templates (
+    id text PRIMARY KEY,
+    name text NOT NULL,
+    description text NOT NULL DEFAULT '',
+    doc jsonb NOT NULL,
+    owner_user_id text NOT NULL REFERENCES users(id),
+    source_org_id text,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  `,
+  `
+  -- Art for the office: binary glTF models and textures, per organization.
+  CREATE TABLE assets (
+    id text PRIMARY KEY,
+    org_id text NOT NULL REFERENCES organizations(id),
+    kind text NOT NULL,                      -- model | texture
+    name text NOT NULL,
+    content_type text NOT NULL,              -- decided from the bytes, never the client
+    size int NOT NULL,
+    sha256 text NOT NULL,
+    content bytea NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (org_id, sha256)
+  );
+  `,
 ];
 
-export async function migrate(db: Db): Promise<void> {
+/** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */
+export async function migrate(db: Db, upTo = MIGRATIONS.length): Promise<void> {
   await db.query("CREATE TABLE IF NOT EXISTS schema_migrations (version int PRIMARY KEY, at timestamptz NOT NULL DEFAULT now())");
-  const { rows } = await db.query<{ v: number | null }>("SELECT max(version) AS v FROM schema_migrations");
-  const current = rows[0]?.v ?? 0;
-  for (let i = current; i < MIGRATIONS.length; i++) {
-    await tx(db, async (c) => {
+  // The server and the cluster provisioner may both migrate: serialize them.
+  await tx(db, async (c) => {
+    await c.query("SELECT pg_advisory_xact_lock(7340211)");
+    const { rows } = await c.query<{ v: number | null }>("SELECT max(version) AS v FROM schema_migrations");
+    for (let i = rows[0]?.v ?? 0; i < upTo; i++) {
       await c.query(MIGRATIONS[i]!);
       await c.query("INSERT INTO schema_migrations(version) VALUES ($1)", [i + 1]);
-    });
-  }
+    }
+  });
 }

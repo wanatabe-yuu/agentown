@@ -282,9 +282,37 @@ ReadWritePaths=$STATE
 [Install]
 WantedBy=multi-user.target
 EOF
+if [ "$DRIVER" = kubernetes ]; then
+  # Organizations created in the UI need a namespace and guard rails. The server
+  # has no cluster-scoped rights, so this root timer renders and applies them.
+  cat > /etc/systemd/system/agentown-provision.service <<EOF
+[Unit]
+Description=Agentown cluster provisioner (namespaces and guard rails for organizations)
+After=agentown.service k3s.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=$ETC/agentown.env
+Environment=AGENTOWN_API_CIDR=$HOST_IP/32
+ExecStart=/bin/sh -c 'node $PREFIX/current/server/tools/render-manifests.mjs | k3s kubectl apply -f - >/dev/null'
+EOF
+  cat > /etc/systemd/system/agentown-provision.timer <<EOF
+[Unit]
+Description=Run the Agentown cluster provisioner every 30 seconds
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+EOF
+fi
 systemctl daemon-reload
 systemctl enable agentown >/dev/null
 systemctl restart agentown
+if [ "$DRIVER" = kubernetes ]; then systemctl enable --now agentown-provision.timer >/dev/null; fi
 
 for _ in $(seq 30); do curl -fsS --noproxy "*" http://127.0.0.1:8080/healthz >/dev/null 2>&1 && break; sleep 1; done
 curl -fsS --noproxy "*" http://127.0.0.1:8080/healthz >/dev/null 2>&1 || die "server did not come up: journalctl -u agentown -n 50"

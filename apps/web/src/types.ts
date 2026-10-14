@@ -1,3 +1,4 @@
+import type { World } from "@agentown/core/world";
 export type WorkState = "idle" | "thinking" | "executing" | "waiting" | "blocked" | "offline" | "error";
 
 export interface Agent {
@@ -55,6 +56,8 @@ export interface AgentDetail extends Agent {
   credential: Credential | null;
   grants: Array<{ id: string; action: string; scope: { kind: string; ids?: string[] }; constraints: { templates?: string[] }; delegable: boolean; issuer: string; parentGrantId: string | null }>;
   can: Record<string, boolean>;
+  /** Templates the caller may hire under this agent. */
+  spawnTemplates: string[];
 }
 
 export interface Task {
@@ -81,6 +84,49 @@ export interface TaskDetail extends Task {
   runs: Array<{ id: string; agent_id: string; attempt: number; runtime_generation: number; status: string; started_at: string; finished_at: string | null; summary: string | null; usage: Record<string, unknown> | null }>;
   artifacts: Array<{ id: string; name: string; content_type: string; sha256: string; size: number; created_at: string }>;
   assignments: Array<{ from_agent_id: string | null; to_agent_id: string; by_actor: string; at: string }>;
+  can: { review: boolean; retry: boolean; cancel: boolean };
+}
+
+export type Scope = { kind: string; ids?: string[] };
+
+/** The signed-in account and the organizations it can open. */
+export interface Account {
+  user: { id: string; displayName: string; admin: boolean } | null;
+  orgs: Array<{ id: string; name: string; owner: boolean }>;
+}
+
+/** The signed-in person inside one organization, and what they may do outside any one agent. */
+export interface Me {
+  organization: { id: string; name: string };
+  actor: { kind: string; id: string; owner?: boolean };
+  user: User | null;
+  can: Record<string, boolean>;
+  taskTargets: string[];
+  execTargets: string[];
+}
+
+export interface Permission {
+  id: string;
+  action: string;
+  scope: Scope;
+  constraints: { templates?: string[]; repos?: string[] };
+  issuer: string;
+}
+
+export interface User {
+  id: string;
+  displayName: string;
+  roleId: string | null;
+  owner: boolean;
+  disabledAt: string | null;
+  createdAt: string;
+  permissions: Permission[];
+}
+
+export interface Role {
+  id: string;
+  name: string;
+  permissions: Array<Omit<Permission, "id" | "issuer">>;
 }
 
 export interface Department {
@@ -95,6 +141,8 @@ export interface Snapshot {
   me: { kind: string; id: string };
   departments: Department[];
   projects: Array<{ id: string; name: string }>;
+  /** Floors, rooms and objects from the organization's template; null = one room per department. */
+  world: World | null;
   agents: Agent[];
   tasks: Task[];
   serverTime: string;

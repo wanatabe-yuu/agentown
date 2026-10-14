@@ -8,7 +8,8 @@
 #
 #   scripts/dev-k3s.sh up        start k3s, preload images, apply guard rails
 #   scripts/dev-k3s.sh images    rebuild + load the harness image
-#   scripts/dev-k3s.sh apply     re-render and apply manifests from config
+#   scripts/dev-k3s.sh apply     re-render and apply manifests (config + organizations in the DB)
+#   scripts/dev-k3s.sh provision same as apply: run it after creating an organization
 #   scripts/dev-k3s.sh down      delete the cluster container (agent data is lost)
 #   scripts/dev-k3s.sh kubectl … run kubectl as cluster admin (debugging only)
 set -euo pipefail
@@ -64,7 +65,8 @@ docker_bridge_ip() {
 
 apply() {
   local cidr="${AGENTOWN_API_CIDR:-$(docker_bridge_ip)/32}"
-  (cd "$ROOT" && AGENTOWN_API_CIDR="$cidr" npx tsx apps/server/src/tools/render-manifests.ts) > "$STATE/manifests.yaml"
+  (cd "$ROOT" && AGENTOWN_API_CIDR="$cidr" DATABASE_URL="${DATABASE_URL:-postgres://agentown:agentown@127.0.0.1:5432/agentown}" \
+    npx tsx apps/server/src/tools/render-manifests.ts) > "$STATE/manifests.yaml"
   kc apply -f - < "$STATE/manifests.yaml"
 }
 
@@ -131,9 +133,9 @@ up() {
 case "${1:-up}" in
   up) up ;;
   images) build_harness; load_image "$HARNESS_IMAGE" ;;
-  apply) apply ;;
+  apply | provision) apply ;;
   kubeconfig) controller_kubeconfig ;;
   down) docker rm -f "$NAME" ;;
   kubectl) shift; kc "$@" ;;
-  *) echo "usage: $0 up|images|apply|kubeconfig|down|kubectl ..." >&2; exit 2 ;;
+  *) echo "usage: $0 up|images|apply|provision|kubeconfig|down|kubectl ..." >&2; exit 2 ;;
 esac

@@ -1,6 +1,6 @@
 import * as k8s from "@kubernetes/client-node";
 import type { ExecStreams, PodInfo, RuntimeDriver, RuntimeSpec } from "./driver.ts";
-import { llmEnv, podName } from "./driver.ts";
+import { llmEnv, NamespaceNotReady, podName } from "./driver.ts";
 
 const MANAGED_BY = { "app.kubernetes.io/managed-by": "agentown" };
 const CONTAINER = "harness";
@@ -46,7 +46,15 @@ export class KubernetesDriver implements RuntimeDriver {
   }
 
   async listPods(namespace: string, agentId: string): Promise<PodInfo[]> {
-    const list = await this.core.listNamespacedPod({ namespace, labelSelector: `agentown.io/agent=${agentId}` });
+    let list;
+    try {
+      list = await this.core.listNamespacedPod({ namespace, labelSelector: `agentown.io/agent=${agentId}` });
+    } catch (err) {
+      // The controller holds Roles only in provisioned namespaces: 403 means "not provisioned yet".
+      const code = (err as { code?: number; statusCode?: number }).code ?? (err as { statusCode?: number }).statusCode;
+      if (code === 403 || code === 404) throw new NamespaceNotReady(namespace);
+      throw err;
+    }
     return list.items.map((p) => {
       const cs = p.status?.containerStatuses?.find((c) => c.name === CONTAINER);
       const waiting = cs?.state?.waiting;

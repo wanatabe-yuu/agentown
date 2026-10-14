@@ -1,18 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AdminDialog } from "./Admin.tsx";
 import { AgentPanel } from "./AgentPanel.tsx";
+import { AssetsDialog } from "./Assets.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
-import { OfficeCanvas } from "./OfficeCanvas.tsx";
+import { OrgEditor } from "./OrgEditor.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
-import { api, getToken, setToken } from "./api.ts";
-import type { Flight } from "./office.ts";
-import { useOffice } from "./store.ts";
-import type { AgentEvent, Catalog } from "./types.ts";
-import { Modal, StatusPill, ago } from "./ui.tsx";
+import { UsersDialog } from "./Users.tsx";
+import { HttpError, api, setOrg } from "./api.ts";
+import type { Flight } from "./office3d/scene.ts";
+
+// three.js is only downloaded when the office is shown.
+const Office3D = lazy(() => import("./office3d/Office3D.tsx"));
+import { STRUCTURAL, useOffice } from "./store.ts";
+import type { Account, AgentEvent, Catalog, Me } from "./types.ts";
+import { Menu, type MenuItem, Modal, StatusPill, ago } from "./ui.tsx";
 
 const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null) => string) => string> = {
   "agent.spawned": (e, n) => `${n(e.agentId)} joined as ${e.payload.jobRole}${e.payload.reportsTo ? ` under ${n(e.payload.reportsTo)}` : ""}`,
   "agent.active": (e, n) => `${n(e.agentId)}'s runtime is ready`,
-  "task.created": (e, n) => `${e.payload.createdBy?.startsWith("agent:") ? n(e.payload.createdBy.slice(6)) : "Owner"} → ${n(e.agentId)}: ${e.payload.title}`,
+  "task.created": (e, n) => `${e.payload.createdBy?.startsWith("agent:") ? n(e.payload.createdBy.slice(6)) : "A person"} → ${n(e.agentId)}: ${e.payload.title}`,
   "task.status": (e, n) => `${e.payload.title} · ${e.payload.from} → ${e.payload.to}${e.agentId ? ` (${n(e.agentId)})` : ""}`,
   "run.started": (e, n) => `${n(e.agentId)} started ${e.payload.title} (attempt ${e.payload.attempt}, g${e.payload.generation})`,
   "run.finished": (e, n) => `${n(e.agentId)} finished: ${e.payload.outcome}${e.payload.summary ? ` — ${e.payload.summary}` : ""}`,
@@ -28,10 +34,110 @@ const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null) => st
   "agent.configured": (e, n) => `${n(e.agentId)} now uses ${e.payload.model ?? "the default model"}${e.payload.effort ? ` (${e.payload.effort})` : ""}`,
   "credential.created": (e) => `API key "${e.payload.name}" added (${e.payload.models} models)`,
   "credential.revoked": () => `an API key was revoked`,
+  "user.created": (e) => `${e.payload.displayName} was invited`,
 };
 
+// Tokens used to live in localStorage; the session is an HttpOnly cookie now.
+try {
+  localStorage.removeItem("agentown.token");
+} catch {}
+
+/** The organization in the URL (/o/<id>/…), if any. */
+function orgFromUrl(): string | null {
+  const m = /^\/o\/([a-z0-9-]+)/.exec(location.pathname);
+  return m ? m[1]! : null;
+}
+
+/** Signed-in account → pick an organization → the office of that organization. */
 export function App() {
-  const [token, setTok] = useState<string | null>(getToken());
+  // undefined: still asking the server; null: signed out.
+  const [account, setAccount] = useState<Account | null | undefined>(undefined);
+  const [orgId, setOrgId] = useState<string | null>(orgFromUrl());
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  const reloadAccount = useCallback(() => {
+    api<Account>("GET", "/api/me")
+      .then(setAccount)
+      .catch(() => setAccount(null));
+  }, []);
+  useEffect(() => {
+    reloadAccount();
+    const onPop = () => setOrgId(orgFromUrl());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  if (account === undefined) return <div className="center muted">Loading…</div>;
+  if (!account) {
+    return (
+      <Login
+        error={loginError}
+        onToken={(t) =>
+          api<Account>("POST", "/api/session", { token: t })
+            .then((a) => {
+              setLoginError(null);
+              setAccount(a);
+            })
+            .catch((e) => setLoginError(e instanceof HttpError && e.status === 401 ? "That token was rejected." : (e as Error).message))
+        }
+      />
+    );
+  }
+  const current = account.orgs.find((o) => o.id === orgId) ?? account.orgs[0];
+  const signOut = () => void api("DELETE", "/api/session").finally(() => setAccount(null));
+  if (!current) {
+    return (
+      <div className="center">
+        <div className="login">
+          <h1>No organization yet</h1>
+          <p className="muted">You are signed in as {account.user?.displayName}, but you do not belong to any organization. Ask your admin to add you.</p>
+          <button type="button" onClick={signOut}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    );
+  }
+  setOrg(current.id);
+  const switchOrg = (id: string) => {
+    history.pushState(null, "", `/o/${id}/`);
+    setOrgId(id);
+  };
+  // A new key per organization: every store, stream and scene starts fresh.
+  return (
+    <OrgApp
+      key={current.id}
+      account={account}
+      orgId={current.id}
+      onSwitch={switchOrg}
+      onSignOut={signOut}
+      onLost={() => setAccount(null)}
+      onAccountChanged={reloadAccount}
+    />
+  );
+}
+
+function OrgApp({
+  account,
+  orgId,
+  onSwitch,
+  onSignOut,
+  onLost,
+  onAccountChanged,
+}: {
+  account: Account;
+  orgId: string;
+  onSwitch: (id: string) => void;
+  onSignOut: () => void;
+  onLost: () => void;
+  onAccountChanged: () => void;
+}) {
+  const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [showOrg, setShowOrg] = useState(false);
+  const [showAssets, setShowAssets] = useState(false);
+  const [worldEditing, setWorldEditing] = useState(false);
+  const [showUsers, setShowUsers] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [openTask, setOpenTask] = useState<string | null>(null);
   const [newTaskFor, setNewTaskFor] = useState<string | null | undefined>(undefined);
@@ -49,7 +155,17 @@ export function App() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 7000 : 3500);
   }, []);
 
+  const reloadMe = useCallback(() => {
+    api<Me>("GET", `/api/orgs/${orgId}/me`)
+      .then(setMe)
+      .catch((e) => e instanceof HttpError && (e.status === 401 || e.status === 404) && onLost());
+  }, [orgId]);
+  useEffect(reloadMe, [reloadMe]);
+
   const onEvent = useCallback((e: AgentEvent) => {
+    // Permissions may have changed: re-read what this person may do.
+    if (STRUCTURAL.test(e.type)) reloadMe();
+    if (e.type === "org.config") setCatalog(null); // job templates changed: re-read the catalog
     if (e.type === "task.created" && e.agentId && e.payload.createdBy?.startsWith("agent:")) {
       const from = e.payload.createdBy.slice(6);
       if (from !== e.agentId) {
@@ -57,34 +173,34 @@ export function App() {
         setFlights((f) => [...f.filter((x) => start - x.start < 1500), { from, to: e.agentId!, start, label: e.payload.title }]);
       }
     }
-  }, []);
+  }, [reloadMe]);
 
-  const { snapshot, status, feed, effectiveWork, now } = useOffice(token, onEvent);
+  const { snapshot, status, feed, effectiveWork, now } = useOffice(!!me, onEvent);
 
   useEffect(() => {
-    if (token && status === "live" && !catalog) api<Catalog>("GET", "/api/catalog").then(setCatalog).catch(() => {});
-  }, [token, status, catalog]);
+    if (me && status === "live" && !catalog) api<Catalog>("GET", "/api/catalog").then(setCatalog).catch(() => {});
+  }, [me, status, catalog]);
+  useEffect(() => {
+    if (status === "unauthorized") onLost();
+  }, [status]);
 
-  const needsOwner = useMemo(() => {
-    const s = new Set<string>();
-    for (const t of snapshot?.tasks ?? []) if (t.status === "review" && t.createdBy.startsWith("human:") && t.assigneeAgentId) s.add(t.assigneeAgentId);
-    return s;
-  }, [snapshot?.tasks]);
-  const reviewTasks = useMemo(() => (snapshot?.tasks ?? []).filter((t) => t.status === "review" && t.createdBy.startsWith("human:")), [snapshot?.tasks]);
+  // "Needs you": work this person asked for that is now waiting for review.
+  const mine = me ? `human:${me.actor.id}` : "";
+  const reviewTasks = useMemo(() => (snapshot?.tasks ?? []).filter((t) => t.status === "review" && t.createdBy === mine), [snapshot?.tasks, mine]);
+  const needsOwner = useMemo(() => new Set(reviewTasks.flatMap((t) => (t.assigneeAgentId ? [t.assigneeAgentId] : []))), [reviewTasks]);
 
-  if (!token || status === "unauthorized") {
-    return (
-      <Login
-        error={status === "unauthorized" ? "That token was rejected." : null}
-        onToken={(t) => {
-          setToken(t);
-          setTok(t);
-        }}
-      />
-    );
-  }
+  if (!me) return <div className="center muted">Loading…</div>;
   if (!snapshot) return <div className="center muted">Connecting to the office…</div>;
 
+  // Everything an owner or admin manages lives in one menu, so the bar stays calm.
+  const manageItems: MenuItem[] = [
+    ...(me.actor.owner ? [{ label: "Organization", hint: "departments, jobs, permissions, templates", onSelect: () => setShowOrg(true) }] : []),
+    ...(me.can["user.manage"] ? [{ label: "People", hint: "invite, roles, permissions", onSelect: () => setShowUsers(true) }] : []),
+    ...(me.can["credential.manage"] ? [{ label: "API keys", hint: "LLM providers for agents", onSelect: () => setShowKeys(true) }] : []),
+    ...(me.can["org.design"] ? [{ label: "Art", hint: "3D models and textures", onSelect: () => setShowAssets(true) }] : []),
+    ...(me.can["audit.view"] ? [{ label: "Audit log", hint: "who did what, allowed or denied", onSelect: () => setShowAudit(true) }] : []),
+    ...(account.user?.admin ? [{ label: "All organizations", hint: "instance admin", onSelect: () => setShowAdmin(true) }] : []),
+  ];
   const name = (id: string | null) => snapshot.agents.find((a) => a.id === id)?.displayName ?? id ?? "—";
   const active = snapshot.agents.filter((a) => a.lifecycleState !== "retired");
   const working = active.filter((a) => ["thinking", "executing", "waiting"].includes(effectiveWork(a))).length;
@@ -95,14 +211,25 @@ export function App() {
         <div className="brand">
           <span className="logo" aria-hidden>
             ▦
-          </span>{" "}
-          {snapshot.organization.name}
+          </span>
+          {account.orgs.length > 1 ? (
+            <select className="org-switch" value={orgId} onChange={(e) => onSwitch(e.target.value)} aria-label="Organization">
+              {account.orgs.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="org-name">{snapshot.organization.name}</span>
+          )}
         </div>
         <div className={`conn conn-${status}`} title={`event cursor ${snapshot.cursor}`}>
-          {status === "live" ? "● live" : status === "reconnecting" ? "◌ reconnecting…" : "◌ connecting…"}
+          <span className="dot" aria-hidden />
+          {status === "live" ? "Live" : status === "reconnecting" ? "Reconnecting…" : "Connecting…"}
         </div>
-        <div className="stats muted">
-          {active.length} agents · {working} working
+        <div className="stats">
+          <b>{active.length}</b> agents · <b>{working}</b> working
         </div>
         <div className="spacer" />
         <div className="seg-toggle" role="group" aria-label="View">
@@ -113,38 +240,58 @@ export function App() {
             Table
           </button>
         </div>
-        <button type="button" className="primary" onClick={() => setNewTaskFor(null)}>
-          New task
-        </button>
-        <button type="button" onClick={() => setShowKeys(true)}>
-          API keys
-        </button>
-        <button type="button" onClick={() => setShowAudit(true)}>
-          Audit
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => {
-            setToken(null);
-            setTok(null);
-          }}
-        >
-          Sign out
-        </button>
+        {me.taskTargets.length > 0 && (
+          <button type="button" className="primary" onClick={() => setNewTaskFor(null)}>
+            + New task
+          </button>
+        )}
+        {manageItems.length > 0 && <Menu label="Manage" trigger={<>Manage ▾</>} items={manageItems} />}
+        <Menu
+          label="Account"
+          trigger={
+            <span className="who">
+              <span className="avatar-sm" aria-hidden>
+                {(me.user?.displayName ?? me.actor.id).slice(0, 1).toUpperCase()}
+              </span>
+              <span className="who-name">{me.user?.displayName ?? me.actor.id}</span>
+            </span>
+          }
+          header={
+            <>
+              <b>{me.user?.displayName ?? me.actor.id}</b>
+              <small>
+                {[me.actor.owner ? "Owner" : "Member", account.user?.admin ? "Instance admin" : null].filter(Boolean).join(" · ")} of {snapshot.organization.name}
+              </small>
+            </>
+          }
+          items={[{ label: "Sign out", onSelect: onSignOut, danger: true }]}
+        />
       </header>
 
       <main className="main">
         <section className="stage">
           {view === "office" ? (
-            <OfficeCanvas snapshot={snapshot} workOf={effectiveWork} needsOwner={needsOwner} selected={selected} onSelect={setSelected} flights={flights} dark={dark} />
+            <Suspense fallback={<div className="center muted">Loading the office…</div>}>
+              <Office3D
+                snapshot={snapshot}
+                workOf={effectiveWork}
+                needsOwner={needsOwner}
+                selected={selected}
+                onSelect={setSelected}
+                flights={flights}
+                dark={dark}
+                canDesign={!!me.can["org.design"]}
+                notify={notify}
+                onEditingChange={setWorldEditing}
+              />
+            </Suspense>
           ) : (
             <AgentTable snapshot={snapshot} workOf={effectiveWork} now={now} onSelect={setSelected} selected={selected} />
           )}
           <Legend />
         </section>
 
-        {selected ? (
+        {worldEditing ? null : selected ? (
           <AgentPanel
             agentId={selected}
             snapshot={snapshot}
@@ -200,6 +347,7 @@ export function App() {
       {newTaskFor !== undefined && (
         <NewTaskDialog
           snapshot={snapshot}
+          me={me}
           assignee={newTaskFor}
           onClose={() => setNewTaskFor(undefined)}
           notify={notify}
@@ -211,6 +359,21 @@ export function App() {
       )}
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
       {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
+      {showAssets && <AssetsDialog onClose={() => setShowAssets(false)} notify={notify} />}
+      {showOrg && <OrgEditor orgId={orgId} catalog={catalog} snapshot={snapshot} onClose={() => setShowOrg(false)} notify={notify} />}
+      {showAdmin && (
+        <AdminDialog
+          account={account}
+          onClose={() => setShowAdmin(false)}
+          onChanged={onAccountChanged}
+          onOpen={(id) => {
+            setShowAdmin(false);
+            onSwitch(id);
+          }}
+          notify={notify}
+        />
+      )}
+      {showUsers && <UsersDialog me={me} catalog={catalog} snapshot={snapshot} onClose={() => setShowUsers(false)} notify={notify} />}
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast-${t.kind}`}>
@@ -345,8 +508,11 @@ function Login({ onToken, error }: { onToken: (t: string) => void; error: string
         }}
       >
         <h1>Agentown</h1>
-        <p className="muted">Paste the owner token (written to <code>.agentown/owner-token</code> on first server start).</p>
-        <input ref={ref} type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="aho_…" aria-label="Owner token" />
+        <p className="muted">
+          Paste your access token. The owner gets theirs from a terminal with <code>agentownctl token</code> (or{" "}
+          <code>.agentown/owner-token</code> when running from source); everyone else gets one from the owner under Users.
+        </p>
+        <input ref={ref} type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="aho_…" aria-label="Access token" />
         {error && <p className="error">{error}</p>}
         <button type="submit" className="primary">
           Enter the office

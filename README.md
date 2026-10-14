@@ -47,7 +47,7 @@ Both paths use the same installer. It needs Ubuntu 24.04 on x86_64, installs the
 
 ```mermaid
 flowchart LR
-  U["Web: 2D office<br/>(holds only the owner token)"] -- REST / SSE / WS ticket --> S
+  U["Web: 2D office<br/>(holds only a person's token, in an HttpOnly cookie)"] -- REST / SSE / WS ticket --> S
   subgraph S["apps/server"]
     API["Org service<br/>authorize() on every mutation"] --> DB[(Postgres)]
     CTRL["Runtime controller<br/>desired ↔ observed"]
@@ -83,7 +83,7 @@ AGENTOWN_RUNTIME_DRIVER=docker scripts/dev-server.sh
 # first start: the owner token is written to .agentown/owner-token
 ```
 
-Open http://localhost:8080 and paste the owner token. In another terminal:
+Open http://localhost:8080 and paste the owner token (the browser keeps it in an HttpOnly cookie). In another terminal:
 
 ```bash
 scripts/demo.sh "Agents that ship"                         # owner → CEO → leader → engineer + QA
@@ -124,9 +124,9 @@ scripts/dev-server.sh                                      # AGENTOWN_RUNTIME_DR
 
 ## Permission model (summary)
 
-- The actor always comes from the token (`Authorization: Bearer`): the owner (a human) or an agent. A client-supplied `actorId` is never trusted.
-- `authorize(actor, action, target)` is **default deny**; only grants give rights. Actions: `org.view`, `task.view|create|assign|review`, `agent.spawn|update|retire`, `runtime.control|logs|exec`, `permission.delegate`.
-- Scopes: `self`, `direct-reports`, `descendants`, `team`, `department`, `org`, `agents:[…]`, `projects:[…]`, evaluated against the **current** reporting graph.
+- The actor always comes from the token (`Authorization: Bearer`, or the browser's HttpOnly session cookie): the owner, another person, or an agent. A client-supplied `actorId` is never trusted.
+- `authorize(actor, action, target)` is **default deny**; only grants give rights. Actions: `org.view`, `task.view|create|assign|review`, `agent.spawn|update|retire|configure`, `runtime.control|logs|exec`, `permission.delegate`, and for people `credential.manage`, `audit.view`, `user.manage`.
+- Scopes: `self`, `direct-reports`, `descendants`, `team`, `department`, `org`, `agents:[…]`, `projects:[…]`, `departments:[…]`, evaluated against the **current** reporting graph.
 - Spawning only from templates listed in the grant; a template carries an owner-approved permission bundle. Spawning ≠ granting.
 - Delegation only from `delegable` grants; the new scope must provably sit inside the parent scope; a child grant dies with its parent or when the grantee leaves the tree.
 - A `script` task is exec, so it needs `runtime.exec`. A playbook shipped in the image only needs `task.create`.
@@ -134,6 +134,24 @@ scripts/dev-server.sh                                      # AGENTOWN_RUNTIME_DR
 - The audit log records both allowed and denied calls (actor, action, target, reason, policy revision) and never contains tokens.
 
 Example permission matrix: see `policyProfiles` in [`config/agentown.yaml`](config/agentown.yaml). For example, the CEO has **no** `runtime.exec`; a leader has exec on `direct-reports`; the PO can only work with tasks in the `website` project; a worker only has `self`.
+
+## Users and permissions
+
+- The owner holds every permission. Everyone else is invited under **Users** (or `POST /api/users`) and gets a token shown once; they paste it on the sign-in screen.
+- `humanRoles` in [`config/agentown.yaml`](config/agentown.yaml) are **presets** (`admin`, `eng-manager`, `reviewer`, `viewer`): picking one copies its permissions onto the person, and each permission can then be added or removed on its own. "Apply preset" replaces them all.
+- A person's permission is an action plus a scope: `org`, `departments:[…]`, `agents:[…]` or `projects:[…]` (people sit outside the reporting tree, so tree-relative scopes do not apply). `credential.manage`, `audit.view` and `user.manage` are org-wide.
+- Someone with `user.manage` can only give permissions they hold themselves, cannot change their own access or the owner's, and cannot give `user.manage` (only the owner can).
+- Disabling a person or issuing a new token locks the old token out at once; open terminals close on the next re-check.
+- The web UI shows only what the signed-in person may do (`GET /api/me`, the per-agent `can` map and the per-task `can`); the server re-checks every request regardless.
+- Owner-only, by design: tasks with no assignee, hiring at the top of the tree or into another department, detaching an agent from the tree.
+
+## Organizations, templates and the 3D office
+
+- One install hosts many organizations. The instance admin creates them from a template (Organizations); each runs in its own namespace `agentown-o-<id>`, created by the cluster provisioner (`agentown-provision.timer`, or `scripts/dev-k3s.sh provision`).
+- Built-in templates live in [`config/templates/`](config/templates): company, factory, science lab, hospital, coffee store. The owner edits their organization in the UI (Organization) and can save it as a template, export it as YAML or import one.
+- A template's optional `world` decides the office: `floors` → `rooms` (position and size in meters, which department sits there), `kinds` of objects (`character` people or animals, `static` furniture, `dynamic` things that move or glow), placed `objects`, and `avatars` per job title. Objects are composed of primitives (`box`, `cylinder`, `sphere`, `cone`, `torus`) or a built-in character (`person`, `cat`, `dog`, `robot`); behaviors are `spin`, `bob`, `pulse`, `blink`, `sway`, `wander`, `roam`. Rooms have `doors`; `links` are stairs or elevators between floors; `zones` name groups of rooms. A kind's `access` (`all`, `own-department`, `own-room`, a list of rooms, or a zone) says where it may walk: things that `roam` find their way through doors and stairs, and idle agents whose look can roam take a walk and return to their desk when work arrives. Access is only what the office shows; real permissions are grants. See [`coffee-store.yaml`](config/templates/coffee-store.yaml). Without a world, every department gets a room on one floor.
+- People with `org.design` upload art (Art: self-contained `.glb` models, PNG/JPEG/WebP textures; checked by their bytes) and edit the world in the office (Edit world): select objects and drag or turn them, add from a palette, edit rooms, doors, floors, stairs, zones and kinds (built-in characters, shapes, uploaded models, behaviors, access), and how each job looks. Edits are validated as you go and saved as a new revision; `org.design` never grants permissions.
+- The office is drawn with three.js: pan (left drag), turn (right drag), zoom (wheel); pick a floor, or a room (list or its name) to fly there.
 
 ## Main API
 
@@ -149,8 +167,12 @@ Example permission matrix: see `policyProfiles` in [`config/agentown.yaml`](conf
 | `POST /api/agents/:id/terminal-sessions` | terminal ticket |
 | `POST /api/tasks`, `/api/tasks/:id/assign|cancel|retry|review` | task lifecycle |
 | `POST /api/grants`, `DELETE /api/grants/:id` | delegate / revoke |
+| `POST /api/session`, `DELETE /api/session` | browser sign-in (token → HttpOnly cookie) / sign-out |
+| `GET /api/me` | who am I, org-level permissions, agents I may give tasks / shell work to |
+| `GET/POST /api/users`, `PATCH /api/users/:id`, `POST /api/users/:id/token` | people: list / invite / rename, disable, apply a role preset / new token (`user.manage`) |
+| `POST /api/users/:id/grants`, `DELETE /api/users/:id/grants/:gid`, `GET /api/roles` | a person's permissions, one by one; role presets |
 | `POST /api/runtime/heartbeat`, `/api/runs/claim`, `/api/runs/:id/*` | for the harness (agent token + generation) |
-| `GET /api/audit` | audit log (owner) |
+| `GET /api/audit` | audit log (`audit.view`) |
 
 ## Acceptance criteria
 

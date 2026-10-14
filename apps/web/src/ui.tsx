@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 export function ago(iso: string | null, now = Date.now()): string {
   if (!iso) return "never";
@@ -59,6 +59,58 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
         </header>
         <div className="modal-body">{children}</div>
       </div>
+    </div>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  hint?: string;
+  onSelect: () => void;
+  danger?: boolean;
+}
+
+/** A button that opens a small menu; closes on a pick, a click outside, or Escape. */
+export function Menu({ trigger, items, label, align = "right", header }: { trigger: ReactNode; items: MenuItem[]; label: string; align?: "left" | "right"; header?: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  return (
+    <div className="menu" ref={box}>
+      <button type="button" className="menu-trigger" aria-haspopup="menu" aria-expanded={open} aria-label={label} onClick={() => setOpen((o) => !o)}>
+        {trigger}
+      </button>
+      {open && (
+        <div className={`menu-list ${align}`} role="menu">
+          {header && <div className="menu-header">{header}</div>}
+          {items.map((it) => (
+            <button
+              key={it.label}
+              type="button"
+              role="menuitem"
+              className={it.danger ? "danger" : ""}
+              onClick={() => {
+                setOpen(false);
+                it.onSelect();
+              }}
+            >
+              <span>{it.label}</span>
+              {it.hint && <small>{it.hint}</small>}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

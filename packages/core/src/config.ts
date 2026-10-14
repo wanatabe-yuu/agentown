@@ -1,6 +1,7 @@
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { ACTIONS, type Scope } from "./types.ts";
+import { ACTIONS, type Action, type Scope } from "./types.ts";
+import { checkWorld, worldSchema } from "./world.ts";
 
 /**
  * Organization config. This file is authored by the human owner; the catalog and
@@ -13,7 +14,13 @@ const scopeSchema = z.union([
   scopeShorthand.transform((kind) => ({ kind }) as Scope),
   z.object({ agents: z.array(z.string()).min(1) }).transform((s) => ({ kind: "agents", ids: s.agents }) as Scope),
   z.object({ projects: z.array(z.string()).min(1) }).transform((s) => ({ kind: "projects", ids: s.projects }) as Scope),
+  z.object({ departments: z.array(z.string()).min(1) }).transform((s) => ({ kind: "departments", ids: s.departments }) as Scope),
 ]);
+
+/** Actions that are about the organization rather than an agent: org scope only. */
+export const ORG_ACTIONS: readonly Action[] = ["credential.manage", "audit.view", "user.manage", "org.design"];
+/** People sit outside the reporting tree, so only these scopes mean anything for them. */
+export const USER_SCOPE_KINDS: readonly Scope["kind"][] = ["org", "departments", "agents", "projects"];
 
 const capabilitySchema = z.object({
   action: z.enum(ACTIONS),
@@ -71,7 +78,14 @@ export const orgConfigSchema = z
     runtimeCatalog: z.array(runtimePresetSchema).min(1),
     policyProfiles: z.record(z.string(), z.array(capabilitySchema)),
     agentTemplates: z.array(templateSchema).min(1),
+    /**
+     * Permission presets for people. Picking a role copies its permissions onto
+     * the person; after that each permission can be added or removed one by one.
+     */
+    humanRoles: z.record(idSchema, z.object({ name: z.string(), permissions: z.array(capabilitySchema) })).default({}),
     bootstrap: z.object({ agents: z.array(bootstrapAgentSchema) }),
+    /** Floors, rooms and objects; without it the office lays out one room per department. */
+    world: worldSchema.optional(),
   })
   .superRefine((cfg, ctx) => {
     const presets = new Set(cfg.runtimeCatalog.map((p) => p.id));
@@ -88,6 +102,29 @@ export const orgConfigSchema = z
         for (const t of c.templates ?? []) if (!templates.has(t)) ctx.addIssue({ code: "custom", message: `profile ${name}: unknown template ${t}` });
       }
     }
+    const projects = new Set(cfg.projects.map((p) => p.id));
+    if (cfg.world) checkWorld(cfg.world, departments, (message) => ctx.addIssue({ code: "custom", message }));
+    const scopeRefs = (where: string, scope: Scope) => {
+      if (scope.kind === "departments") for (const d of scope.ids) if (!departments.has(d)) ctx.addIssue({ code: "custom", message: `${where}: unknown department ${d}` });
+      if (scope.kind === "projects") for (const p of scope.ids) if (!projects.has(p)) ctx.addIssue({ code: "custom", message: `${where}: unknown project ${p}` });
+    };
+    for (const [name, caps] of Object.entries(cfg.policyProfiles)) for (const c of caps) scopeRefs(`profile ${name}`, c.scope);
+    for (const [name, role] of Object.entries(cfg.humanRoles)) for (const c of role.permissions) scopeRefs(`role ${name}`, c.scope);
+    for (const [label, list] of [["department", cfg.departments], ["project", cfg.projects], ["agent template", cfg.agentTemplates]] as const) {
+      const seen = new Set<string>();
+      for (const { id } of list) {
+        if (seen.has(id)) ctx.addIssue({ code: "custom", message: `duplicate ${label} id ${id}` });
+        seen.add(id);
+      }
+    }
+    for (const [name, role] of Object.entries(cfg.humanRoles)) {
+      for (const c of role.permissions) {
+        if (!USER_SCOPE_KINDS.includes(c.scope.kind)) ctx.addIssue({ code: "custom", message: `role ${name}: ${c.action} scope must be org, departments, agents or projects` });
+        if (ORG_ACTIONS.includes(c.action) && c.scope.kind !== "org") ctx.addIssue({ code: "custom", message: `role ${name}: ${c.action} needs scope org` });
+        if (c.action === "agent.spawn" && !c.templates?.length) ctx.addIssue({ code: "custom", message: `role ${name}: agent.spawn needs an explicit templates list` });
+        if (c.action === "user.manage") ctx.addIssue({ code: "custom", message: `role ${name}: user.manage is given by the owner, not by a role` });
+      }
+    }
     const keys = new Set<string>();
     for (const a of cfg.bootstrap.agents) {
       if (!templates.has(a.template)) ctx.addIssue({ code: "custom", message: `agent ${a.key}: unknown template` });
@@ -101,4 +138,43 @@ export type OrgConfig = z.infer<typeof orgConfigSchema>;
 
 export function parseOrgConfig(text: string): OrgConfig {
   return orgConfigSchema.parse(parseYaml(text));
+}
+
+/**
+ * The install config file holds the runtime catalog (allowed images: install-level,
+ * never editable from the API) plus the first organization. An organization's own
+ * structure document is the rest, kept in the author's format so it can be edited,
+ * exported and imported as a template.
+ */
+export function splitInstanceConfig(text: string) {
+  const config = parseOrgConfig(text); // validate the whole file first
+  const { organization, runtimeCatalog, ...doc } = parseYaml(text) as Record<string, unknown>;
+  return { config, catalog: runtimeCatalog, organization: config.organization, doc };
+}
+
+/** Validate an organization's document against the install's runtime catalog. */
+export function orgConfigFrom(doc: unknown, organization: { id: string; name: string }, catalog: unknown): OrgConfig {
+  return orgConfigSchema.parse({ ...(doc as Record<string, unknown>), organization, runtimeCatalog: catalog });
+}
+
+const templateMetaSchema = z.object({
+  format: z.literal("agentown.template/v1"),
+  meta: z.object({ id: idSchema, name: z.string().min(1).max(80), description: z.string().max(500).default("") }),
+});
+export type TemplateMeta = z.infer<typeof templateMetaSchema>["meta"];
+
+/**
+ * An organization template: the same structure document an organization keeps
+ * (departments, projects, agent templates, policy profiles, role presets,
+ * bootstrap agents) plus a format tag and meta. Templates are untrusted input
+ * (imported files, a future marketplace), so parsing is bounded.
+ */
+export function parseTemplate(text: string, catalog: unknown): { meta: TemplateMeta; doc: Record<string, unknown> } {
+  if (text.length > 256 * 1024) throw new Error("template too large (256 KB max)");
+  const raw = parseYaml(text, { maxAliasCount: 50 }) as Record<string, unknown>;
+  if (!raw || typeof raw !== "object") throw new Error("template must be a YAML mapping");
+  const { meta } = templateMetaSchema.parse(raw);
+  const { format: _f, meta: _m, organization: _o, runtimeCatalog: _r, ...doc } = raw;
+  orgConfigFrom(doc, { id: meta.id, name: meta.name }, catalog); // throws on any structural problem
+  return { meta, doc };
 }

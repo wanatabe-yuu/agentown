@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
 
 export interface AgentEventRow {
+  /** The organization the event belongs to: subscribers filter on it before anything else. */
+  orgId: string;
   seq: number;
   at: string;
   agentId: string | null;

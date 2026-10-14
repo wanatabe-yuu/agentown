@@ -192,14 +192,12 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
   const [effort, setEffort] = useState<string>(detail.config.effort ?? "");
   const [instructions, setInstructions] = useState(detail.config.instructions);
   const [maxTurns, setMaxTurns] = useState(detail.config.maxTurns);
-  const editable = !!detail.can["agent.configure"];
-
+  // Only rendered for people who hold agent.configure on this agent.
   useEffect(() => {
-    if (!editable) return;
     api<{ credentials: Credential[] }>("GET", "/api/credentials")
       .then((r) => setCreds(r.credentials.filter((c) => !c.revokedAt && (!c.departments || c.departments.includes(departmentId)))))
       .catch((e) => notify(e.message, "error"));
-  }, [editable, departmentId]);
+  }, [departmentId]);
 
   const selected = creds?.find((c) => c.id === credentialId) ?? (detail.credential?.id === credentialId ? detail.credential : undefined);
   const save = async (e: React.FormEvent) => {
@@ -221,12 +219,10 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
   return (
     <form className="form" onSubmit={save}>
       {harness === "script" && <p className="muted small">This agent runs the deterministic script harness: model settings are stored but not used.</p>}
-      {!editable && <p className="muted small">Read-only: you do not hold agent.configure on this agent.</p>}
       <label>
         API key
         <select
           value={credentialId}
-          disabled={!editable}
           onChange={(e) => {
             setCredentialId(e.target.value);
             setModel("");
@@ -242,7 +238,7 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
       </label>
       <label>
         Model (offered by this key)
-        <select value={model} disabled={!editable || !selected} onChange={(e) => setModel(e.target.value)}>
+        <select value={model} disabled={!selected} onChange={(e) => setModel(e.target.value)}>
           <option value="">{!selected || selected.provider === "anthropic" ? "template default" : "— choose a model —"}</option>
           {(selected?.models ?? []).map((m) => (
             <option key={m}>{m}</option>
@@ -251,7 +247,7 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
       </label>
       <label>
         Effort
-        <select value={effort} disabled={!editable} onChange={(e) => setEffort(e.target.value)}>
+        <select value={effort} onChange={(e) => setEffort(e.target.value)}>
           <option value="">model default</option>
           {EFFORTS.map((x) => (
             <option key={x}>{x}</option>
@@ -260,19 +256,17 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
       </label>
       <label>
         Max turns per task
-        <input type="number" min={1} max={200} value={maxTurns} disabled={!editable} onChange={(e) => setMaxTurns(Number(e.target.value))} />
+        <input type="number" min={1} max={200} value={maxTurns} onChange={(e) => setMaxTurns(Number(e.target.value))} />
       </label>
       <label>
         Standing instructions (added to the agent's system prompt)
-        <textarea rows={4} value={instructions} disabled={!editable} onChange={(e) => setInstructions(e.target.value)} maxLength={8000} />
+        <textarea rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)} maxLength={8000} />
       </label>
-      {editable && (
-        <div className="btn-row">
-          <button type="submit" className="primary">
-            Save config
-          </button>
-        </div>
-      )}
+      <div className="btn-row">
+        <button type="submit" className="primary">
+          Save config
+        </button>
+      </div>
     </form>
   );
 }

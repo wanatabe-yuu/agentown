@@ -1,0 +1,73 @@
+# Organization template: a hospital's administrative side. Agents coordinate
+# paperwork, scheduling and supplies; they do not make clinical decisions.
+# Runtime presets come from the install's catalog.
+format: agentown.template/v1
+meta:
+  id: hospital
+  name: Hospital
+  description: Administration over admissions, scheduling, pharmacy supply and records; no clinical decisions.
+
+departments:
+  - { id: administration, name: Administration, color: "#c9a227" }
+  - { id: admissions, name: Admissions, color: "#3d8bd9" }
+  - { id: scheduling, name: Scheduling, color: "#8e6bbf" }
+  - { id: pharmacy, name: Pharmacy supply, color: "#3fa37a" }
+  - { id: records, name: Medical records, color: "#d9733d" }
+
+projects:
+  - { id: ward-3, name: Ward 3 }
+  - { id: outpatient, name: Outpatient clinic }
+
+policyProfiles:
+  director:
+    - { action: org.view, scope: org }
+    - { action: task.view, scope: org }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: descendants }
+    - { action: runtime.control, scope: descendants }
+    - { action: runtime.logs, scope: descendants }
+    - { action: agent.configure, scope: descendants }
+    - { action: agent.spawn, scope: team, templates: [coordinator-v1, clerk-v1, assistant-claude-v1] }
+  coordinator:
+    - { action: org.view, scope: team }
+    - { action: task.view, scope: team }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: direct-reports }
+    - { action: agent.spawn, scope: self, templates: [clerk-v1, assistant-claude-v1] }
+    - { action: runtime.control, scope: direct-reports }
+    - { action: runtime.logs, scope: direct-reports }
+  worker:
+    - { action: org.view, scope: self }
+    - { action: task.view, scope: self }
+    - { action: task.create, scope: self }
+    - { action: runtime.logs, scope: self }
+
+agentTemplates:
+  - { id: director-v1, jobRole: director, runtimePreset: script-v1, policyProfile: director }
+  - { id: coordinator-v1, jobRole: coordinator, runtimePreset: script-v1, policyProfile: coordinator }
+  - { id: clerk-v1, jobRole: clerk, runtimePreset: script-v1, policyProfile: worker }
+  - { id: assistant-claude-v1, jobRole: assistant, runtimePreset: claude-v1, policyProfile: worker }
+
+humanRoles:
+  head-nurse:
+    name: Head nurse
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: { departments: [admissions, scheduling] } }
+      - { action: task.create, scope: { departments: [admissions, scheduling] } }
+      - { action: task.review, scope: { departments: [admissions, scheduling] } }
+  viewer:
+    name: Viewer
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: org }
+
+bootstrap:
+  agents:
+    - { key: director, displayName: Dr. Okafor, template: director-v1, department: administration }
+    - { key: admissions-lead, displayName: Mai, template: coordinator-v1, department: admissions, reportsTo: director }
+    - { key: scheduling-lead, displayName: Theo, template: coordinator-v1, department: scheduling, reportsTo: director }
+    - { key: pharmacy-lead, displayName: Ines, template: coordinator-v1, department: pharmacy, reportsTo: director }
+    - { key: records-lead, displayName: Kwame, template: coordinator-v1, department: records, reportsTo: director }

@@ -1,0 +1,71 @@
+# Organization template: a research lab. Runtime presets come from the install's catalog.
+format: agentown.template/v1
+meta:
+  id: lab
+  name: Science lab
+  description: A principal investigator with research groups, a data team and lab operations.
+
+departments:
+  - { id: pi-office, name: PI office, color: "#c9a227" }
+  - { id: research, name: Research, color: "#8e6bbf" }
+  - { id: data, name: Data & analysis, color: "#3d8bd9" }
+  - { id: lab-ops, name: Lab operations, color: "#3fa37a" }
+
+projects:
+  - { id: grant-2026, name: Grant 2026 }
+  - { id: paper, name: Paper in progress }
+
+policyProfiles:
+  pi:
+    - { action: org.view, scope: org }
+    - { action: task.view, scope: org }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: descendants }
+    - { action: runtime.control, scope: descendants }
+    - { action: runtime.logs, scope: descendants }
+    - { action: agent.configure, scope: descendants }
+    - { action: agent.spawn, scope: team, templates: [group-lead-v1, researcher-claude-v1, analyst-claude-v1, technician-v1] }
+  group-lead:
+    - { action: org.view, scope: team }
+    - { action: task.view, scope: team }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: direct-reports }
+    - { action: agent.spawn, scope: self, templates: [researcher-claude-v1, analyst-claude-v1, technician-v1] }
+    - { action: runtime.control, scope: direct-reports }
+    - { action: runtime.logs, scope: direct-reports }
+    - { action: agent.configure, scope: direct-reports }
+  worker:
+    - { action: org.view, scope: self }
+    - { action: task.view, scope: self }
+    - { action: task.create, scope: self }
+    - { action: runtime.logs, scope: self }
+
+agentTemplates:
+  - { id: pi-v1, jobRole: pi, runtimePreset: script-v1, policyProfile: pi }
+  - { id: group-lead-v1, jobRole: group-lead, runtimePreset: script-v1, policyProfile: group-lead }
+  - { id: researcher-claude-v1, jobRole: researcher, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: analyst-claude-v1, jobRole: analyst, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: technician-v1, jobRole: technician, runtimePreset: script-v1, policyProfile: worker }
+
+humanRoles:
+  postdoc:
+    name: Postdoc
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: { departments: [research, data] } }
+      - { action: task.create, scope: { departments: [research, data] } }
+      - { action: task.review, scope: { departments: [research, data] } }
+  viewer:
+    name: Viewer
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: org }
+
+bootstrap:
+  agents:
+    - { key: pi, displayName: Dr. Ito, template: pi-v1, department: pi-office }
+    - { key: research-lead, displayName: Amara, template: group-lead-v1, department: research, reportsTo: pi }
+    - { key: data-lead, displayName: Felix, template: group-lead-v1, department: data, reportsTo: pi }
+    - { key: ops-lead, displayName: Rosa, template: group-lead-v1, department: lab-ops, reportsTo: pi }

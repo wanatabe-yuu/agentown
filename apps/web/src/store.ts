@@ -4,7 +4,7 @@ import type { Agent, AgentEvent, Snapshot, Task } from "./types.ts";
 
 export type ConnStatus = "connecting" | "live" | "reconnecting" | "unauthorized";
 
-const STRUCTURAL = /^(agent\.|task\.|run\.|grant\.|runtime\.generation|runtime\.desired|artifact\.)/;
+export const STRUCTURAL = /^(agent\.|task\.|run\.|grant\.|user\.|org\.|runtime\.generation|runtime\.desired|artifact\.)/;
 const HEARTBEAT_STALE_MS = 45_000;
 
 /**
@@ -12,7 +12,7 @@ const HEARTBEAT_STALE_MS = 45_000;
  * then live deltas. On any disconnect we re-take the snapshot and resume from
  * its cursor, so characters never stay frozen in an old state.
  */
-export function useOffice(token: string | null, onEvent?: (e: AgentEvent) => void) {
+export function useOffice(signedIn: boolean, onEvent?: (e: AgentEvent) => void) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [status, setStatus] = useState<ConnStatus>("connecting");
   const [feed, setFeed] = useState<AgentEvent[]>([]);
@@ -39,7 +39,7 @@ export function useOffice(token: string | null, onEvent?: (e: AgentEvent) => voi
   }, [refresh]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!signedIn) return;
     const abort = new AbortController();
     let stopped = false;
     (async () => {
@@ -56,6 +56,12 @@ export function useOffice(token: string | null, onEvent?: (e: AgentEvent) => voi
             snap.cursor,
             (e: AgentEvent) => {
               setSnapshot((s) => (s ? applyEvent(s, e) : s));
+              // The organization's structure changed: departments and projects come from the snapshot.
+              if (e.type === "org.config") {
+                void api<Snapshot>("GET", "/api/office/snapshot")
+                  .then((fresh) => setSnapshot((s) => (s ? { ...s, organization: fresh.organization, departments: fresh.departments, projects: fresh.projects } : s)))
+                  .catch(() => {});
+              }
               setFeed((f) => [e, ...f].slice(0, 80));
               if (STRUCTURAL.test(e.type)) scheduleRefresh();
               onEventRef.current?.(e);
@@ -82,7 +88,7 @@ export function useOffice(token: string | null, onEvent?: (e: AgentEvent) => voi
       clearInterval(tick);
       clearInterval(poll);
     };
-  }, [token, scheduleRefresh, refresh]);
+  }, [signedIn, scheduleRefresh, refresh]);
 
   /** Work state the character should show right now (stale heartbeats read as offline). */
   const effectiveWork = useCallback(
