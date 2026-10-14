@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: agentown
+          POSTGRES_PASSWORD: agentown
+          POSTGRES_DB: agentown_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agentown"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL_TEST: postgres://agentown:agentown@127.0.0.1:5432/agentown_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck and test
+        run: pnpm check
+      - name: Build web UI
+        run: pnpm build:web
+      - name: Bundle harness
+        run: pnpm build:harness
+      - name: Render cluster manifests
+        run: npx tsx apps/server/src/tools/render-manifests.ts > /dev/null
+
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build agent runtime image
+        run: pnpm --filter @agentown/harness image

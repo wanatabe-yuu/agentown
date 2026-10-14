@@ -144,3 +144,8 @@ Ma trận quyền mẫu: xem `policyProfiles` trong [`config/agentown.yaml`](con
 - NetworkPolicy k3s cho phép egress HTTPS ra Internet (cho adapter LLM); siết theo preset nếu cần.
 - Một process server; SSE fan-out trong bộ nhớ. Nhiều instance cần LISTEN/NOTIFY hoặc broker.
 - Nếu reset DB khi container agent vẫn chạy, xoá `.agentown/runtime-secrets/` để controller cấp lại token.
+
+## Đóng góp & giấy phép
+
+- Hướng dẫn đóng góp: [CONTRIBUTING.md](CONTRIBUTING.md) · Báo lỗi bảo mật: [SECURITY.md](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
+- Giấy phép: [MIT](LICENSE)
