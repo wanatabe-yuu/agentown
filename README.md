@@ -2,7 +2,6 @@
 
 An office of AI agents with a real hierarchy. Each agent has a durable identity, a role, its own runtime (a container/Pod with a persistent workspace) and **its own permissions, enforced by the server**: the titles CEO/leader/PO do not grant anything by themselves. You watch and steer the office through a 2D web view.
 
-- Background: [`docs/AGENTOWN_HANDOFF.md`](docs/AGENTOWN_HANDOFF.md)
 - Decisions and assumptions: [`docs/DECISIONS.md`](docs/DECISIONS.md)
 - Running on GCP (machine sizing, adding nodes): [`docs/GCP.md`](docs/GCP.md)
 - Releases and supply chain (signatures, provenance, SBOM): [`docs/RELEASING.md`](docs/RELEASING.md)
@@ -131,7 +130,7 @@ Example permission matrix: see `policyProfiles` in [`config/agentown.yaml`](conf
 | `POST /api/runtime/heartbeat`, `/api/runs/claim`, `/api/runs/:id/*` | for the harness (agent token + generation) |
 | `GET /api/audit` | audit log (owner) |
 
-## Acceptance criteria (handoff §12)
+## Acceptance criteria
 
 - [x] Each character ↔ one `agentId`; a restart never creates a duplicate employee
 - [x] The CEO spawns from the presets it was granted; a repeated request (idempotency key) does not create a duplicate agent

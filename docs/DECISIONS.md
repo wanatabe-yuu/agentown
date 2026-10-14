@@ -1,6 +1,6 @@
 # Decisions & assumptions at the start of the build
 
-Date: 2026-10-14. Context: [AGENTOWN_HANDOFF.md](./AGENTOWN_HANDOFF.md). The user's instruction: “pick a direction and build it”.
+Date: 2026-10-14. The user's instruction: “pick a direction and build it”.
 The items below are the choices made for the first build; the **Reversible?** column indicates the cost of changing them later.
 
 ## Chosen
