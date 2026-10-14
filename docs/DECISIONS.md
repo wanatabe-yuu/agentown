@@ -1,52 +1,52 @@
-# Quyết định & giả định khi bắt đầu build
+# Decisions & assumptions at the start of the build
 
-Ngày: 2026-10-14. Bối cảnh: [AGENTOWN_HANDOFF.md](./AGENTOWN_HANDOFF.md). Người dùng giao: “chọn hướng và làm”.
-Các mục dưới đây là lựa chọn của lần build đầu tiên; cột **Đảo ngược?** cho biết chi phí thay đổi về sau.
+Date: 2026-10-14. Context: [AGENTOWN_HANDOFF.md](./AGENTOWN_HANDOFF.md). The user's instruction: “pick a direction and build it”.
+The items below are the choices made for the first build; the **Reversible?** column indicates the cost of changing them later.
 
-## Đã chọn
+## Chosen
 
-| # | Vấn đề (handoff §13) | Lựa chọn | Lý do | Đảo ngược? |
+| # | Issue (handoff §13) | Choice | Reason | Reversible? |
 |---|---|---|---|---|
-| 1 | Fork hay xây mới | **Xây mới**, TypeScript monorepo (`packages/core`, `apps/server`, `apps/harness`, `apps/web`) | Lõi giá trị là mô hình quyền tách rời chức danh; các dự án tham khảo không có sẵn mô hình grant/scope này. Một ngôn ngữ cho cả server, harness, UI. | Trung bình |
-| 2 | k3s hay Swarm | **k3s là đích**, có thêm **Docker driver** cho máy đơn/dev | k3s cho ServiceAccount, RBAC, Pod Security, ValidatingAdmissionPolicy, NetworkPolicy — một bức tường thứ hai độc lập với backend. Docker driver tồn tại vì sandbox build này không chạy được Pod (xem “Giới hạn môi trường”) và vì nó hữu ích cho dev. Cả hai cùng `RuntimeDriver` interface. | Dễ (driver là plugin) |
-| 3 | Container hay VM | **Container** (non-root, read-only rootfs, drop ALL caps, seccomp RuntimeDefault, không token k8s) | Đủ để thử chức năng. Nếu “OS riêng” nghĩa là kernel riêng → đổi `runtimeClassName` sang gVisor/Kata trong driver k8s; không ảnh hưởng phần còn lại. | Dễ |
-| 4 | Model/provider/harness | **Adapter 1: `script`** (playbook/shell, không LLM) để nghiệm thu runtime; **adapter 2: `claude`** (Anthropic SDK, tool `bash`, model mặc định `claude-opus-5-5`, bật server-side refusal fallback) | Chưa có tài khoản model trong handoff. Adapter script cho phép chứng minh vòng giao việc/quyền/khôi phục bằng tác dụng thật, không phải animation. | Dễ |
-| 5 | Leader quản lý direct reports hay descendants | **Khai báo theo từng grant** trong config; fixture: exec/control = `direct-reports`, task = `team` | Handoff §5.3 luật 5: scope phải nêu rõ, không suy từ chức danh. | Dễ (sửa config) |
-| 6 | CEO cấp quyền tới đâu | Chỉ **grant có cờ `delegable`** và chỉ khi **chứng minh được** scope mới nằm trong scope cha; grant được ủy quyền chết theo grant cha | Rule 3–4: spawn ≠ delegate. Fixture: CEO **không có** `runtime.exec`. | Dễ |
-| 7 | Pause | Tách 3 thao tác: **pause/resume intake**, **stop/start runtime**, **cancel task** | Handoff §13. Stop runtime tăng generation → run đang chạy bị đánh dấu lost và requeue. | — |
-| 8 | PO báo cáo cho ai | CEO; quyền theo **project** (`website`), không runtime.*/spawn | Handoff §13. | Dễ |
-| 9 | Phong cách 2D | Top‑down, vẽ bằng Canvas 2D (không PixiJS) | Ít phụ thuộc; đủ cho MVP. | Dễ |
-| 10 | Exec/SSH | **Kubernetes exec / Docker exec qua backend**, vé (ticket) dùng một lần, gắn actor + agent + generation; server đóng phiên khi quyền đổi | Đáp ứng “SSH hoặc exec” mà không cần hạ tầng SSH. | — |
+| 1 | Fork or build from scratch | **Build from scratch**, TypeScript monorepo (`packages/core`, `apps/server`, `apps/harness`, `apps/web`) | The core value is a permission model decoupled from job titles; the reference projects do not have this grant/scope model built in. One language for the server, harness, and UI. | Medium |
+| 2 | k3s or Swarm | **k3s is the target**, plus a **Docker driver** for single-machine/dev | k3s provides ServiceAccount, RBAC, Pod Security, ValidatingAdmissionPolicy, NetworkPolicy — a second wall independent of the backend. The Docker driver exists because this build sandbox cannot run Pods (see “Environment limitations”) and because it is useful for dev. Both share the `RuntimeDriver` interface. | Easy (drivers are plugins) |
+| 3 | Container or VM | **Container** (non-root, read-only rootfs, drop ALL caps, seccomp RuntimeDefault, no k8s token) | Sufficient for functional testing. If “own OS” means its own kernel → switch `runtimeClassName` to gVisor/Kata in the k8s driver; nothing else is affected. | Easy |
+| 4 | Model/provider/harness | **Adapter 1: `script`** (playbook/shell, no LLM) for runtime acceptance testing; **adapter 2: `claude`** (Anthropic SDK, `bash` tool, default model `claude-opus-5-5`, server-side refusal fallback enabled) | The handoff did not include a model account. The script adapter makes it possible to prove the task-assignment/permission/recovery loop with real side effects, not animation. | Easy |
+| 5 | Does a leader manage direct reports or descendants | **Declared per grant** in config; fixture: exec/control = `direct-reports`, task = `team` | Handoff §5.3 rule 5: scope must be explicit, not inferred from job title. | Easy (edit config) |
+| 6 | How far can the CEO grant permissions | Only **grants with the `delegable` flag**, and only when it can be **proven** that the new scope lies within the parent scope; a delegated grant dies with its parent grant | Rules 3–4: spawn ≠ delegate. Fixture: the CEO does **not have** `runtime.exec`. | Easy |
+| 7 | Pause | Split into 3 operations: **pause/resume intake**, **stop/start runtime**, **cancel task** | Handoff §13. Stopping the runtime increments the generation → in-flight runs are marked lost and requeued. | — |
+| 8 | Who does the PO report to | The CEO; permissions by **project** (`website`), no runtime.*/spawn | Handoff §13. | Easy |
+| 9 | 2D style | Top‑down, drawn with Canvas 2D (no PixiJS) | Few dependencies; sufficient for the MVP. | Easy |
+| 10 | Exec/SSH | **Kubernetes exec / Docker exec via the backend**, single-use tickets bound to actor + agent + generation; the server closes the session when permissions change | Satisfies “SSH or exec” without needing SSH infrastructure. | — |
 
-## Bổ sung sau phản hồi của người dùng (2026-10-14)
+## Additions after user feedback (2026-10-14)
 
-| Vấn đề | Lựa chọn | Lý do |
+| Issue | Choice | Reason |
 |---|---|---|
-| Một API key cho tất cả? | **Không.** Kho key do owner quản lý; mỗi agent chọn key + model mà key đó có; leader/CEO đổi được qua `agent.configure` | Người dùng muốn cấu hình riêng từng agent và chọn model theo key. Chi tiêu theo key là một quyền nên phải có action riêng và có audit. |
-| Lưu key ở đâu | Postgres, mã hoá AES-256-GCM bằng `AGENTOWN_SECRET_KEY`; đưa vào Secret riêng của từng agent | Không cần thêm hệ thống secret ngay. Có thể chuyển sang KMS/Vault sau mà không đổi API. |
-| “Mỗi nhân viên một Pod hoặc node riêng” | Luôn một Pod/agent; preset `placement: dedicated-node` cho agent cần máy riêng (nodeSelector + taint/toleration + anti-affinity); thêm node bằng `scripts/add-node.sh` | Giữ k3s làm điều phối (giống Swarm nhưng có RBAC/admission). Tự động tạo VM khi tuyển dụng để sau. |
-| Có cần Rust không | **Chưa.** Hệ thống chủ yếu chờ I/O (DB, API Kubernetes, LLM ở xa). Phần nặng chạy trong runtime của agent, bằng ngôn ngữ của chính việc đó. | Nếu sau này có hàng nghìn agent, có thể tách riêng event gateway hoặc proxy terminal ra viết bằng Go/Rust; contract HTTP giữ nguyên. |
+| One API key for everything? | **No.** A key store managed by the owner; each agent picks a key + a model that key has access to; a leader/CEO can change this via `agent.configure` | The user wants per-agent configuration and model selection per key. Spending against a key is a permission, so it must have its own action and be audited. |
+| Where to store keys | Postgres, encrypted with AES-256-GCM using `AGENTOWN_SECRET_KEY`; injected into each agent's own Secret | No extra secrets system needed right now. Can move to KMS/Vault later without changing the API. |
+| “Each employee gets its own Pod or node” | Always one Pod per agent; a `placement: dedicated-node` preset for agents that need their own machine (nodeSelector + taint/toleration + anti-affinity); add nodes with `scripts/add-node.sh` | Keeps k3s as the orchestrator (like Swarm, but with RBAC/admission). Automatically creating a VM on hire is deferred. |
+| Is Rust needed | **Not yet.** The system mostly waits on I/O (DB, Kubernetes API, remote LLM). Heavy work runs inside the agent's runtime, in whatever language that work itself uses. | If there are thousands of agents later, the event gateway or terminal proxy can be split out and written in Go/Rust; the HTTP contract stays the same. |
 
-## Quy ước thiết kế quan trọng
+## Key design conventions
 
-- **Identity ≠ runtime.** `agentId` bền vững; Pod/container là `agent-<id>-g<generation>`. Mọi lời gọi từ harness mang `generation`; generation cũ bị từ chối (`409 stale_runtime`).
-- **Scope tương đối, tính lại mỗi request** trên đồ thị báo cáo hiện tại → đổi quan hệ báo cáo là đổi quyền ngay (đã kiểm chứng: terminal đang mở bị đóng).
-- **Template = gói quyền do owner duyệt** (trong `config/agentown.yaml`). `agent.spawn` liệt kê rõ template nào; agent không gửi manifest/image/mount nào.
-- **Inline script = exec.** Task loại `script` chạy với danh tính và dữ liệu của người nhận, nên server yêu cầu `runtime.exec` trên người nhận. Playbook (script có sẵn trong image, tham số qua biến môi trường) chỉ cần `task.create`.
-- **Chia sẻ dữ liệu có chủ đích:** agent chỉ đọc task/artifact của người khác khi task của mình tham chiếu nó (`inputTaskIds`) và người tạo task đó đã có quyền xem.
-- **Run lease + idempotency key `taskId:attempt`:** mỗi attempt tối đa một run; lease hết hạn/thay runtime → `lost` → requeue có giới hạn (`max_attempts`). Không tuyên bố exactly-once cho tác dụng bên ngoài; playbook dùng idempotency key khi tạo việc/spawn.
-- **Audit tách khỏi log công việc**; từ chối được ghi ngoài transaction (không bị rollback); token/secret bị lọc khỏi log, event, audit.
+- **Identity ≠ runtime.** `agentId` is durable; the Pod/container is `agent-<id>-g<generation>`. Every call from the harness carries `generation`; a stale generation is rejected (`409 stale_runtime`).
+- **Scope is relative and recomputed on every request** against the current reporting graph → changing a reporting relationship changes permissions immediately (verified: an open terminal gets closed).
+- **Template = an owner-approved permission bundle** (in `config/agentown.yaml`). `agent.spawn` lists exactly which templates; agents do not submit any manifest/image/mount.
+- **Inline script = exec.** A `script`-type task runs with the recipient's identity and data, so the server requires `runtime.exec` on the recipient. A playbook (a script already in the image, parameterized via environment variables) only needs `task.create`.
+- **Intentional data sharing:** an agent can read another agent's task/artifact only when its own task references it (`inputTaskIds`) and the creator of that task already had permission to view it.
+- **Run lease + idempotency key `taskId:attempt`:** at most one run per attempt; lease expiry/runtime replacement → `lost` → bounded requeue (`max_attempts`). No exactly-once claim for external side effects; playbooks use idempotency keys when creating tasks/spawning.
+- **Audit is separate from work logs**; denials are recorded outside the transaction (not rolled back); tokens/secrets are filtered out of logs, events, and audit.
 
-## Giới hạn môi trường build (trung thực)
+## Build environment limitations (candid)
 
-- Sandbox build cho phép Docker và chạy được **control plane k3s**, nhưng **không chạy được Pod**: kernel cấm `oom_score_adj` âm mà kubelet luôn đặt cho pod sandbox. Việc lách giới hạn này đã bị từ chối và không được thực hiện.
-- Vì vậy: phần k8s được kiểm chứng ở **API server thật** (RBAC, Pod Security, admission, và `KubernetesDriver` tạo SA/PVC/Secret/Pod thành công) nhưng **chưa thấy Pod agent chạy trên k3s**. Vòng chạy thật end‑to‑end được kiểm chứng bằng **Docker driver**.
-- Adapter `claude` **chưa chạy với API thật** (chưa có key của người dùng). Vòng tool-use đã được test với một Messages API giả lập cục bộ. Server đã gọi provider thật để kiểm tra key, và key sai bị từ chối đúng.
-- Lên lịch node riêng đã kiểm trên k3s thật: Pod dedicated thứ nhất được chọn vào node dedicated, Pod thứ hai bị từ chối do anti‑affinity. Pod không khởi động được do giới hạn của sandbox nói trên.
+- The build sandbox allows Docker and can run the **k3s control plane**, but **cannot run Pods**: the kernel forbids the negative `oom_score_adj` that kubelet always sets for the pod sandbox. Working around this limitation was refused and was not done.
+- Therefore: the k8s part was verified against a **real API server** (RBAC, Pod Security, admission, and `KubernetesDriver` successfully creating SA/PVC/Secret/Pod), but **an agent Pod has not yet been seen running on k3s**. The real end‑to‑end run loop was verified with the **Docker driver**.
+- The `claude` adapter **has not run against the real API** (no key from the user yet). The tool-use loop was tested against a local mock Messages API. The server did call the real provider to validate a key, and an invalid key was correctly rejected.
+- Dedicated-node scheduling was checked on real k3s: the first dedicated Pod was scheduled onto the dedicated node, and the second Pod was rejected due to anti‑affinity. The Pod could not start because of the sandbox limitation described above.
 
-## Cần người dùng cung cấp / quyết định tiếp
+## Needed from the user / next decisions
 
-1. Một máy Linux thật (hoặc VM) để chạy `AGENTOWN_K3S_MODE=native scripts/dev-k3s.sh up` và xác nhận Pod chạy trên k3s.
-2. API key (thêm trong UI → API keys) nếu muốn agent LLM.
-3. Mức cô lập: container (hiện tại) hay gVisor/Kata/microVM.
-4. Phong cách hình ảnh văn phòng (hiện là top‑down vẽ tay đơn giản).
+1. A real Linux machine (or VM) to run `AGENTOWN_K3S_MODE=native scripts/dev-k3s.sh up` and confirm Pods run on k3s.
+2. An API key (add it in the UI → API keys) if LLM agents are wanted.
+3. Isolation level: container (current) or gVisor/Kata/microVM.
+4. Visual style of the office (currently a simple hand-drawn top‑down view).

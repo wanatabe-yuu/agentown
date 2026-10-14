@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="vi">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agentown</title>
-<meta name="description" content="Văn phòng AI agent có cấp bậc, runtime riêng và quyền do server thực thi. Cài trên một máy Linux bằng một lệnh.">
+<meta name="description" content="An office of AI agents with real hierarchy, isolated runtimes and server-enforced permissions. Install on a Linux host with one command.">
 <style>
   :root {
     --bg: #fbfaf7; --fg: #1d1c1a; --muted: #5f5b54; --line: #e4e0d8;
@@ -48,52 +48,52 @@
 <body>
 <main>
   <h1>Agentown</h1>
-  <p class="lead">Văn phòng AI agent có cấp bậc. Mỗi agent có danh tính, runtime và workspace riêng, và <strong>quyền do server thực thi</strong>: chức danh CEO hay leader không tự sinh ra quyền.</p>
+  <p class="lead">An office of AI agents with a real hierarchy. Each agent has its own identity, runtime and workspace, and <strong>permissions enforced by the server</strong>: a title like CEO or leader grants nothing by itself.</p>
 
-  <h2>Cài trên một máy Linux bằng một lệnh</h2>
+  <h2>Install on a Linux host with one command</h2>
   <div class="cmd">
     <code id="cmd">curl -fsSL https://agentown.site/install.sh | sudo bash</code>
     <button type="button" id="copy">Copy</button>
   </div>
-  <p class="note">Ubuntu 24.04, x86_64, gợi ý 4 vCPU / 16 GB (ví dụ GCP <code>e2-standard-4</code>). Script tải bản release mới nhất từ GitHub, <strong>kiểm chữ ký Sigstore và checksum</strong>, cài Node 22, PostgreSQL, k3s, rồi chạy server thành service <code>agentown</code>. Chạy lại lệnh này để nâng cấp; cấu hình, dữ liệu và khoá vẫn được giữ.</p>
+  <p class="note">Ubuntu 24.04, x86_64, 4 vCPU / 16 GB suggested (e.g. GCP <code>e2-standard-4</code>). The script downloads the latest release from GitHub, <strong>verifies its Sigstore signature and checksums</strong>, installs Node 22, PostgreSQL and k3s, and runs the server as the <code>agentown</code> service. Run it again to upgrade; config, data and keys are kept.</p>
 
-  <h2>Sau khi cài</h2>
-<pre><code>sudo agentownctl token        # owner token để đăng nhập UI
-agentownctl status            # phiên bản, service, health
-sudo agentownctl logs         # log server
-sudo agentownctl upgrade      # bản mới nhất (hoặc: upgrade v0.2.0)
-sudo agentownctl rollback     # quay lại bản trước</code></pre>
-  <p>UI chạy ở cổng 8080 trên máy chủ. <strong>Không mở cổng này ra Internet</strong>; mở qua SSH tunnel từ máy của bạn:</p>
+  <h2>After installing</h2>
+<pre><code>sudo agentownctl token        # owner token for signing in to the UI
+agentownctl status            # version, service, health
+sudo agentownctl logs         # server log
+sudo agentownctl upgrade      # latest release (or: upgrade v0.2.0)
+sudo agentownctl rollback     # back to the previous release</code></pre>
+  <p>The UI listens on port 8080 on the server. <strong>Do not open this port to the Internet</strong>; reach it through an SSH tunnel from your own machine:</p>
 <pre><code>ssh -L 8080:localhost:8080 user@your-vm
-# rồi mở http://localhost:8080 và dán owner token</code></pre>
-  <p class="note">Dùng Docker thay cho k3s: <code>curl -fsSL https://agentown.site/install.sh | sudo AGENTOWN_DRIVER=docker bash</code>. Cài một phiên bản cố định: thêm <code>AGENTOWN_VERSION=v0.1.0</code>.</p>
+# then open http://localhost:8080 and paste the owner token</code></pre>
+  <p class="note">Docker instead of k3s: <code>curl -fsSL https://agentown.site/install.sh | sudo AGENTOWN_DRIVER=docker bash</code>. A specific version: add <code>AGENTOWN_VERSION=v0.1.0</code>.</p>
 
-  <h2>Kiểm chứng bản release</h2>
+  <h2>Verifiable releases</h2>
   <div class="grid">
-    <div class="card"><strong>Chữ ký Sigstore</strong><p><code>SHA256SUMS</code> được ký keyless bởi workflow release của repo; script cài từ chối mọi thứ khác.</p></div>
-    <div class="card"><strong>Provenance</strong><p>Mỗi file có attestation SLSA build provenance trên GitHub.</p></div>
-    <div class="card"><strong>SBOM</strong><p>Danh sách phụ thuộc dạng CycloneDX đi kèm mỗi release.</p></div>
-    <div class="card"><strong>Pin phụ thuộc</strong><p>GitHub Actions pin theo commit SHA, image gốc pin theo digest, lockfile cố định.</p></div>
+    <div class="card"><strong>Sigstore signature</strong><p><code>SHA256SUMS</code> is signed keylessly by the repository's release workflow; the installer refuses anything else.</p></div>
+    <div class="card"><strong>Provenance</strong><p>Every file has a SLSA build-provenance attestation on GitHub.</p></div>
+    <div class="card"><strong>SBOM</strong><p>A CycloneDX list of dependencies ships with every release.</p></div>
+    <div class="card"><strong>Pinned dependencies</strong><p>GitHub Actions pinned by commit SHA, the base image by digest, a frozen lockfile.</p></div>
   </div>
-  <p>Muốn tự kiểm trước khi chạy gì:</p>
-<pre><code># cần gh đã đăng nhập
+  <p>To verify it yourself before running anything:</p>
+<pre><code># gh must be logged in
 gh attestation verify agentown-v0.1.0.tar.gz --repo wanatabe-yuu/Agentown
 
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github\.com/wanatabe-yuu/Agentown/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing</code></pre>
-  <p class="note">Chính <code>install.sh</code> cũng nằm trong mỗi release và được ký cùng, nên có thể tải từ trang release, kiểm như trên, rồi mới chạy thay vì pipe từ trang này.</p>
+  <p class="note"><code>install.sh</code> itself is part of every release and signed with it, so you can download it from the release page, verify it as above, and run it instead of piping it from this site.</p>
 
-  <h2>Tài liệu</h2>
+  <h2>Documentation</h2>
   <ul>
-    <li><a href="https://github.com/wanatabe-yuu/Agentown#readme">README</a>: kiến trúc, mô hình quyền, API</li>
-    <li><a href="https://github.com/wanatabe-yuu/Agentown/blob/main/docs/GCP.md">Chạy trên GCP</a>: cấu hình máy, thêm node riêng cho agent</li>
-    <li><a href="https://github.com/wanatabe-yuu/Agentown/blob/main/docs/RELEASING.md">Phát hành và chuỗi cung ứng</a>: cách ra bản, cách kiểm</li>
+    <li><a href="https://github.com/wanatabe-yuu/Agentown#readme">README</a>: architecture, permission model, API</li>
+    <li><a href="https://github.com/wanatabe-yuu/Agentown/blob/main/docs/GCP.md">Running on GCP</a>: machine sizing, dedicated nodes for agents</li>
+    <li><a href="https://github.com/wanatabe-yuu/Agentown/blob/main/docs/RELEASING.md">Releases and supply chain</a>: cutting and verifying releases</li>
     <li><a href="https://github.com/wanatabe-yuu/Agentown/releases">Releases</a></li>
   </ul>
 
-  <footer>Agentown · giấy phép MIT · <a href="https://github.com/wanatabe-yuu/Agentown">GitHub</a></footer>
+  <footer>Agentown · MIT license · <a href="https://github.com/wanatabe-yuu/Agentown">GitHub</a></footer>
 </main>
 <script>
   document.getElementById("copy").addEventListener("click", async (e) => {
