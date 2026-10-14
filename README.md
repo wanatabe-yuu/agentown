@@ -77,7 +77,7 @@ pnpm install
 # Postgres: user/password/db = agentown (override with DATABASE_URL)
 createuser -s agentown; createdb -O agentown agentown; createdb -O agentown agentown_test
 
-pnpm --filter @agentown/harness image      # build the agent runtime image: agentown/harness:0.1.0
+pnpm --filter @agentown/harness image      # build the agent runtime image: agentown/harness:<version>
 pnpm build:web
 AGENTOWN_RUNTIME_DRIVER=docker scripts/dev-server.sh
 # first start: the owner token is written to .agentown/owner-token

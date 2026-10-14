@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STATE="$ROOT/.agentown"
 NAME="${AGENTOWN_K3S_NAME:-agentown-k3s}"
 K3S_IMAGE="${AGENTOWN_K3S_IMAGE:-rancher/k3s:v1.30.6-k3s1}"
-HARNESS_IMAGE="agentown/harness:0.1.0"
+HARNESS_IMAGE="agentown/harness:$(node -p "require('$ROOT/package.json').version")"
 SYSTEM_IMAGES=(
   rancher/mirrored-pause:3.6
   rancher/mirrored-coredns-coredns:1.11.3

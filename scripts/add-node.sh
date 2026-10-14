@@ -23,5 +23,5 @@ cat <<CMD
 # Run on the new machine (same VPC; TCP 6443 and UDP 8472 to $SERVER_IP must be open):
 curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.30.6+k3s1 K3S_URL=https://$SERVER_IP:6443 K3S_TOKEN=$TOKEN sh -s - $ARGS
 # Then load the agent image on it (or push agentown/harness to a registry the nodes can pull from):
-#   docker save agentown/harness:0.1.0 | ssh <new-node> sudo k3s ctr -n k8s.io images import -
+#   docker save agentown/harness:<version> | ssh <new-node> sudo k3s ctr -n k8s.io images import -
 CMD
