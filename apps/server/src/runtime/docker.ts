@@ -136,6 +136,7 @@ export class DockerDriver implements RuntimeDriver {
     ];
     if (spec.preset.model) env.push(`AGENTOWN_MODEL=${spec.preset.model}`);
     if (spec.providerKey) env.push(`ANTHROPIC_API_KEY=${spec.providerKey}`);
+    if (spec.providerWorkspaceId) env.push(`ANTHROPIC_WORKSPACE_ID=${spec.providerWorkspaceId}`);
     const cpu = parseCpu(spec.preset.resources.cpu);
     const mem = parseMemory(spec.preset.resources.memory);
     const { status } = await this.call(

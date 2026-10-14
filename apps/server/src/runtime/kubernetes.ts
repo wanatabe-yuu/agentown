@@ -130,6 +130,7 @@ export class KubernetesDriver implements RuntimeDriver {
         },
       });
       env.push({ name: "ANTHROPIC_API_KEY", valueFrom: { secretKeyRef: { name: providerSecret, key: "ANTHROPIC_API_KEY" } } });
+      if (spec.providerWorkspaceId) env.push({ name: "ANTHROPIC_WORKSPACE_ID", value: spec.providerWorkspaceId });
     }
     const dedicated = spec.preset.placement === "dedicated-node";
     await createIfMissing(() =>

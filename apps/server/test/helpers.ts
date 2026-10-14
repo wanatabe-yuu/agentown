@@ -13,7 +13,7 @@ import { Service } from "../src/service.ts";
 /** In-memory driver: pods become Ready immediately. Records issued tokens so tests can act as runtimes. */
 export class FakeDriver implements RuntimeDriver {
   readonly kind = "fake";
-  pods = new Map<string, PodInfo & { agentId: string; namespace: string; providerKey: string | null }>();
+  pods = new Map<string, PodInfo & { agentId: string; namespace: string; providerKey: string | null; providerWorkspaceId: string | null }>();
   tokens = new Map<string, string>();
   identities = new Set<string>();
 
@@ -33,6 +33,7 @@ export class FakeDriver implements RuntimeDriver {
       agentId: spec.agentId,
       namespace: spec.namespace,
       providerKey: spec.providerKey,
+      providerWorkspaceId: spec.providerWorkspaceId,
       generation: spec.generation,
       phase: "Running",
       ready: true,
@@ -62,8 +63,12 @@ export async function setup() {
   const config = parseOrgConfig(readFileSync(new URL("../../../config/agentown.yaml", import.meta.url), "utf8"));
   const bus = new EventBus();
   // Fake provider: keys starting with "sk-test-" are valid; the suffix picks the model set.
-  const modelLister: ModelLister = async (_provider, apiKey) => {
+  // "sk-test-orgwide-" keys are not scoped to a workspace and need one named on each request.
+  const modelLister: ModelLister = async (_provider, apiKey, workspaceId) => {
     if (!apiKey.startsWith("sk-test-")) throw new Error("401 invalid x-api-key");
+    if (apiKey.startsWith("sk-test-orgwide-") && !workspaceId) {
+      throw new Error('400 {"type":"error","error":{"type":"invalid_request_error","message":"This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header"}}');
+    }
     return apiKey.includes("small") ? ["claude-haiku-5-5"] : ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
   };
   const service = new Service(db, config, bus, SecretBox.forTests(), modelLister);

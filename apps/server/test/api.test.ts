@@ -490,4 +490,26 @@ describe("per-agent credentials and model config", () => {
     await env.settle();
     expect(podOf(r.body.agent.id).providerKey).toBe(KEY);
   });
+
+  it("an organization-level key needs a workspace ID, which reaches the runtime with the key", async () => {
+    const orgKey = "sk-test-orgwide-5555";
+    const missing = await env.call(env.owner, "POST", "/api/credentials", { name: "Org-wide", apiKey: orgKey });
+    expect(missing.status).toBe(400);
+    expect(JSON.stringify(missing.body)).toContain("Workspaces");
+    expect((await env.call(env.owner, "POST", "/api/credentials", { name: "Org-wide", apiKey: orgKey, workspaceId: "bad id" })).status).toBe(400);
+    const r = await env.call(env.owner, "POST", "/api/credentials", { name: "Org-wide", apiKey: orgKey, workspaceId: " wrkspc_01AbC " });
+    expect(r.status).toBe(201);
+    expect(r.body.workspaceId).toBe("wrkspc_01AbC");
+    expect((await env.call(env.owner, "POST", `/api/credentials/${r.body.id}/refresh-models`)).status).toBe(200);
+
+    const s = await spawnUnder(env.token("lead-eng"), "engineer-claude-v1", "Wanda", "lead-eng", "claude-ws");
+    expect(s.status).toBe(202);
+    const ws = s.body.agent.id;
+    await env.settle();
+    expect((await env.call(env.token("lead-eng"), "PUT", `/api/agents/${ws}/config`, { credentialId: r.body.id })).status).toBe(200);
+    await env.settle();
+    await env.settle();
+    expect(podOf(ws)).toMatchObject({ providerKey: orgKey, providerWorkspaceId: "wrkspc_01AbC" });
+    expect(podOf(bot).providerWorkspaceId).toBeNull();
+  });
 });

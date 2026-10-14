@@ -216,6 +216,10 @@ const MIGRATIONS: string[] = [
     ADD COLUMN config_revision int NOT NULL DEFAULT 1;
   ALTER TABLE agent_runtimes ADD COLUMN applied_secret_rev text;
   `,
+  `
+  -- Anthropic keys created at the organization level must name a workspace on every request.
+  ALTER TABLE credentials ADD COLUMN workspace_id text;
+  `,
 ];
 
 export async function migrate(db: Db): Promise<void> {
