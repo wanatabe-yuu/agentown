@@ -35,15 +35,34 @@ export interface PlacedRoom {
   wallHeight: number;
   /** How many agents fit (the template may say). */
   capacity: number;
+  /** Door openings in its walls. */
+  cuts: WallCut[];
   /** Seat positions in order; agents take them by their seat number. */
   seats: Seat[];
   auto: boolean;
+}
+
+/** An opening in a wall, in meters along that wall from its west/north end. */
+export interface WallCut {
+  side: "north" | "south" | "east" | "west";
+  from: number;
+  to: number;
+}
+
+/** A door between two rooms: where it meets each room's wall, for the threshold drawn between them. */
+export interface DoorWay {
+  a: [number, number];
+  b: [number, number];
+  y: number;
+  width: number;
 }
 
 export interface WorldLayout {
   floors: Array<{ id: string; name: string; index: number; y: number }>;
   rooms: PlacedRoom[];
   seatOf: Map<string, Seat>;
+  doors: DoorWay[];
+  links: Array<{ from: [number, number, number]; to: [number, number, number]; kind: "stairs" | "elevator" }>;
 }
 
 interface Dept {
@@ -96,11 +115,11 @@ function defaultWorld(departments: Dept[], agents: AgentLite[]): World {
       z += rowDepth + 2;
       rowDepth = 0;
     }
-    rooms.push({ id: `dept-${d.id}`, name: d.name, department: d.id, area: { x, z, w, d: depth }, wallHeight: 2.6 });
+    rooms.push({ id: `dept-${d.id}`, name: d.name, department: d.id, area: { x, z, w, d: depth }, wallHeight: 2.6, doors: [] });
     x += w + 2;
     rowDepth = Math.max(rowDepth, depth);
   });
-  return { floors: [{ id: "main", name: "Office", rooms }], kinds: {}, objects: [], avatars: { byJobRole: {} } };
+  return { floors: [{ id: "main", name: "Office", rooms }], links: [], zones: {}, kinds: {}, objects: [], avatars: { byJobRole: {} } };
 }
 
 export function layoutWorld(world: World | null, departments: Dept[], agentsAll: AgentLite[]): WorldLayout {
@@ -124,6 +143,7 @@ export function layoutWorld(world: World | null, departments: Dept[], agentsAll:
       wallColor: r.wallColor ?? tint(color(r.department), 0.35),
       wallHeight: r.wallHeight ?? 2.6,
       capacity: capacity({ w: r.area.w, d: r.area.d, seats: r.seats }),
+      cuts: [],
       seats: [],
       auto: !world,
     })),
@@ -151,6 +171,7 @@ export function layoutWorld(world: World | null, departments: Dept[], agentsAll:
       wallColor: tint(d.color, 0.35),
       wallHeight: 2.6,
       capacity: n,
+      cuts: [],
       seats: [],
       auto: true,
     });
@@ -170,7 +191,38 @@ export function layoutWorld(world: World | null, departments: Dept[], agentsAll:
       for (const s of room.seats) seatOf.set(staff[i++]!.id, s);
     });
   }
-  return { floors, rooms, seatOf };
+  // Doors: an opening in the room's wall and, facing it, in the other room's wall.
+  const byId = new Map(rooms.map((r) => [r.id, r]));
+  const OPPOSITE = { north: "south", south: "north", east: "west", west: "east" } as const;
+  const doors: DoorWay[] = [];
+  for (const f of w.floors) {
+    for (const r of f.rooms) {
+      const A = byId.get(r.id)!;
+      for (const d of r.doors ?? []) {
+        const B = byId.get(d.to);
+        if (!B) continue;
+        const along = d.side === "north" || d.side === "south";
+        A.cuts.push({ side: d.side, from: d.at - d.width / 2, to: d.at + d.width / 2 });
+        const abs = along ? A.x + d.at : A.z + d.at;
+        const atB = along ? abs - B.x : abs - B.z;
+        const lenB = along ? B.w : B.d;
+        if (atB > 0 && atB < lenB) B.cuts.push({ side: OPPOSITE[d.side], from: atB - d.width / 2, to: atB + d.width / 2 });
+        const wallA: [number, number] = d.side === "north" ? [abs, A.z] : d.side === "south" ? [abs, A.z + A.d] : d.side === "west" ? [A.x, abs] : [A.x + A.w, abs];
+        const wallB: [number, number] =
+          d.side === "north" ? [abs, B.z + B.d] : d.side === "south" ? [abs, B.z] : d.side === "west" ? [B.x + B.w, abs] : [B.x, abs];
+        doors.push({ a: wallA, b: wallB, y: A.y, width: d.width });
+      }
+    }
+  }
+  const links = (w.links ?? []).flatMap((l) => {
+    const A = byId.get(l.from);
+    const B = byId.get(l.to);
+    if (!A || !B) return [];
+    const a = l.fromAt ?? [A.w / 2, A.d / 2];
+    const b = l.toAt ?? [B.w / 2, B.d / 2];
+    return [{ from: [A.x + a[0], A.y, A.z + a[1]] as [number, number, number], to: [B.x + b[0], B.y, B.z + b[1]] as [number, number, number], kind: l.kind }];
+  });
+  return { floors, rooms, seatOf, doors, links };
 }
 
 /** Bounding box of some rooms (for "fit" and "focus this room"). */

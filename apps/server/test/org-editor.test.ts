@@ -127,4 +127,14 @@ describe("templates", () => {
     expect((await env.app.inject({ method: "GET", url: `/api/templates/${mine.id}/export`, headers: { authorization: `Bearer ${t}` } })).statusCode).toBe(404);
     expect((await env.call(t, "DELETE", `/api/templates/${mine.id}`)).status).toBe(404);
   });
+
+  it("an organization whose document cannot be loaded fails alone", async () => {
+    const t = (await env.call(env.owner, "POST", "/api/admin/orgs", { id: "broken", name: "Broken", templateId: "lab", owner: { displayName: "Bo" } })).body.ownerToken;
+    await env.db.query(`UPDATE organizations SET config = config || '{"world":{"floors":[]}}', config_revision = config_revision + 1 WHERE id='broken'`);
+    const r = await env.app.inject({ method: "GET", url: "/api/orgs/broken/agents", headers: { authorization: `Bearer ${t}` } });
+    expect(r.statusCode).toBe(503);
+    expect(r.json().error).toBe("org_config_invalid");
+    await expect(env.settle()).resolves.toBeUndefined(); // the controller skips it
+    expect((await env.call(env.owner, "GET", "/api/agents")).status).toBe(200);
+  });
 });

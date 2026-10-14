@@ -35,7 +35,8 @@ export class RuntimeController {
 
   start(): void {
     const loop = async () => {
-      await this.reconcileAll();
+      // Never let one bad pass stop the loop (or the process).
+      await this.reconcileAll().catch((err) => this.opts.log?.("reconcile pass failed", { err: String(err) }));
       this.timer = setTimeout(loop, this.opts.intervalMs ?? 3000);
     };
     void loop();
@@ -62,7 +63,14 @@ export class RuntimeController {
           const rt = byId.get(a.id);
           if (!rt) continue;
           // Archived organizations still get reconciled: that is what stops their runtimes.
-          const service = await this.instance.org(a.org_id, { includeArchived: true });
+          // An org whose document cannot be loaded is skipped (and logged), never the whole pass.
+          let service: Service;
+          try {
+            service = await this.instance.org(a.org_id, { includeArchived: true });
+          } catch (err) {
+            this.opts.log?.("organization unavailable", { orgId: a.org_id, err: String(err).slice(0, 300) });
+            continue;
+          }
           try {
             await this.reconcile(service, a, rt);
           } catch (err) {

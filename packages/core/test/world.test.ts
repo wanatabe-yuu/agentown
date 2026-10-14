@@ -15,11 +15,13 @@ describe("world in a template", () => {
 
   it("rejects references that do not exist and avatars that are not characters", () => {
     const broken = (from: string, to: string) => () => parseTemplate(coffee.replace(from, to), catalog);
-    expect(broken("department: kitchen, area", "department: nowhere, area")).toThrow(/unknown department nowhere/);
+    expect(broken("department: kitchen\n", "department: nowhere\n")).toThrow(/unknown department nowhere/);
     expect(broken("{ kind: oven, room: 1c, at: [8.5, 1] }", "{ kind: oven, room: 1c, at: [80, 1] }")).toThrow(/outside room 1c/);
     expect(broken("{ kind: fan, room: 2a", "{ kind: rocket, room: 2a")).toThrow(/unknown kind rocket/);
     expect(broken("mascot: cat-agent", "mascot: jukebox")).toThrow(/must be a character/);
     expect(broken("{ type: spin, part: drum, speed: 0.4 }", "{ type: spin, part: lid, speed: 0.4 }")).toThrow(/unknown part lid/);
-    expect(broken("{ type: wander, speed: 0.6, amount: 2.5 }", "{ type: teleport, speed: 0.6, amount: 2.5 }")).toThrow();
+    expect(broken("behaviors: [{ type: roam, amount: 0.6 }]", "behaviors: [{ type: teleport }]")).toThrow();
+    expect(broken("access: own-department", "access: { zone: vip }")).toThrow(/unknown zone vip/);
+    expect(broken("{ to: 2b, side: east, at: 4 }", "{ to: 1b, side: east, at: 4 }")).toThrow(/different floors/);
   });
 });

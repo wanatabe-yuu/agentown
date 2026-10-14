@@ -8,7 +8,7 @@ import { type Db, tx } from "./db.ts";
 import type { ModelLister } from "./providers.ts";
 import type { SecretBox } from "./secrets.ts";
 import { Service } from "./service.ts";
-import { badRequest, conflict, deny, newId, notFound, sha256 } from "./util.ts";
+import { ApiError, badRequest, conflict, deny, newId, notFound, sha256 } from "./util.ts";
 
 const ORG_ID = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
 
@@ -91,7 +91,13 @@ export class Instance {
     if (!o || !o.config || (o.archived_at && !opts.includeArchived)) throw notFound("organization");
     const hit = this.cache.get(orgId);
     if (hit && hit.revision === o.config_revision && hit.name === o.name) return hit.service;
-    const config = orgConfigFrom(o.config, { id: orgId, name: o.name }, this.file.catalog);
+    let config;
+    try {
+      config = orgConfigFrom(o.config, { id: orgId, name: o.name }, this.file.catalog);
+    } catch (err) {
+      // A document this server cannot read (edited elsewhere, newer format): fail this org's requests, nothing else.
+      throw new ApiError(503, "org_config_invalid", `organization ${orgId} has a configuration this server cannot load: ${err instanceof z.ZodError ? z.prettifyError(err).slice(0, 500) : (err as Error).message}`);
+    }
     const service = new Service(this.db, config, this.bus, this.secrets, this.modelLister, orgId, o.runtime_namespace);
     this.cache.set(orgId, { revision: o.config_revision, name: o.name, service });
     return service;
@@ -392,7 +398,7 @@ export class Instance {
 
   async sweepLeases(): Promise<number> {
     let n = 0;
-    for (const id of await this.activeOrgIds()) n += await (await this.org(id)).sweepLeases();
+    for (const id of await this.activeOrgIds()) n += await this.org(id).then((o) => o.sweepLeases(), () => 0);
     return n;
   }
 }

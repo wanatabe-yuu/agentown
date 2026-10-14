@@ -85,29 +85,93 @@ world:
     - id: f1
       name: Floor 1
       rooms:
-        - { id: 1a, name: "1A · Counter & seating", department: front, area: { x: 0, z: 0, w: 12, d: 8 }, floorColor: "#e8d5b9", wallColor: "#b9825a", seats: 2 }
-        - { id: 1b, name: "1B · Coffee bar", department: bar, area: { x: 13, z: 0, w: 8, d: 8 }, floorColor: "#d8c3a5", wallColor: "#7c4a1e" }
-        - { id: 1c, name: "1C · Kitchen", department: kitchen, area: { x: 0, z: 9, w: 10, d: 6 }, floorColor: "#dfe7e1", wallColor: "#3fa37a" }
+        - id: 1a
+          name: "1A · Counter & seating"
+          department: front
+          area: { x: 0, z: 0, w: 12, d: 8 }
+          floorColor: "#e8d5b9"
+          wallColor: "#b9825a"
+          seats: 2
+          doors:
+            - { to: 1b, side: east, at: 4 }
+            - { to: 1c, side: south, at: 5 }
+            - { to: 1d, side: south, at: 11.4, width: 1 }
+        - id: 1b
+          name: "1B · Coffee bar"
+          department: bar
+          area: { x: 13, z: 0, w: 8, d: 8 }
+          floorColor: "#d8c3a5"
+          wallColor: "#7c4a1e"
+          doors:
+            - { to: 1d, side: south, at: 2 }
+        - id: 1c
+          name: "1C · Kitchen"
+          department: kitchen
+          area: { x: 0, z: 9, w: 10, d: 6 }
+          floorColor: "#dfe7e1"
+          wallColor: "#3fa37a"
+          doors:
+            - { to: 1d, side: east, at: 3 }
         - { id: 1d, name: "1D · Patio", area: { x: 11, z: 9, w: 10, d: 6 }, floorColor: "#cfd8c0", wallColor: "#8a9a6b", wallHeight: 0.6, seats: 0 }
     - id: f2
       name: Floor 2
       rooms:
-        - { id: 2a, name: "2A · Office", department: management, area: { x: 0, z: 0, w: 10, d: 8 }, floorColor: "#ece3cf", wallColor: "#c9a227" }
+        - id: 2a
+          name: "2A · Office"
+          department: management
+          area: { x: 0, z: 0, w: 10, d: 8 }
+          floorColor: "#ece3cf"
+          wallColor: "#c9a227"
+          doors:
+            - { to: 2b, side: east, at: 4 }
+            - { to: 2c, side: south, at: 5 }
         - { id: 2b, name: "2B · Roastery", department: roastery, area: { x: 11, z: 0, w: 10, d: 8 }, floorColor: "#e3d2c8", wallColor: "#a33f2f" }
         - { id: 2c, name: "2C · Content studio", department: studio, area: { x: 0, z: 9, w: 10, d: 6 }, floorColor: "#e7def2", wallColor: "#8e6bbf" }
 
+  # Stairs from the café floor up to the office.
+  links:
+    - { from: 1a, to: 2a, kind: stairs, fromAt: [1.2, 6.8], toAt: [1.2, 6.8] }
+
+  # Named groups of rooms, for who may go where.
+  zones:
+    customer-area: [1a, 1d]
+    staff-only: [1b, 1c, 2a, 2b, 2c]
+
+  # Who may go where is the template's call (it is only what the office shows;
+  # real permissions are the agents' grants). Idle agents whose look can roam
+  # take a walk inside their access and come back to their desk to work.
   kinds:
     # Characters: how the jobs look, and the shop cat.
-    barista: { name: Barista, category: character, look: { character: person, color: "#6b4226", accent: "#2b1d14" } }
-    manager: { name: Manager, category: character, look: { character: person, color: "#334155", accent: "#111827" } }
-    roaster: { name: Roaster, category: character, look: { character: robot, color: "#a33f2f" } }
-    cat-agent: { name: Cat, category: character, look: { character: cat, color: "#d9a066", accent: "#5a3a1a" } }
+    barista:
+      name: Barista
+      category: character
+      look: { character: person, color: "#6b4226", accent: "#2b1d14" }
+      behaviors: [{ type: roam, amount: 0.9 }]
+      access: { rooms: [1a, 1b, 1c, 1d] }
+    manager:
+      name: Manager
+      category: character
+      look: { character: person, color: "#334155", accent: "#111827" }
+      behaviors: [{ type: roam }]
+      access: all
+    roaster:
+      name: Roaster
+      category: character
+      look: { character: robot, color: "#a33f2f" }
+      behaviors: [{ type: roam, amount: 0.6 }]
+      access: own-department
+    cat-agent:
+      name: Cat
+      category: character
+      look: { character: cat, color: "#d9a066", accent: "#5a3a1a" }
+      behaviors: [{ type: roam, amount: 0.7 }]
+      access: all
     shop-cat:
       name: Shop cat
       category: dynamic
       look: { character: cat, color: "#3b3b3b", accent: "#1a1a1a" }
-      behaviors:
-        - { type: wander, speed: 0.6, amount: 2.5 }
+      behaviors: [{ type: roam, amount: 0.6 }]
+      access: all
 
     # Static furniture, composed of primitives.
     counter:
@@ -218,7 +282,7 @@ world:
     - { kind: cafe-table, room: 1a, at: [8, 5.5] }
     - { kind: sofa, room: 1a, at: [10.4, 4], rotationY: 90 }
     - { kind: jukebox, room: 1a, at: [11.2, 7], rotationY: -90, label: Jukebox }
-    - { kind: plant, room: 1a, at: [0.6, 7.4] }
+    - { kind: plant, room: 1a, at: [3, 7.4] }
     - { kind: shop-cat, room: 1a, at: [6, 5], label: Bean }
     # 1B coffee bar
     - { kind: espresso-machine, room: 1b, at: [4, 6.8] }

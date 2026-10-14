@@ -15,7 +15,9 @@ const vec3 = (min: number, max: number) => z.tuple([num(min, max), num(min, max)
 export const SHAPES = ["box", "cylinder", "sphere", "cone", "torus"] as const;
 /** Built-in procedural characters an agent (or any object) can look like. */
 export const CHARACTERS = ["person", "cat", "dog", "robot"] as const;
-export const BEHAVIORS = ["spin", "bob", "pulse", "blink", "sway", "wander"] as const;
+/** wander: drift near where it was placed. roam: walk between rooms through doors and stairs, within its access. */
+export const BEHAVIORS = ["spin", "bob", "pulse", "blink", "sway", "wander", "roam"] as const;
+export const SIDES = ["north", "south", "east", "west"] as const;
 export const OBJECT_CATEGORIES = ["character", "static", "dynamic"] as const;
 
 const primitiveSchema = z.object({
@@ -47,10 +49,21 @@ const behaviorSchema = z.object({
   part: idSchema.optional(),
   /** How fast, in cycles per second. */
   speed: num(0, 20).default(1),
-  /** How strong, as a multiple of a sensible default (wander: radius in meters). */
+  /** How strong, as a multiple of a sensible default (wander: radius in meters; roam: walking speed). */
   amount: num(0, 20).default(1),
 });
 export type Behavior = z.infer<typeof behaviorSchema>;
+
+/**
+ * Where something that roams may go. Purely what the office shows: an agent's
+ * real permissions are its grants, checked by the server.
+ *   all             every room on every floor
+ *   own-department  the rooms of its department (agents), or of its room's department (objects)
+ *   own-room        only where it is placed / sits (the default)
+ *   { rooms: [...] } or { zone: id }
+ */
+const accessSchema = z.union([z.enum(["all", "own-department", "own-room"]), z.object({ rooms: z.array(idSchema).min(1) }), z.object({ zone: idSchema })]);
+export type Access = z.infer<typeof accessSchema>;
 
 const objectKindSchema = z.object({
   name: z.string().min(1).max(60),
@@ -58,6 +71,7 @@ const objectKindSchema = z.object({
   category: z.enum(OBJECT_CATEGORIES),
   look: lookSchema,
   behaviors: z.array(behaviorSchema).max(8).default([]),
+  access: accessSchema.default("own-room"),
 });
 export type ObjectKind = z.infer<typeof objectKindSchema>;
 
@@ -73,6 +87,8 @@ const roomSchema = z.object({
   wallHeight: num(0.2, 10).default(2.6),
   /** Seats for agents; by default as many as fit. */
   seats: z.number().int().min(0).max(200).optional(),
+  /** Openings to rooms on the same floor: which wall, how far along it (meters from its west/north end). */
+  doors: z.array(z.object({ to: idSchema, side: z.enum(SIDES), at: num(0, 200), width: num(0.6, 10).default(1.2) })).max(40).default([]),
 });
 
 const floorSchema = z.object({
@@ -94,6 +110,13 @@ const placementSchema = z.object({
 
 export const worldSchema = z.object({
   floors: z.array(floorSchema).min(1).max(20),
+  /** Stairs or elevators between rooms on different floors; `at` is a spot in each room (default: its middle). */
+  links: z
+    .array(z.object({ from: idSchema, to: idSchema, kind: z.enum(["stairs", "elevator"]).default("stairs"), fromAt: z.tuple([num(0, 200), num(0, 200)]).optional(), toAt: z.tuple([num(0, 200), num(0, 200)]).optional() }))
+    .max(100)
+    .default([]),
+  /** Named groups of rooms, for `access: { zone: … }`. */
+  zones: z.record(idSchema, z.array(idSchema).min(1)).default({}),
   kinds: z.record(idSchema, objectKindSchema).default({}),
   objects: z.array(placementSchema).max(2000).default([]),
   /** How agents look: per job title, else the default (a person in the department's color). */
@@ -124,6 +147,29 @@ export function checkWorld(world: World, departments: Set<string>, issue: (messa
     for (const b of kind.behaviors) {
       if (b.part && !("parts" in kind.look && kind.look.parts.some((p) => p.part === b.part))) issue(`world: kind ${kindId} animates unknown part ${b.part}`);
     }
+  }
+  const floorOf = new Map(world.floors.flatMap((f) => f.rooms.map((r) => [r.id, f.id] as const)));
+  for (const r of rooms.values()) {
+    for (const d of r.doors) {
+      if (!rooms.has(d.to)) issue(`world: door in ${r.id} leads to unknown room ${d.to}`);
+      else if (floorOf.get(d.to) !== floorOf.get(r.id)) issue(`world: door ${r.id} → ${d.to} joins different floors; use a link (stairs)`);
+      const wall = d.side === "north" || d.side === "south" ? r.area.w : r.area.d;
+      if (d.at > wall) issue(`world: door in ${r.id} at ${d.at} m is past the end of its ${d.side} wall`);
+    }
+  }
+  for (const l of world.links) {
+    for (const [end, at] of [[l.from, l.fromAt], [l.to, l.toAt]] as const) {
+      const room = rooms.get(end);
+      if (!room) issue(`world: ${l.kind} uses unknown room ${end}`);
+      else if (at && (at[0] > room.area.w || at[1] > room.area.d)) issue(`world: ${l.kind} spot is outside room ${end}`);
+    }
+  }
+  for (const [zone, ids] of Object.entries(world.zones)) for (const id of ids) if (!rooms.has(id)) issue(`world: zone ${zone} names unknown room ${id}`);
+  for (const [kindId, kind] of Object.entries(world.kinds)) {
+    const a = kind.access;
+    if (typeof a === "object" && "rooms" in a) for (const id of a.rooms) if (!rooms.has(id)) issue(`world: kind ${kindId} may enter unknown room ${id}`);
+    if (typeof a === "object" && "zone" in a && !world.zones[a.zone]) issue(`world: kind ${kindId} uses unknown zone ${a.zone}`);
+    if (kind.behaviors.some((b) => b.type === "roam") && kind.category === "static") issue(`world: static kind ${kindId} cannot roam`);
   }
   const avatar = (id: string | undefined, where: string) => {
     if (!id) return;

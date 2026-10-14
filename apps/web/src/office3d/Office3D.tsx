@@ -4,6 +4,7 @@ import { MapControls } from "three/addons/controls/MapControls.js";
 import { CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Agent, Snapshot, WorkState } from "../types.ts";
 import { bounds, layoutWorld, type PlacedRoom } from "./layout.ts";
+import { buildNav } from "./nav.ts";
 import { disposeMaterials } from "./procedural.ts";
 import { buildScene, type Flight, type OfficeScene, updateScene } from "./scene.ts";
 
@@ -117,8 +118,11 @@ export default function Office3D(props: Props) {
     ro.observe(el);
     resize();
 
+    let last = performance.now();
     renderer.setAnimationLoop((now) => {
       const e = engine.current!;
+      const dt = Math.max(0, (now - last) / 1000);
+      last = now;
       if (e.tween) {
         const k = Math.min(1, (now - e.tween.start) / 650);
         const ease = 1 - (1 - k) ** 3;
@@ -140,6 +144,7 @@ export default function Office3D(props: Props) {
           hover: e.hover,
           flights: p.flights,
           t: now,
+          dt,
         });
       }
       renderer.render(scene, camera);
@@ -153,7 +158,7 @@ export default function Office3D(props: Props) {
       if (!e.office) return null;
       const r = renderer.domElement.getBoundingClientRect();
       ray.setFromCamera(new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), camera);
-      const picks = [...e.office.agents.values()].filter((n) => e.office!.floors.get(n.floorIndex)?.visible).map((n) => n.pick);
+      const picks = [...e.office.agents.values()].filter((n) => n.actor.visible).map((n) => n.pick);
       return (ray.intersectObjects(picks, false)[0]?.object.userData.agentId as string | undefined) ?? null;
     };
     let down: { x: number; y: number } | null = null;
@@ -198,7 +203,7 @@ export default function Office3D(props: Props) {
     const e = engine.current;
     if (!e) return;
     e.office?.dispose();
-    const office = buildScene(layout, snapshot.world ?? null, snapshot.departments, snapshot.agents, (roomId) => {
+    const office = buildScene(layout, snapshot.world ?? null, snapshot.departments, snapshot.agents, buildNav(snapshot.world ?? null, layout), (roomId) => {
       setFocusRoom(roomId);
       const room = layout.rooms.find((r) => r.id === roomId);
       if (room) focus([room]);

@@ -61,7 +61,17 @@ export function character(kind: "person" | "cat" | "dog" | "robot", color: strin
     g.add(m);
     return m;
   };
+  // Legs hang from a hip pivot so walking can swing them.
+  const leg = (name: string, x: number, mat: THREE.Material, w: number) => {
+    const hip = new THREE.Group();
+    hip.name = name;
+    hip.position.set(x, 0.52, 0);
+    hip.add(mesh("cylinder", [w, 0.5, w], [0, -0.25, 0], mat));
+    g.add(hip);
+  };
   if (kind === "person") {
+    leg("leg-l", -0.1, dark, 0.13);
+    leg("leg-r", 0.1, dark, 0.13);
     add("body", mesh("cylinder", [0.42, 0.55, 0.32], [0, 0.78, 0], body));
     add("head", mesh("sphere", [0.32, 0.34, 0.32], [0, 1.25, 0], skin));
     add("hair", mesh("sphere", [0.34, 0.2, 0.34], [0, 1.36, 0.02], dark));
@@ -69,6 +79,8 @@ export function character(kind: "person" | "cat" | "dog" | "robot", color: strin
     add("arm-r", mesh("cylinder", [0.1, 0.42, 0.1], [0.26, 0.82, -0.12], body, [35, 0, 0]));
   } else if (kind === "robot") {
     const metal = material("#b8c2cc");
+    leg("leg-l", -0.11, metal, 0.12);
+    leg("leg-r", 0.11, metal, 0.12);
     add("body", mesh("box", [0.45, 0.5, 0.32], [0, 0.78, 0], body));
     add("head", mesh("box", [0.34, 0.28, 0.3], [0, 1.2, 0], metal));
     add("eye-l", mesh("sphere", [0.06, 0.06, 0.04], [-0.07, 1.22, -0.15], material("#7df9ff", "#2ad4ff")));
@@ -80,6 +92,8 @@ export function character(kind: "person" | "cat" | "dog" | "robot", color: strin
     // A cat or a dog, sitting on the chair: body, head, ears, tail.
     const big = kind === "dog" ? 1.35 : 1;
     const lift = 0.47;
+    // Animals are modelled sitting on the chair; walking drops them by this much.
+    g.userData.lift = lift;
     add("body", mesh("sphere", [0.34 * big, 0.36 * big, 0.42 * big], [0, lift + 0.18 * big, 0.04], body));
     add("head", mesh("sphere", [0.26 * big, 0.24 * big, 0.24 * big], [0, lift + 0.42 * big, -0.12 * big], body));
     if (kind === "cat") {
