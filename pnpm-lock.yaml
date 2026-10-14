@@ -31,7 +31,7 @@ importers:
         version: link:../../packages/core
       '@anthropic-ai/sdk':
         specifier: 0.133.0
-        version: 0.133.0(zod@3.25.76)
+        version: 0.133.0(zod@4.6.5)
 
   apps/server:
     dependencies:
@@ -40,7 +40,7 @@ importers:
         version: link:../../packages/core
       '@anthropic-ai/sdk':
         specifier: 0.133.0
-        version: 0.133.0(zod@3.25.76)
+        version: 0.133.0(zod@4.6.5)
       '@fastify/static':
         specifier: 8.3.0
         version: 8.3.0
@@ -63,8 +63,8 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: 4.6.5
+        version: 4.6.5
     devDependencies:
       '@types/pg':
         specifier: 8.23.1
@@ -107,8 +107,8 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: 4.6.5
+        version: 4.6.5
 
 packages:
 
@@ -1361,17 +1361,17 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
 snapshots:
 
-  '@anthropic-ai/sdk@0.133.0(zod@3.25.76)':
+  '@anthropic-ai/sdk@0.133.0(zod@4.6.5)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.1.1
     optionalDependencies:
-      zod: 3.25.76
+      zod: 4.6.5
 
   '@babel/runtime@7.29.10': {}
 
@@ -2401,4 +2401,4 @@ snapshots:
 
   yaml@2.9.1: {}
 
-  zod@3.25.76: {}
+  zod@4.6.5: {}
