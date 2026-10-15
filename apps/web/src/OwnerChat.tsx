@@ -1,6 +1,6 @@
 import { ReportText } from "./Markdown.tsx";
 import { t } from "./i18n.ts";
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, HttpError } from "./api.ts";
 import { Menu, Modal } from "./ui.tsx";
 import { requestId } from "./requestId.ts";
@@ -150,6 +150,9 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
   }, [view?.messages.length, view?.run?.partialText, view?.actions.length]);
   // The keyboard opening (or the phone turning) resizes the history: whoever was reading the latest stays at the latest.
   const userScrolledAt = useRef(0);
+  useLayoutEffect(() => {
+    if (stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, [viewport.height]);
   useEffect(() => {
     const el = scroll.current;
     if (!el) return;
