@@ -130,7 +130,27 @@ const S = {
     inputTaskIds: z.array(z.string()).max(20).optional(),
     requiresReview: z.boolean().optional(),
     idempotencyKey: z.string().max(100).optional(),
+    campaignId: z.string().nullable().optional(),
   }),
+  createCampaign: z.object({
+    projectId: z.string().min(1),
+    title: z.string().trim().min(1).max(200),
+    goal: z.string().trim().min(1).max(5000),
+    mode: z.enum(["auto", "manual"]),
+    leadAgentId: z.string().min(1),
+    maxFailures: z.number().int().min(1).max(20).optional(),
+    maxSteps: z.number().int().min(1).max(100).optional(),
+  }).strict(),
+  updateCampaign: z.object({
+    mode: z.enum(["auto", "manual"]).optional(),
+    status: z.enum(["active", "stopped"]).optional(),
+    title: z.string().trim().min(1).max(200).optional(),
+    goal: z.string().trim().min(1).max(5000).optional(),
+    leadAgentId: z.string().min(1).optional(),
+    maxFailures: z.number().int().min(1).max(20).optional(),
+    maxSteps: z.number().int().min(1).max(100).optional(),
+  }).strict(),
+  finishCampaign: z.object({ outcome: z.enum(["achieved", "failed"]), summary: z.string().trim().min(1).max(4000) }).strict(),
   assign: z.object({ assigneeAgentId: z.string() }),
   cancel: z.object({ reason: z.string().max(500).default("") }).prefault({}),
   review: z.object({ decision: z.enum(["approve", "reject"]), note: z.string().max(2000).default("") }),
@@ -581,7 +601,18 @@ export async function buildApp(opts: AppOptions) {
   });
 
   // ---- tasks
-  r.get<{ Querystring: { assignee?: string; status?: string } }>("/tasks", async (req) => ({
+  r.get<{ Querystring: { projectId?: string } }>("/campaigns", async (req) => ({ campaigns: await svcOf(req).listCampaigns(actorOf(req), { projectId: req.query.projectId }) }));
+  r.post("/campaigns", async (req, reply) => {
+    reply.status(201);
+    return changed(await svcOf(req).createCampaign(actorOf(req), parse(S.createCampaign, req.body)));
+  });
+  r.get<{ Params: { id: string } }>("/campaigns/:id", async (req) => svcOf(req).getCampaign(actorOf(req), req.params.id));
+  r.patch<{ Params: { id: string } }>("/campaigns/:id", async (req) => changed(await svcOf(req).updateCampaign(actorOf(req), req.params.id, parse(S.updateCampaign, req.body))));
+  r.post<{ Params: { id: string } }>("/campaigns/:id/finish", async (req) => {
+    const b = parse(S.finishCampaign, req.body);
+    return changed(await svcOf(req).finishCampaign(actorOf(req), req.params.id, b.outcome, b.summary));
+  });
+  r.get<{ Querystring: { assignee?: string; status?: string; campaign?: string } }>("/tasks", async (req) => ({
     tasks: await svcOf(req).listTasks(actorOf(req), req.query),
   }));
   r.post("/tasks", async (req, reply) => {

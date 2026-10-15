@@ -2,7 +2,7 @@ import { t } from "./i18n.ts";
 import { t as tr } from "./i18n.ts";
 import { useEffect, useState } from "react";
 import { api, fetchBlob, HttpError, orgPath } from "./api.ts";
-import type { Catalog, Me, Snapshot, TaskDetail, TaskProgress } from "./types.ts";
+import type { Campaign, Catalog, Me, Snapshot, TaskDetail, TaskProgress } from "./types.ts";
 import { Modal, StatusPill, ago } from "./ui.tsx";
 import { ReportText } from "./Markdown.tsx";
 
@@ -273,22 +273,89 @@ function ConfigurationResult({ task, agents }: { task: TaskDetail; agents: Snaps
   </div>;
 }
 
+/** Who can take the work: grouped by team; agents without a model are listed but cannot be picked. */
+function AgentSelect({ snapshot, active, why, value, onChange, placeholder }: { snapshot: Snapshot; active: Snapshot["agents"]; why: (a: Snapshot["agents"][number]) => string | null; value: string; onChange: (id: string) => void; placeholder: string }) {
+  const teamName = (id: string) => snapshot.teams.find((x) => x.id === id)?.name ?? id;
+  const byTeam = [...new Set(active.map((a) => a.teamId))].sort((a, b) => teamName(a).localeCompare(teamName(b)));
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} required>
+      <option value="" disabled>
+        {placeholder}
+      </option>
+      {byTeam.map((team) => (
+        <optgroup key={team} label={teamName(team)}>
+          {active
+            .filter((a) => a.teamId === team)
+            .map((a) => (
+              <option key={a.id} value={a.id} disabled={!!why(a)}>
+                {a.displayName} — {a.jobRole}
+                {why(a) ? ` · ${t(why(a)!)}` : ""}
+              </option>
+            ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
+const MODE_HINT: Record<Campaign["mode"], string> = {
+  auto: "The lead works toward the goal step by step, handing out tasks, until the goal is met or tasks fail too often.",
+  manual: "Nothing runs by itself: you add tasks to it, and they wait until you switch the campaign to automatic.",
+};
+
+/** New work: a task for someone (optionally inside a campaign), or a whole campaign. */
 export function NewTaskDialog({ snapshot, me, catalog, assignee, onClose, notify, onCreated }: { snapshot: Snapshot; me: Me; catalog: Catalog | null; assignee: string | null; onClose: () => void; notify: Notify; onCreated: (id: string) => void }) {
+  const [tab, setTab] = useState<"assign" | "campaign">("assign");
   // Only agents this person may give work to.
   const active = snapshot.agents.filter((a) => a.lifecycleState !== "retired" && me.taskTargets.includes(a.id));
   // Not a permission: work is a prompt, so it needs a model. Agents without one only walk around the office.
   const why = (a: (typeof active)[number]) =>
     catalog?.presets.find((p) => p.id === a.runtime?.presetId)?.harness === "script" ? "no LLM runtime" : !a.config.credentialId ? "no API key" : null;
+  return (
+    <Modal title={t("New task")} onClose={onClose}>
+      <nav className="tabs new-work-tabs" role="tablist">
+        {(["assign", "campaign"] as const).map((x) => (
+          <button key={x} type="button" role="tab" aria-selected={tab === x} className={tab === x ? "active" : ""} onClick={() => setTab(x)}>
+            {t(x === "assign" ? "Assign" : "Campaign")}
+          </button>
+        ))}
+      </nav>
+      {tab === "assign" ? (
+        <AssignForm snapshot={snapshot} active={active} why={why} assignee={assignee} notify={notify} onCreated={onCreated} />
+      ) : (
+        <CampaignForm snapshot={snapshot} active={active} why={why} notify={notify} onDone={onClose} />
+      )}
+    </Modal>
+  );
+}
+
+type AgentList = Snapshot["agents"];
+type Why = (a: AgentList[number]) => string | null;
+
+function AssignForm({ snapshot, active, why, assignee, notify, onCreated }: { snapshot: Snapshot; active: AgentList; why: Why; assignee: string | null; notify: Notify; onCreated: (id: string) => void }) {
   // No silent default: the person picks who does the work (unless they opened this from someone's desk).
   const [to, setTo] = useState(assignee ?? "");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [criteria, setCriteria] = useState("");
   const [project, setProject] = useState("");
+  const [campaign, setCampaign] = useState("");
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const target = active.find((a) => a.id === to);
   const blocked = target ? why(target) : t("Choose who does it");
-  const teamName = (id: string) => snapshot.teams.find((x) => x.id === id)?.name ?? id;
-  const byTeam = [...new Set(active.map((a) => a.teamId))].sort((a, b) => teamName(a).localeCompare(teamName(b)));
+  useEffect(() => {
+    setCampaign("");
+    setCampaigns([]);
+    if (!project) return;
+    let live = true;
+    api<{ campaigns: Campaign[] }>("GET", `/api/campaigns?projectId=${encodeURIComponent(project)}`)
+      .then((r) => live && setCampaigns(r.campaigns.filter((c) => c.status === "active" || c.status === "stopped")))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [project]);
+  const chosen = campaigns.find((c) => c.id === campaign);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -299,6 +366,7 @@ export function NewTaskDialog({ snapshot, me, catalog, assignee, onClose, notify
         acceptanceCriteria: criteria,
         assigneeAgentId: to,
         projectId: project || null,
+        campaignId: campaign || null,
         spec: { kind: "prompt" },
       });
       notify(`${r.task.title} → ${target?.displayName ?? to}`, "info");
@@ -309,58 +377,140 @@ export function NewTaskDialog({ snapshot, me, catalog, assignee, onClose, notify
   };
 
   return (
-    <Modal title={t("New task")} onClose={onClose}>
-      <form className="form" onSubmit={submit}>
-        <label>
-          {t("Assignee")}
-          <select value={to} onChange={(e) => setTo(e.target.value)} required>
-            <option value="" disabled>
-              {t("Choose who does it")}
+    <form className="form" onSubmit={submit}>
+      <label>
+        {t("Assignee")}
+        <AgentSelect snapshot={snapshot} active={active} why={why} value={to} onChange={setTo} placeholder={t("Choose who does it")} />
+      </label>
+      {target && blocked && <p className="error small">{t("{name} has {problem}: give it an API key in its Config tab.", { name: target.displayName, problem: t(blocked) })}</p>}
+      <label>
+        {t("Title")}
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("What should be done?")} maxLength={200} required />
+      </label>
+      <label>
+        {t("Prompt")}
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={5} placeholder={t("Describe the work in plain words.")} required />
+      </label>
+      <label>
+        {t("Acceptance criteria")}
+        <textarea value={criteria} onChange={(e) => setCriteria(e.target.value)} rows={2} placeholder={t("How you will judge it is done (optional)")} />
+      </label>
+      <label>
+        {t("Project")}
+        <select value={project} onChange={(e) => setProject(e.target.value)}>
+          <option value="">{t("— none —")}</option>
+          {snapshot.projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
             </option>
-            {byTeam.map((team) => (
-              <optgroup key={team} label={teamName(team)}>
-                {active
-                  .filter((a) => a.teamId === team)
-                  .map((a) => (
-                    <option key={a.id} value={a.id} disabled={!!why(a)}>
-                      {a.displayName} — {a.jobRole}
-                      {why(a) ? ` · ${t(why(a)!)}` : ""}
-                    </option>
-                  ))}
-              </optgroup>
-            ))}
-          </select>
-        </label>
-        {target && blocked && <p className="error small">{t("{name} has {problem}: give it an API key in its Config tab.", { name: target.displayName, problem: t(blocked) })}</p>}
+          ))}
+        </select>
+      </label>
+      {project && (
         <label>
-          {t("Title")}
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("What should be done?")} maxLength={200} required />
-        </label>
-        <label>
-          {t("Prompt")}
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={5} placeholder={t("Describe the work in plain words.")} required />
-        </label>
-        <label>
-          {t("Acceptance criteria")}
-          <textarea value={criteria} onChange={(e) => setCriteria(e.target.value)} rows={2} placeholder={t("How you will judge it is done (optional)")} />
-        </label>
-        <label>
-          {t("Project")}
-          <select value={project} onChange={(e) => setProject(e.target.value)}>
-            <option value="">{t("— none —")}</option>
-            {snapshot.projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
+          {t("Campaign")}
+          <select value={campaign} onChange={(e) => setCampaign(e.target.value)}>
+            <option value="">{t("— not part of a campaign —")}</option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.title} · {t(c.mode === "auto" ? "Automatic" : "Manual")}
+                {c.status === "stopped" ? ` · ${t("stopped")}` : ""}
               </option>
             ))}
           </select>
+          {chosen && (chosen.mode === "manual" || chosen.status !== "active") && (
+            <span className="muted small">{t("This task waits until the campaign runs automatically.")}</span>
+          )}
         </label>
-        <div className="btn-row">
-          <button type="submit" className="primary" disabled={!!blocked}>
-            {t("Create task")}
-          </button>
-        </div>
-      </form>
-    </Modal>
+      )}
+      <div className="btn-row">
+        <button type="submit" className="primary" disabled={!!blocked}>
+          {t("Create task")}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function CampaignForm({ snapshot, active, why, notify, onDone }: { snapshot: Snapshot; active: AgentList; why: Why; notify: Notify; onDone: () => void }) {
+  const [project, setProject] = useState(snapshot.projects[0]?.id ?? "");
+  const [title, setTitle] = useState("");
+  const [goal, setGoal] = useState("");
+  const [lead, setLead] = useState("");
+  const [mode, setMode] = useState<Campaign["mode"]>("auto");
+  const [maxFailures, setMaxFailures] = useState(3);
+  const [maxSteps, setMaxSteps] = useState(12);
+  const [busy, setBusy] = useState(false);
+  const leader = active.find((a) => a.id === lead);
+  const problem = mode === "auto" && leader ? why(leader) : null;
+  if (!snapshot.projects.length) {
+    return <p className="muted">{t("A campaign lives inside a project, and this organization has none yet. The owner adds projects under Organization → Projects.")}</p>;
+  }
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const c = await api<Campaign>("POST", "/api/campaigns", { projectId: project, title, goal, mode, leadAgentId: lead, maxFailures, maxSteps });
+      notify(t(c.mode === "auto" ? "Campaign {title} started: {name} takes the first step." : "Campaign {title} created: add tasks to it.", { title: c.title, name: leader?.displayName ?? lead }), "info");
+      onDone();
+    } catch (err) {
+      notify(`${t("Create campaign")}: ${(err as Error).message}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form className="form" onSubmit={submit}>
+      <label>
+        {t("Project")}
+        <select value={project} onChange={(e) => setProject(e.target.value)} required>
+          {snapshot.projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t("Campaign name")}
+        <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} placeholder={t("e.g. Autumn menu launch")} required />
+      </label>
+      <label>
+        {t("Goal")}
+        <textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={4} maxLength={5000} placeholder={t("What must be true when the campaign is done?")} required />
+      </label>
+      <label>
+        {t("Lead")}
+        <AgentSelect snapshot={snapshot} active={active} why={mode === "auto" ? why : () => null} value={lead} onChange={setLead} placeholder={t("Who leads it")} />
+      </label>
+      {problem && <p className="error small">{t("{name} has {problem}: give it an API key in its Config tab.", { name: leader!.displayName, problem: t(problem) })}</p>}
+      <fieldset className="mode-choice">
+        <legend>{t("How it runs")}</legend>
+        {(["auto", "manual"] as const).map((m) => (
+          <label key={m} className="radio">
+            <input type="radio" name="campaign-mode" value={m} checked={mode === m} onChange={() => setMode(m)} />
+            <span>
+              <b>{t(m === "auto" ? "Automatic" : "Manual")}</b>
+              <span className="muted small">{t(MODE_HINT[m])}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      <div className="form-grid">
+        <label>
+          {t("Stop after failed tasks")}
+          <input type="number" min={1} max={20} value={maxFailures} onChange={(e) => setMaxFailures(Number(e.target.value) || 1)} />
+        </label>
+        <label>
+          {t("At most steps")}
+          <input type="number" min={1} max={100} value={maxSteps} onChange={(e) => setMaxSteps(Number(e.target.value) || 1)} />
+        </label>
+      </div>
+      <div className="btn-row">
+        <button type="submit" className="primary" disabled={busy || !lead || !!problem}>
+          {t(mode === "auto" ? "Start campaign" : "Create campaign")}
+        </button>
+      </div>
+    </form>
   );
 }

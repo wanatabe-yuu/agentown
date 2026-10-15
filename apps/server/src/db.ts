@@ -499,6 +499,29 @@ const MIGRATIONS: string[] = [
      at timestamptz NOT NULL DEFAULT now(),
      PRIMARY KEY (org_id, object_id)
    );`,
+  // 23: campaigns, goals inside a project that agents work toward step by step (auto) or people fill with tasks (manual).
+  `CREATE TABLE IF NOT EXISTS campaigns (
+     id text PRIMARY KEY,
+     org_id text NOT NULL REFERENCES organizations(id),
+     project_id text NOT NULL,
+     title text NOT NULL,
+     goal text NOT NULL,
+     mode text NOT NULL CHECK (mode IN ('auto','manual')),
+     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','achieved','failed','stopped')),
+     lead_agent_id text REFERENCES agents(id),
+     max_failures int NOT NULL DEFAULT 3,
+     max_steps int NOT NULL DEFAULT 12,
+     failure_base int NOT NULL DEFAULT 0,
+     step_base int NOT NULL DEFAULT 0,
+     summary text,
+     created_by text NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now(),
+     updated_at timestamptz NOT NULL DEFAULT now()
+   );
+   CREATE INDEX IF NOT EXISTS campaigns_org ON campaigns(org_id, project_id);
+   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS campaign_id text REFERENCES campaigns(id);
+   ALTER TABLE tasks ADD COLUMN IF NOT EXISTS campaign_step int;
+   CREATE INDEX IF NOT EXISTS tasks_campaign ON tasks(campaign_id);`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

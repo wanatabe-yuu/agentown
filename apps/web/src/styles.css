@@ -2478,3 +2478,44 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 /* While a chat is open the page behind does not scroll (iOS scrolls it to show the focused field). */
 html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: none; }
 .inbox-actions .btn { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); text-decoration: none; }
+.ask-dialog { max-width: 440px; }
+.ask-dialog .ask-message { margin: 0 0 12px; white-space: pre-wrap; line-height: 1.5; }
+
+/* ---- New task: Assign / Campaign */
+.new-work-tabs { margin: -4px 0 12px; }
+.mode-choice { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px 10px; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.mode-choice legend { padding: 0 4px; color: var(--muted); font-size: 12px; }
+.mode-choice .radio { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.mode-choice .radio input { margin-top: 3px; }
+.mode-choice .radio > span { display: flex; flex-direction: column; gap: 2px; }
+
+/* ---- Projects view: projects → campaigns → tasks */
+.projects-view { height: 100%; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.project-card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.project-card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.project-card h3 { margin: 0; font-size: 16px; }
+.campaign-card { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--surface-2); }
+.campaign-card.campaign-achieved { border-left-color: var(--ok, #3fa37a); }
+.campaign-card.campaign-failed { border-left-color: var(--bad); }
+.campaign-card.campaign-stopped { border-left-color: var(--muted); }
+.campaign-card > header { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.campaign-card h4 { margin: 0 0 2px; font-size: 15px; }
+.campaign-tags { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.campaign-goal { margin: 0; white-space: pre-wrap; line-height: 1.5; }
+.campaign-progress { display: flex; flex-direction: column; gap: 4px; }
+.campaign-progress .bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.campaign-progress .bar > span { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
+.campaign-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.campaign-actions .switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.task-rows { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.task-rows button { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; text-align: left; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); min-height: 40px; }
+.task-rows .task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-tag { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+.loose-tasks summary, .campaign-tasks summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+@media (max-width: 700px) {
+  .projects-view { padding: 10px; }
+  .task-rows button { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .task-rows button > .muted { display: none; }
+  .topbar > .seg-toggle button { padding: 0 10px; }
+  .topbar > .task-actions { padding-left: 196px; }
+}

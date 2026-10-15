@@ -84,6 +84,30 @@ export interface Task {
   attempt: number;
   maxAttempts: number;
   summary: string | null;
+  campaignId?: string | null;
+  /** Set on the steps an auto campaign gives its lead. */
+  campaignStep?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A goal inside a project: people fill it with tasks (manual) or its lead works toward it step by step (auto). */
+export interface Campaign {
+  id: string;
+  projectId: string;
+  title: string;
+  goal: string;
+  mode: "auto" | "manual";
+  status: "active" | "achieved" | "failed" | "stopped";
+  leadAgentId: string | null;
+  maxFailures: number;
+  maxSteps: number;
+  failures: number;
+  steps: number;
+  /** Task counts by status. */
+  tasks: Record<string, number>;
+  summary: string | null;
+  createdBy: string;
   createdAt: string;
   updatedAt: string;
 }

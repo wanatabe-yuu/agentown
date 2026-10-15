@@ -4,6 +4,7 @@ import { t } from "./i18n.ts";
 import type { Proposal, Snapshot } from "./types.ts";
 import { ago } from "./ui.tsx";
 import { labels } from "./OwnerChat.tsx";
+import { askText } from "./dialogs.tsx";
 
 const KIND: Record<Proposal["kind"], string> = {
   task_result: "Result to review",
@@ -45,7 +46,7 @@ export function NeedsYou({ snapshot, now, refreshKey, onOpenTask, onAgents }: { 
   };
   const name = (ref: string) => (ref.startsWith("agent:") ? snapshot.agents.find((a) => a.id === ref.slice(6))?.displayName ?? ref.slice(6) : ref.startsWith("human:") ? t("You") : ref);
   const decide = async (p: Proposal, verdict: "approve" | "reject") => {
-    const note = verdict === "reject" ? prompt(t("Reason for rejecting (optional)")) : "";
+    const note = verdict === "reject" ? await askText(t("Reason for rejecting (optional)"), "", { okLabel: t("Reject") }) : "";
     if (note === null) return;
     setBusy(p.id);
     setError(null);

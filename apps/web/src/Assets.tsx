@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { t as tr } from "./i18n.ts";
 import { api, orgPath } from "./api.ts";
 import { Modal } from "./ui.tsx";
+import { askConfirm } from "./dialogs.tsx";
 
 type Notify = (msg: string, kind?: "error" | "info") => void;
 export interface AssetRow {
@@ -95,12 +96,12 @@ export function AssetsDialog({ onClose, notify }: { onClose: () => void; notify:
                 <button
                   type="button"
                   className="danger"
-                  onClick={() =>
-                    confirm(`Delete ${a.name}? Anything using it falls back to a plain shape.`) &&
+                  onClick={async () => {
+                    if (!(await askConfirm(`Delete ${a.name}? Anything using it falls back to a plain shape.`, { danger: true }))) return;
                     void api("DELETE", `/api/assets/${a.id}`)
                       .then(reload)
-                      .catch((e) => notify(e.message, "error"))
-                  }
+                      .catch((e) => notify(e.message, "error"));
+                  }}
                 >
                   {tr("Delete")}
                 </button>

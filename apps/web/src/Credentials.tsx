@@ -3,6 +3,7 @@ import { t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import type { AgentDetail, Catalog, Credential, Effort } from "./types.ts";
 import { Modal, ago } from "./ui.tsx";
+import { askConfirm } from "./dialogs.tsx";
 
 type Notify = (msg: string, kind?: "error" | "info") => void;
 const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
@@ -39,7 +40,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editing && !confirm(`Update connection for "${editing.name}"? Its saved API key will be sent to ${baseUrl.trim()} using the selected protocol and header. Model requests use the updated settings immediately; changing protocol may interrupt an active task.`)) return;
+    if (editing && !(await askConfirm(`Update connection for "${editing.name}"? Its saved API key will be sent to ${baseUrl.trim()} using the selected protocol and header. Model requests use the updated settings immediately; changing protocol may interrupt an active task.`))) return;
     setBusy(true);
     try {
       const connection = { workspaceId: usesClaude ? workspaceId.trim() || null : null, baseUrl: baseUrl.trim(), protocol,
@@ -76,7 +77,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
     }
   };
   const revoke = async (c: Credential) => {
-    if (!confirm(`Revoke "${c.name}"? Agents using it lose the key (idle runtimes are replaced right away).`)) return;
+    if (!(await askConfirm(`Revoke "${c.name}"? Agents using it lose the key (idle runtimes are replaced right away).`, { danger: true }))) return;
     await api("DELETE", `/api/credentials/${c.id}`).catch((err) => notify(err.message, "error"));
     await load();
   };

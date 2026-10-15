@@ -157,10 +157,33 @@ export interface TaskRow {
   attempt: number;
   max_attempts: number;
   summary: string | null;
+  campaign_id: string | null;
+  campaign_step: number | null;
   created_at: Date;
   updated_at: Date;
 }
 
+export interface CampaignRow {
+  id: string;
+  org_id: string;
+  project_id: string;
+  title: string;
+  goal: string;
+  mode: "auto" | "manual";
+  status: "active" | "achieved" | "failed" | "stopped";
+  lead_agent_id: string | null;
+  max_failures: number;
+  max_steps: number;
+  failure_base: number;
+  step_base: number;
+  summary: string | null;
+  created_by: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/** Tasks still in play: a campaign waits for these before its next step. */
+const OPEN_TASK = "('queued','assigned','in_progress','review','blocked')";
 
 interface Ctx {
   c: pg.PoolClient;
@@ -1644,6 +1667,8 @@ export class Service {
       attempt: t.attempt,
       maxAttempts: t.max_attempts,
       summary: t.summary,
+      campaignId: t.campaign_id,
+      campaignStep: t.campaign_step,
       createdAt: t.created_at.toISOString(),
       updatedAt: t.updated_at.toISOString(),
     };
@@ -1715,9 +1740,23 @@ export class Service {
       inputTaskIds?: string[];
       requiresReview?: boolean;
       idempotencyKey?: string;
+      campaignId?: string | null;
+      /** Internal: the step a campaign's driver creates for its lead. */
+      campaignStep?: number;
     },
   ) {
     const spec = this.validateSpec(input.spec);
+    // Work handed out from a campaign's task belongs to the campaign too.
+    if (!input.campaignId && input.parentTaskId) {
+      const parent = await this.db.query<{ campaign_id: string | null }>("SELECT campaign_id FROM tasks WHERE id=$1 AND org_id=$2", [input.parentTaskId, this.orgId]);
+      if (parent.rows[0]?.campaign_id) input = { ...input, campaignId: parent.rows[0].campaign_id };
+    }
+    if (input.campaignId) {
+      // A campaign lives in one project: its tasks are in that project too.
+      const c = await this.getCampaignRow(input.campaignId);
+      if (input.projectId && input.projectId !== c.project_id) throw badRequest("the campaign belongs to another project");
+      input = { ...input, projectId: c.project_id };
+    }
     const key = input.idempotencyKey ? `${actorRef(actor)}:${input.idempotencyKey}` : null;
     if (key) {
       const { rows } = await this.db.query<TaskRow>("SELECT * FROM tasks WHERE org_id=$1 AND idempotency_key=$2", [this.orgId, key]);
@@ -1746,8 +1785,8 @@ export class Service {
       const id = newId("t");
       await ctx.c.query(
         `INSERT INTO tasks(id, project_id, parent_task_id, title, description, acceptance_criteria, spec, status,
-           assignee_agent_id, created_by, requires_review, input_task_ids, idempotency_key, org_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+           assignee_agent_id, created_by, requires_review, input_task_ids, idempotency_key, org_id, campaign_id, campaign_step)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
         [
           id,
           input.projectId ?? null,
@@ -1763,6 +1802,8 @@ export class Service {
           input.inputTaskIds ?? [],
           key,
           this.orgId,
+          input.campaignId ?? null,
+          input.campaignStep ?? null,
         ],
       );
       if (assignee) {
@@ -1772,20 +1813,199 @@ export class Service {
         type: "task.created",
         agentId: assignee,
         taskId: id,
-        payload: { title: input.title, assignee, createdBy: actorRef(actor), projectId: input.projectId ?? null },
+        payload: { title: input.title, assignee, createdBy: actorRef(actor), projectId: input.projectId ?? null, campaignId: input.campaignId ?? null },
       });
       return id;
     });
     return { task: this.presentTask(await this.getTaskRow(id)), existing: false };
   }
 
-  async listTasks(actor: Actor, filter: { assignee?: string; status?: string } = {}) {
+  // ---- campaigns: a goal inside a project. Manual: people add tasks and they wait. Auto: the lead agent
+  // works toward the goal one step at a time (each step may hand out tasks), until it reports the goal
+  // met or failed, too many of the campaign's tasks fail, or it runs out of steps.
+
+  async getCampaignRow(id: string, q: Queryable = this.db): Promise<CampaignRow> {
+    const { rows } = await q.query<CampaignRow>("SELECT * FROM campaigns WHERE id=$1 AND org_id=$2", [id, this.orgId]);
+    if (!rows[0]) throw notFound("campaign");
+    return rows[0];
+  }
+
+  private async presentCampaigns(rows: CampaignRow[]) {
+    if (!rows.length) return [];
+    const { rows: counts } = await this.db.query<{ campaign_id: string; status: string; n: string; steps: string }>(
+      "SELECT campaign_id, status, count(*) AS n, count(campaign_step) AS steps FROM tasks WHERE campaign_id = ANY($1) GROUP BY campaign_id, status",
+      [rows.map((r) => r.id)],
+    );
+    return rows.map((c) => {
+      const mine = counts.filter((x) => x.campaign_id === c.id);
+      const tasks: Record<string, number> = {};
+      for (const x of mine) tasks[x.status] = Number(x.n);
+      const steps = mine.reduce((n, x) => n + Number(x.steps), 0);
+      return {
+        id: c.id, projectId: c.project_id, title: c.title, goal: c.goal, mode: c.mode, status: c.status,
+        leadAgentId: c.lead_agent_id, maxFailures: c.max_failures, maxSteps: c.max_steps,
+        failures: Math.max(0, (tasks.failed ?? 0) - c.failure_base), steps: Math.max(0, steps - c.step_base),
+        tasks, summary: c.summary, createdBy: c.created_by, createdAt: c.created_at.toISOString(), updatedAt: c.updated_at.toISOString(),
+      };
+    });
+  }
+
+  /** Campaigns are seen by everyone in the organization (people and agents); their tasks only by those who may see them. */
+  async listCampaigns(_actor: Actor, filter: { projectId?: string } = {}) {
+    const { rows } = await this.db.query<CampaignRow>(
+      "SELECT * FROM campaigns WHERE org_id=$1 AND ($2::text IS NULL OR project_id=$2) ORDER BY created_at DESC LIMIT 200",
+      [this.orgId, filter.projectId ?? null],
+    );
+    return this.presentCampaigns(rows);
+  }
+
+  async getCampaign(actor: Actor, id: string) {
+    const [c] = await this.presentCampaigns([await this.getCampaignRow(id)]);
+    return { campaign: c, tasks: await this.listTasks(actor, { campaign: id }) };
+  }
+
+  async createCampaign(actor: Actor, input: { projectId: string; title: string; goal: string; mode: "auto" | "manual"; leadAgentId: string; maxFailures?: number; maxSteps?: number }) {
+    if (!this.config.projects.some((p) => p.id === input.projectId)) throw badRequest("unknown project");
+    const id = await this.withTx(async (ctx) => {
+      const lead = await this.getAgentRow(input.leadAgentId, ctx.c);
+      if (lead.lifecycle_state === "retired") throw conflict("retired", "the lead is retired");
+      // Leading means taking the campaign's steps as tasks: the same right as giving it a task here.
+      await this.require(actor, "task.create", { agentId: lead.id, projectId: input.projectId }, { q: ctx.c, auditAs: "campaign.create", detail: { title: input.title } });
+      if (input.mode === "auto") await this.requirePromptable(lead, ctx.c);
+      const id = newId("cp");
+      await ctx.c.query(
+        `INSERT INTO campaigns(id, org_id, project_id, title, goal, mode, lead_agent_id, max_failures, max_steps, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [id, this.orgId, input.projectId, input.title.slice(0, 200), input.goal, input.mode, lead.id, input.maxFailures ?? 3, input.maxSteps ?? 12, actorRef(actor)],
+      );
+      await this.emit(ctx, { type: "campaign.updated", agentId: lead.id, payload: { campaignId: id, title: input.title, status: "active", mode: input.mode } });
+      return id;
+    });
+    if (input.mode === "auto") await this.driveCampaign(id);
+    return (await this.getCampaign(actor, id)).campaign;
+  }
+
+  /** Who may steer a campaign: whoever made it, and the owner. */
+  private requireCampaignOwner(actor: Actor, c: CampaignRow) {
+    if (!isOwner(actor) && actorRef(actor) !== c.created_by) throw deny("only the campaign's creator or the owner can change it");
+  }
+
+  async updateCampaign(actor: Actor, id: string, change: { mode?: "auto" | "manual"; status?: "active" | "stopped"; goal?: string; title?: string; maxFailures?: number; maxSteps?: number; leadAgentId?: string }) {
+    await this.withTx(async (ctx) => {
+      const c = await this.getCampaignRow(id, ctx.c);
+      this.requireCampaignOwner(actor, c);
+      const lead = change.leadAgentId ? await this.getAgentRow(change.leadAgentId, ctx.c) : c.lead_agent_id ? await this.getAgentRow(c.lead_agent_id, ctx.c) : null;
+      if (change.leadAgentId) await this.require(actor, "task.create", { agentId: change.leadAgentId, projectId: c.project_id }, { q: ctx.c, auditAs: "campaign.update" });
+      const mode = change.mode ?? c.mode;
+      if (mode === "auto" && lead) await this.requirePromptable(lead, ctx.c);
+      // Resuming starts the failure and step counts over from here.
+      const resume = change.status === "active" && c.status !== "active";
+      const counts = resume
+        ? (await ctx.c.query<{ failed: string; steps: string }>("SELECT count(*) FILTER (WHERE status='failed') AS failed, count(campaign_step) AS steps FROM tasks WHERE campaign_id=$1", [id])).rows[0]!
+        : null;
+      await ctx.c.query(
+        `UPDATE campaigns SET mode=$2, status=$3, goal=$4, title=$5, max_failures=$6, max_steps=$7, lead_agent_id=$8,
+           failure_base=$9, step_base=$10, summary=CASE WHEN $11 THEN NULL ELSE summary END, updated_at=now() WHERE id=$1`,
+        [id, mode, change.status ?? c.status, change.goal ?? c.goal, (change.title ?? c.title).slice(0, 200), change.maxFailures ?? c.max_failures,
+          change.maxSteps ?? c.max_steps, lead?.id ?? null, counts ? Number(counts.failed) : c.failure_base, counts ? Number(counts.steps) : c.step_base, resume],
+      );
+      await this.audit(ctx.c, actor, "campaign.update", id, true, "campaign owner", change);
+      await this.emit(ctx, { type: "campaign.updated", agentId: lead?.id ?? null, payload: { campaignId: id, title: c.title, mode, status: change.status ?? c.status } });
+    });
+    await this.driveCampaign(id);
+    return (await this.getCampaign(actor, id)).campaign;
+  }
+
+  /** The lead (or the creator, or the owner) says the goal is met, or cannot be. */
+  async finishCampaign(actor: Actor, id: string, outcome: "achieved" | "failed", summary: string) {
+    await this.withTx(async (ctx) => {
+      const c = await this.getCampaignRow(id, ctx.c);
+      const lead = actor.kind === "agent" && actor.id === c.lead_agent_id;
+      if (!lead) this.requireCampaignOwner(actor, c);
+      if (c.status !== "active") throw conflict("not_active", `the campaign is already ${c.status}`);
+      await this.closeCampaign(ctx, c, outcome, summary);
+    });
+    return (await this.getCampaign(actor, id)).campaign;
+  }
+
+  private async closeCampaign(ctx: Ctx, c: CampaignRow, outcome: "achieved" | "failed", summary: string) {
+    await ctx.c.query("UPDATE campaigns SET status=$2, summary=$3, updated_at=now() WHERE id=$1", [c.id, outcome, summary.slice(0, 4000)]);
+    if (outcome === "achieved") {
+      // Work nobody started is no longer needed.
+      const { rows } = await ctx.c.query<TaskRow>("SELECT * FROM tasks WHERE campaign_id=$1 AND status IN ('queued','assigned') FOR UPDATE", [c.id]);
+      for (const t of rows) await this.setTaskStatus(ctx, t, "cancelled", "campaign achieved its goal");
+    }
+    await this.emit(ctx, { type: "campaign.updated", agentId: c.lead_agent_id, payload: { campaignId: c.id, title: c.title, status: outcome, summary: summary.slice(0, 300) } });
+  }
+
+  /** Every running auto campaign of this organization takes its next step if it is ready to. */
+  async driveCampaigns() {
+    const { rows } = await this.db.query<{ id: string }>("SELECT id FROM campaigns WHERE org_id=$1 AND mode='auto' AND status='active'", [this.orgId]);
+    for (const r of rows) await this.driveCampaign(r.id).catch((err) => console.warn(`[campaign ${r.id}]`, (err as Error).message));
+  }
+
+  /**
+   * One look at an auto campaign: too many failures ends it; otherwise, once none of its tasks is
+   * still in play, its lead gets the next step (a task that reads the progress so far and either
+   * does the work, hands parts out with --campaign, or declares the goal met or failed).
+   */
+  async driveCampaign(id: string) {
+    const c = await this.getCampaignRow(id);
+    if (c.mode !== "auto" || c.status !== "active" || !c.lead_agent_id) return;
+    const { rows: tasks } = await this.db.query<TaskRow>("SELECT * FROM tasks WHERE campaign_id=$1 ORDER BY created_at", [id]);
+    const failures = tasks.filter((t) => t.status === "failed").length - c.failure_base;
+    const steps = tasks.filter((t) => t.campaign_step !== null).length - c.step_base;
+    if (failures >= c.max_failures || (steps >= c.max_steps && !tasks.some((t) => OPEN_TASK.includes(`'${t.status}'`)))) {
+      const why = failures >= c.max_failures ? `${failures} tasks failed (limit ${c.max_failures})` : `used all ${c.max_steps} steps without reaching the goal`;
+      await this.withTx(async (ctx) => {
+        const locked = await ctx.c.query("SELECT 1 FROM campaigns WHERE id=$1 AND status='active' FOR UPDATE", [id]);
+        if (locked.rows[0]) await this.closeCampaign(ctx, c, "failed", why);
+      });
+      return;
+    }
+    if (tasks.some((t) => OPEN_TASK.includes(`'${t.status}'`))) return;
+    const creator = await this.kernel.identity.parseActorRef(c.created_by).catch(() => null);
+    const step = tasks.filter((t) => t.campaign_step !== null).length + 1;
+    const project = this.config.projects.find((p) => p.id === c.project_id)?.name ?? c.project_id;
+    const history = tasks.slice(-30).map((t) => `- [${t.status}]${t.campaign_step ? ` step ${t.campaign_step}` : ""} ${t.title}${t.summary ? ` — ${t.summary.replace(/\s+/g, " ").slice(0, 300)}` : ""}`);
+    const description = [
+      `You lead the campaign "${c.title}" (id ${c.id}) in the project "${project}".`,
+      `Goal: ${c.goal}`,
+      `This is step ${steps + 1} of at most ${c.max_steps}. The campaign fails after ${c.max_failures} failed tasks (${Math.max(0, failures)} so far).`,
+      history.length ? `Progress so far:\n${history.join("\n")}` : "Nothing has been done yet.",
+      `Decide the next step toward the goal. Do the work yourself in this task, and/or hand parts to others with \`agentown task create --campaign ${c.id} --to AGENT --title T --desc D\` (\`agentown agents\` lists who can help); the next step starts once all of them have finished.`,
+      `When the goal is fully met, run \`agentown campaign done ${c.id} --summary "what was achieved"\`. If it cannot be met, run \`agentown campaign fail ${c.id} --summary "why"\`. Otherwise finish this task with a short summary of what you did; the campaign continues with its next step.`,
+    ].join("\n\n");
+    try {
+      if (!creator) throw new Error("the campaign's creator no longer exists");
+      await this.createTask(creator, {
+        title: `${c.title} · ${this.config.organization.language === "vi" ? "bước" : "step"} ${step}`,
+        description,
+        acceptanceCriteria: "The step moved the campaign toward its goal, or the campaign was marked done or failed.",
+        assigneeAgentId: c.lead_agent_id,
+        campaignId: c.id,
+        campaignStep: step,
+        requiresReview: false,
+        spec: { kind: "prompt" },
+        idempotencyKey: `campaign-${c.id}-step-${step}`,
+      });
+    } catch (err) {
+      // The lead lost its key or the creator its rights: stop rather than retry forever.
+      await this.withTx(async (ctx) => {
+        await ctx.c.query("UPDATE campaigns SET status='stopped', summary=$2, updated_at=now() WHERE id=$1 AND status='active'", [id, `could not start the next step: ${(err as Error).message}`.slice(0, 1000)]);
+        await this.emit(ctx, { type: "campaign.updated", agentId: c.lead_agent_id, payload: { campaignId: c.id, title: c.title, status: "stopped" } });
+      });
+    }
+  }
+
+  async listTasks(actor: Actor, filter: { assignee?: string; status?: string; campaign?: string } = {}) {
     const policy = await this.loadPolicy();
     const shared = await this.sharedTaskIds(actor);
     const params: unknown[] = [];
     const where: string[] = [`org_id = $${params.push(this.orgId)}`];
     if (filter.assignee) where.push(`assignee_agent_id = $${params.push(filter.assignee)}`);
     if (filter.status) where.push(`status = $${params.push(filter.status)}`);
+    if (filter.campaign) where.push(`campaign_id = $${params.push(filter.campaign)}`);
     const { rows } = await this.db.query<TaskRow>(
       `SELECT * FROM tasks WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT 500`,
       params,
@@ -2035,7 +2255,10 @@ export class Service {
       if (!agent.accepting_work || agent.lifecycle_state === "retired") return null;
       if (rt.applied_secret_rev && rt.applied_secret_rev !== await this.desiredSecretRev(agent, ctx.c)) return null;
       const { rows } = await ctx.c.query<TaskRow>(
-        `SELECT * FROM tasks WHERE assignee_agent_id=$1 AND status='assigned' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`,
+        // A campaign's tasks wait while it is manual (or stopped, or over); only a running auto campaign lets them start.
+        `SELECT * FROM tasks t WHERE assignee_agent_id=$1 AND status='assigned'
+           AND (campaign_id IS NULL OR EXISTS (SELECT 1 FROM campaigns c WHERE c.id = t.campaign_id AND c.mode = 'auto' AND c.status = 'active'))
+         ORDER BY created_at LIMIT 1 FOR UPDATE OF t SKIP LOCKED`,
         [agentId],
       );
       const t = rows[0];

@@ -62,6 +62,20 @@ bus.subscribe((e) => {
 const terminalSweep = setInterval(() => void recheckTerminals().catch(() => {}), 5000);
 // The host's self-patch builder leaves results; put them on their proposals.
 const patchSweep = setInterval(() => void collectResults(db).catch(() => {}), 10000);
+// Auto campaigns take their next step once their tasks settle: right after a task changes, and every 15 s.
+let driving: Promise<void> | null = null;
+const driveCampaigns = () => {
+  driving ??= (async () => {
+    const { rows } = await db.query<{ org_id: string }>("SELECT DISTINCT org_id FROM campaigns WHERE mode='auto' AND status='active'");
+    for (const r of rows) await (await instance.org(r.org_id)).driveCampaigns();
+  })()
+    .catch((err) => console.warn("[campaigns]", (err as Error).message))
+    .finally(() => (driving = null));
+};
+const campaignSweep = setInterval(driveCampaigns, 15000);
+bus.subscribe((e) => {
+  if (e.type === "task.status") setTimeout(driveCampaigns, 500);
+});
 
 if (controller) controller.start();
 const leaseSweep = !controller ? setInterval(() => void instance.sweepLeases().catch(() => {}), 5000) : null;
@@ -78,6 +92,7 @@ const shutdown = async () => {
   controller?.stop();
   clearInterval(terminalSweep);
   clearInterval(patchSweep);
+  clearInterval(campaignSweep);
   if (leaseSweep) clearInterval(leaseSweep);
   await app.close();
   await db.end();

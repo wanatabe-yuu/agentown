@@ -37,7 +37,10 @@ const HELP = `agentown <command>
   proposals [--status pending]             proposals you made or may decide
   team                                     your team's channel (latest messages)
   team say TEXT                            post to your team's channel
-  task create --to AGENT --title T [--desc D] [--criteria C] [--project P]
+  campaign get ID                          a campaign: goal, mode, status and its tasks (JSON)
+  campaign done ID --summary S             you lead it and its goal is met: close it as achieved
+  campaign fail ID --summary S             you lead it and the goal cannot be met: close it as failed
+  task create --to AGENT --title T [--desc D] [--criteria C] [--project P] [--campaign ID]
               [--playbook NAME --arg KEY=VALUE ...] [--input TASK_ID ...] [--key K]
                                            create a task (parent = current task)
   task get ID                              show a task (JSON)
@@ -124,6 +127,14 @@ async function main() {
         }
       }
       return out(await api.post(`/api/tools/${encodeURIComponent(sub)}/invoke`, { args }));
+    }
+    case "campaign": {
+      const id = rest[0];
+      if (!id || !["get", "done", "fail"].includes(sub ?? "")) throw new Error("usage: agentown campaign get|done|fail ID [--summary S]");
+      if (sub === "get") return out(await api.get(`/api/campaigns/${encodeURIComponent(id)}`));
+      const { one } = parseFlags(rest.slice(1));
+      if (!one("summary")) throw new Error(`campaign ${sub} requires --summary`);
+      return out(await api.post(`/api/campaigns/${encodeURIComponent(id)}/finish`, { outcome: sub === "done" ? "achieved" : "failed", summary: one("summary") }));
     }
     case "asset": {
       if (sub !== "upload" || !rest[0]) throw new Error("usage: agentown asset upload FILE [--name N]");
@@ -222,6 +233,7 @@ async function task(api: AgentownClient, sub: string | undefined, rest: string[]
         acceptanceCriteria: one("criteria"),
         assigneeAgentId: one("to"),
         projectId: one("project") ?? null,
+        campaignId: one("campaign") ?? null,
         parentTaskId: one("parent") ?? process.env.AGENTOWN_TASK_ID ?? null,
         inputTaskIds: flags.input ?? [],
         spec: playbook ? { kind: "playbook", playbook, args } : { kind: "prompt" },

@@ -14,6 +14,7 @@ import { disposeMaterials } from "./procedural.ts";
 import { lightRoom } from "./env.ts";
 import { buildScene, type Flight, objectIndexOf, type OfficeScene, updateScene, workstationOf } from "./scene.ts";
 import type { Draft } from "./WorldEditor.tsx";
+import { askConfirm } from "../dialogs.tsx";
 
 // The editor (and its validation) is only downloaded when someone opens it.
 type EditorModule = typeof import("./WorldEditor.tsx");
@@ -509,8 +510,8 @@ export default function Office3D(props: Props) {
       notify((e as Error).message, "error");
     }
   };
-  const stopEditing = () => {
-    if (dirty && !confirm("Discard your changes to the world?")) return;
+  const stopEditing = async () => {
+    if (dirty && !(await askConfirm("Discard your changes to the world?", { danger: true }))) return;
     setEditing(false);
     setDraft(null);
     setSelectedObj(null);

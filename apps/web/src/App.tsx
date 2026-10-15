@@ -6,6 +6,7 @@ import { AssetsDialog } from "./Assets.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
 import { OrgEditor } from "./OrgEditor.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
+import { ProjectsView } from "./Projects.tsx";
 import { chatSelectionKey, OwnerChatDialog, type ChatTarget } from "./OwnerChat.tsx";
 import { Avatar, AvatarRoster } from "./Avatar.tsx";
 import { ConversationsSection } from "./Conversations.tsx";
@@ -151,7 +152,7 @@ function OrgApp({
   const [openTask, setOpenTask] = useState<string | null>(null);
   const [newTaskFor, setNewTaskFor] = useState<string | null | undefined>(undefined);
   // The 3D office is the default everywhere (it falls back to a flat view without WebGL).
-  const [view, setView] = useState<"office" | "table">("office");
+  const [view, setView] = useState<"office" | "table" | "projects">("office");
   const [showAudit, setShowAudit] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
@@ -279,6 +280,9 @@ function OrgApp({
           <button type="button" className={view === "table" ? "active" : ""} onClick={() => setView("table")}>
             {t("Table")}
           </button>
+          <button type="button" className={view === "projects" ? "active" : ""} onClick={() => setView("projects")}>
+            {t("Projects")}
+          </button>
         </div>
         <div className="task-actions">
           {me.taskTargets.length > 0 && (
@@ -348,6 +352,8 @@ function OrgApp({
                 onEditingChange={setWorldEditing}
               />
             </Suspense>
+          ) : view === "projects" ? (
+            <ProjectsView snapshot={snapshot} me={me} now={now} notify={notify} onOpenTask={setOpenTask} />
           ) : (
             <AgentTable snapshot={snapshot} workOf={effectiveWork} now={now} onSelect={setSelected} selected={selected} onChat={me.actor.owner ? openAgentChat : undefined} />
           )}

@@ -3,6 +3,7 @@ import { type Lang, lang, languageLabel, LANGUAGES, t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import type { Account } from "./types.ts";
 import { Modal } from "./ui.tsx";
+import { askConfirm } from "./dialogs.tsx";
 
 type Notify = (msg: string, kind?: "error" | "info") => void;
 
@@ -152,8 +153,8 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
                       <button
                         type="button"
                         className="danger"
-                        onClick={() => {
-                          if (confirm(`Archive ${o.name}? Its runtimes stop and its members lose access until you restore it.`)) {
+                        onClick={async () => {
+                          if (await askConfirm(`Archive ${o.name}? Its runtimes stop and its members lose access until you restore it.`, { danger: true })) {
                             void run(() => api("PATCH", `/api/admin/orgs/${o.id}`, { archived: true }));
                           }
                         }}

@@ -8,6 +8,7 @@ import { t } from "./i18n.ts";
 import { EVENT_TEXT, plain } from "./activity.ts";
 import { ReportText } from "./Markdown.tsx";
 import { Avatar } from "./Avatar.tsx";
+import { askText } from "./dialogs.tsx";
 
 type Filter = "you" | "team" | "other";
 
@@ -219,7 +220,8 @@ function FeedDialog({ kind, snapshot, now, onClose, onOpenTask }: { kind: FeedKi
     };
   }, [kind, team, tick]);
   const decide = async (id: string, verdict: "approve" | "reject") => {
-    const note = verdict === "reject" ? prompt(t("Reason for rejecting (optional)")) ?? "" : "";
+    const note = verdict === "reject" ? await askText(t("Reason for rejecting (optional)"), "", { okLabel: t("Reject") }) : "";
+    if (note === null) return;
     setBusy(id);
     try {
       await api("POST", `/api/proposals/${id}/decide`, { verdict, note });

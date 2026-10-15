@@ -3,6 +3,7 @@ import { HttpError, api } from "./api.ts";
 import type { Catalog, Snapshot } from "./types.ts";
 import { Modal } from "./ui.tsx";
 import { languageLabel, t as tr } from "./i18n.ts";
+import { askConfirm } from "./dialogs.tsx";
 
 type Notify = (msg: string, kind?: "error" | "info") => void;
 /** The organization's document in its authoring format (the same shape as a template file). */
@@ -65,7 +66,7 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
       setDirty(false);
       notify("Saved. New hires and new role assignments use it right away.", "info");
     } catch (e) {
-      if (e instanceof HttpError && e.status === 409 && confirm("Someone else changed the organization meanwhile. Reload their version (your unsaved edits are lost)?")) await load();
+      if (e instanceof HttpError && e.status === 409 && (await askConfirm("Someone else changed the organization meanwhile. Reload their version (your unsaved edits are lost)?"))) await load();
       else notify((e as Error).message, "error");
     } finally {
       setBusy(false);
@@ -92,7 +93,7 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
   };
 
   return (
-    <Modal title={tr("Organization: {name}", { name: snapshot.organization.name })} onClose={() => (!dirty || confirm("Discard unsaved changes?")) && onClose()} wide>
+    <Modal title={tr("Organization: {name}", { name: snapshot.organization.name })} onClose={() => void (async () => (!dirty || (await askConfirm("Discard unsaved changes?", { danger: true }))) && onClose())()} wide>
       <nav className="tabs" role="tablist">
         {(["departments", "teams", "projects", "jobs", "profiles", "roles", "templates"] as Tab[]).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
@@ -532,7 +533,7 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
                     {tr("Export YAML")}
                   </button>
                   {!t.builtIn && (
-                    <button type="button" className="danger" onClick={() => confirm(tr("Delete template {name}?", { name: t.name })) && void run(() => api("DELETE", `/api/templates/${t.id}`), tr("Deleted"))}>
+                    <button type="button" className="danger" onClick={() => void askConfirm(tr("Delete template {name}?", { name: t.name }), { danger: true }).then((ok) => void (ok && run(() => api("DELETE", `/api/templates/${t.id}`), tr("Deleted"))))}>
                       {tr("Delete")}
                     </button>
                   )}

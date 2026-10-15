@@ -52,12 +52,22 @@ export function describeScope(scope: { kind: string; ids?: string[] }): string {
   return scope.ids ? `${scope.kind}: ${scope.ids.join(", ")}` : scope.kind;
 }
 
+/** Open modals, newest last: only the top one answers Escape and keeps Tab inside it (a confirm over an editor). */
+const openModals: object[] = [];
+
 export function Modal({ title, onClose, children, wide, className = "", style }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; className?: string; style?: CSSProperties }) {
   const dialog = useRef<HTMLDivElement>(null);
+  const me = useRef({}).current;
+  useLayoutEffect(() => {
+    openModals.push(me);
+    return () => {
+      openModals.splice(openModals.indexOf(me), 1);
+    };
+  }, [me]);
   useLayoutEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const trap = (e: KeyboardEvent) => {
-      if (e.key !== "Tab" || !dialog.current) return;
+      if (e.key !== "Tab" || !dialog.current || openModals.at(-1) !== me) return;
       const nodes = [...dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]')].filter(n => n.getClientRects().length);
       const first = nodes[0], last = nodes.at(-1);
       if (e.shiftKey && (document.activeElement === first || !dialog.current.contains(document.activeElement))) { e.preventDefault(); last?.focus(); }
@@ -68,10 +78,10 @@ export function Modal({ title, onClose, children, wide, className = "", style }:
     return () => { window.removeEventListener("keydown", trap); if (previous?.isConnected) previous.focus(); };
   }, []);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && openModals.at(-1) === me && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, me]);
   return (
     <div className="modal-backdrop" style={style} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div ref={dialog} className={`modal ${wide ? "wide" : ""} ${className}`} role="dialog" aria-modal="true" aria-label={title}>

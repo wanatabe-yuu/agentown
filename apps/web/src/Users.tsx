@@ -3,6 +3,7 @@ import { t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import type { Catalog, Me, Role, Scope, Snapshot, User } from "./types.ts";
 import { Modal, describeScope } from "./ui.tsx";
+import { askConfirm } from "./dialogs.tsx";
 
 type Notify = (msg: string, kind?: "error" | "info") => void;
 
@@ -62,8 +63,8 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
       setName("");
     });
   };
-  const resetToken = (u: User) => {
-    if (!confirm(`Issue a new token for ${u.displayName}? Their current token stops working.`)) return;
+  const resetToken = async (u: User) => {
+    if (!(await askConfirm(`Issue a new token for ${u.displayName}? Their current token stops working.`, { danger: true }))) return;
     void run(async () => {
       const r = await api<{ token: string }>("POST", `/api/users/${u.id}/token`);
       setIssued({ who: u.displayName, token: r.token });
@@ -295,8 +296,8 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
         <button
           type="button"
           disabled={!roleId}
-          onClick={() => {
-            if (confirm(`Replace all of ${user.displayName}'s permissions with the "${roles.find((r) => r.id === roleId)?.name}" preset?`)) {
+          onClick={async () => {
+            if (await askConfirm(`Replace all of ${user.displayName}'s permissions with the "${roles.find((r) => r.id === roleId)?.name}" preset?`)) {
               void run(() => api("PATCH", `/api/users/${user.id}`, { roleId }));
             }
           }}
