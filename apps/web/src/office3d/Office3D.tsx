@@ -121,7 +121,8 @@ export default function Office3D(props: Props) {
   const focus = (rooms: PlacedRoom[]) => {
     const e = engine.current;
     const el = wrap.current;
-    if (!e || !el || !rooms.length) return;
+    // A stage with no size yet (a background tab) would frame everything tiny: the resize that gives it a size frames it.
+    if (!e || !el || !rooms.length || el.clientWidth < 2 || el.clientHeight < 2) return;
     const b = bounds(rooms);
     const to = new THREE.Vector3((b.minX + b.maxX) / 2, b.y, (b.minZ + b.maxZ) / 2);
     // Tight framing: the world fills the stage, with just room for the labels.
