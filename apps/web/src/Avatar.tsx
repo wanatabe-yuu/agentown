@@ -24,7 +24,7 @@ export const AvatarRoster = RosterContext.Provider;
 const imageUrl = (id: string) => orgPath(`/api/assets/${encodeURIComponent(id)}`);
 
 /** Name, picture and color of someone in this organization. */
-export function useWho(who: Who): { name: string; image: string | null; color: string; initial: string } {
+function useWho(who: Who): { name: string; image: string | null; color: string; initial: string } {
   const r = useContext(RosterContext);
   const [picture, setPicture] = useState<string | null>(null);
   const agent = who.type === "agent" ? r.agents.find((a) => a.id === who.id) : undefined;

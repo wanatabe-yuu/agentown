@@ -1923,10 +1923,6 @@ input.short {
 .conv-avatar.team {
   border-radius: 8px;
 }
-.conv-avatar.object {
-  background: var(--surface-3);
-  color: var(--muted);
-}
 .team-messages {
   display: flex;
   flex-direction: column;
