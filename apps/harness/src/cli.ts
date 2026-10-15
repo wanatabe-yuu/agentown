@@ -15,7 +15,7 @@ const HELP = `agentown <command>
   agent get ID                             inspect an agent and your permissions on it
   credentials                              list available credential IDs and models (never API keys)
   agent configure ID [--credential ID] [--model MODEL] [--effort LEVEL]
-                     [--instructions TEXT] [--max-turns N]
+                     [--instructions TEXT] [--max-turns N] [--context-limit TOKENS]
                                            configure an agent you are allowed to manage
                                            use "none" to clear credential, model or effort
   spawn --template T --name N [--manager M] [--key K]
@@ -103,15 +103,15 @@ async function agent(api: AgentownClient, sub: string | undefined, rest: string[
   const path = `/api/agents/${encodeURIComponent(id)}`;
   if (sub === "get") return out(await api.get(path));
   if (sub !== "configure") throw new Error(`unknown agent command ${sub}\n${HELP}`);
-  const fields = { credential: "credentialId", model: "model", effort: "effort", instructions: "instructions", "max-turns": "maxTurns" } as const;
+  const fields = { credential: "credentialId", model: "model", effort: "effort", instructions: "instructions", "max-turns": "maxTurns", "context-limit": "contextLimit" } as const;
   const change: Record<string, unknown> = {};
   for (const flag of Object.keys(flags)) {
     if (!Object.hasOwn(fields, flag)) throw new Error(`unknown configuration flag --${flag}`);
     const value = one(flag)!;
     if (value === "true" || flags[flag]!.length !== 1) throw new Error(`--${flag} requires one value`);
     const field = fields[flag as keyof typeof fields];
-    change[field] = field === "maxTurns" ? Number(value)
-      : value === "none" && ["credentialId", "model", "effort"].includes(field) ? null : value;
+    change[field] = ["maxTurns", "contextLimit"].includes(field) && value !== "none" ? Number(value)
+      : value === "none" && ["credentialId", "model", "effort", "contextLimit"].includes(field) ? null : value;
   }
   if (!Object.keys(change).length) throw new Error("agent configure requires at least one configuration flag");
   return out(await api.put(`${path}/config`, change));

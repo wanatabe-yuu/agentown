@@ -9,7 +9,7 @@ export const chatConfigSchema = z.object({
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]).nullable().default("medium"),
   contextLimit: z.number().int().min(8192).max(1000000).default(64000),
   maxOutputTokens: z.number().int().min(256).max(32000).default(4096),
-  maxTurns: z.number().int().min(1).max(40).default(20),
+  maxTurns: z.number().int().min(1).max(40).default(5),
   approvalMode: z.enum(["important", "all"]).default("important"),
 }).strict().refine(c => c.maxOutputTokens < c.contextLimit / 2, "output limit must be less than half the context budget");
 export type ChatConfig = z.infer<typeof chatConfigSchema>;

@@ -18,6 +18,7 @@ export interface RunConfig {
   effort: "low" | "medium" | "high" | "xhigh" | "max" | null;
   instructions: string;
   maxTurns: number;
+  contextLimit?: number | null;
   hasCredential: boolean;
 }
 

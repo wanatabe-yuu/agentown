@@ -115,6 +115,7 @@ export interface AgentConfig {
   effort: Effort | null;
   instructions: string;
   maxTurns: number;
+  contextLimit: number | null;
 }
 
 export const WORK_STATES = ["idle", "thinking", "executing", "waiting", "blocked", "offline", "error"] as const;

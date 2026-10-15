@@ -394,6 +394,17 @@ const MIGRATIONS: string[] = [
       FROM jsonb_array_elements(config->'world'->'objects') WITH ORDINALITY AS a(item,n))), config_revision=config_revision+1
    WHERE jsonb_typeof(config->'world'->'objects')='array' AND EXISTS
      (SELECT 1 FROM jsonb_array_elements(config->'world'->'objects') AS a(item) WHERE NOT item ? 'id');`,
+  `ALTER TABLE tasks ALTER COLUMN max_attempts SET DEFAULT 5;
+   -- 20 was the original chat default; preserve other explicit limits and all token/model settings.
+   UPDATE owner_chats SET config=jsonb_set(config,'{maxTurns}','5'::jsonb)
+   WHERE config->>'maxTurns'='20';`,
+  `CREATE INDEX IF NOT EXISTS agent_events_task ON agent_events(org_id,task_id,seq);
+   CREATE INDEX IF NOT EXISTS agent_events_work ON agent_events(org_id,agent_id,at) WHERE type='work.state';
+   CREATE INDEX IF NOT EXISTS task_runs_task ON task_runs(task_id,started_at DESC,id DESC);
+   CREATE INDEX IF NOT EXISTS agent_logs_run ON agent_logs(agent_id,run_id,seq);`,
+  `ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS config_snapshot jsonb;
+   ALTER TABLE agents ADD COLUMN IF NOT EXISTS context_limit int CHECK (context_limit IS NULL OR context_limit BETWEEN 8192 AND 1000000);
+   CREATE INDEX IF NOT EXISTS agent_events_config ON agent_events(org_id,(payload->>'by'),at) WHERE type='agent.configured';`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

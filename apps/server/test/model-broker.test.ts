@@ -55,6 +55,33 @@ describe("server-only provider credentials", () => {
     expect((await call({}, env.token("ceo"), generation, "anthropic/v1/keys")).statusCode).toBe(403);
     expect(seen.length).toBe(count);
   });
+  it("concurrent claims never exhaust the database pool", async () => {
+    expect((await env.db.query("SELECT applied_secret_rev FROM agent_runtimes WHERE agent_id='ceo'")).rows[0].applied_secret_rev).toMatch(/^broker-v1:/);
+    // More claims than pool connections: each must finish inside its own transaction.
+    const claims = await Promise.all(Array.from({ length: 12 }, () => env.call(env.token("ceo"), "POST", "/api/runs/claim", { generation })));
+    expect(claims.map(c => c.status)).toEqual(Array(12).fill(204));
+  }, 10_000);
+
+  it("pins an active task's model and key while next-task settings change", async () => {
+    const task = (await env.call(env.owner, "POST", "/api/tasks", { title: "Pinned runtime", assigneeAgentId: "ceo", spec: { kind: "prompt" } })).body.task;
+    const claim = await env.call(env.token("ceo"), "POST", "/api/runs/claim", { generation });
+    expect(claim.body.task.id).toBe(task.id);
+    const next = (await env.call(env.owner, "POST", "/api/credentials", { name: "Next key", apiKey: "sk-test-wide-next-1234", provider: "custom", protocol: "anthropic", baseUrl: base })).body.id;
+    try {
+      await env.call(env.owner, "PUT", "/api/agents/ceo/config", { credentialId: next, model: "claude-sonnet-5-5" });
+      expect((await call()).statusCode).toBe(200);
+      expect(seen.at(-1)!.headers["x-api-key"]).toBe(KEY);
+      expect((await call({ model: "claude-sonnet-5-5" })).statusCode).toBe(403);
+      const resumed = await env.call(env.token("ceo"), "POST", "/api/runs/claim", { generation });
+      expect(resumed.body.config.model).toBe("claude-haiku-5-5");
+      expect(JSON.stringify(resumed.body)).not.toContain(KEY);
+    } finally {
+      await env.call(env.token("ceo"), "POST", `/api/runs/${claim.body.run.id}/complete`, { generation, outcome: "succeeded", summary: "Pinned settings retained" });
+      await env.call(env.owner, "PUT", "/api/agents/ceo/config", { credentialId: credential, model: "claude-haiku-5-5" });
+      await env.settle(); await env.settle();
+      generation = (await env.db.query("SELECT generation FROM agent_runtimes WHERE agent_id='ceo'")).rows[0].generation;
+    }
+  });
   it("redacts provider echoes across stream chunks and suppresses secret response headers/error bodies", async () => {
     const response = await call({ stream: true }); expect(response.statusCode).toBe(200);
     expect(response.body).toContain("[redacted]"); expect(response.body).not.toContain(KEY); expect(response.body).not.toContain(Buffer.from(KEY).toString("base64"));

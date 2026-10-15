@@ -53,7 +53,7 @@ describe("individual conversations", () => {
     expect(result.chat.usage.requests).toBe(1);
     expect((await env.db.query("SELECT count(*)::int n FROM tasks")).rows[0].n).toBe(count);
     expect(inputs[0]!.system).toContain("Explain engineering tradeoffs.");
-    expect(inputs[0]!.tools.map(t => t.name)).toEqual(["inspect", "create_task", "task_action"]);
+    expect(inputs[0]!.tools.map(t => t.name)).toEqual(["inspect", "create_task", "task_action", "prepare_self_runtime"]);
     expect(JSON.stringify(inputs)).not.toContain("sk-test-small-entity");
     expect(JSON.stringify(result)).not.toContain("sk-test-small-entity");
   });
@@ -80,6 +80,41 @@ describe("individual conversations", () => {
     const task = result.actions[0].result.task;
     expect(task).toMatchObject({ assigneeAgentId: worker, createdBy: `agent:${worker}`, requiresReview: true, spec: { kind: "prompt" } });
     expect((await env.db.query("SELECT count(*)::int n FROM tasks WHERE title='Forbidden outside team'")).rows[0].n).toBe(0);
+  });
+  it("CEO can assign concrete work to self aliases but cannot review its own work", async () => {
+    const id = await create("agent", "ceo");
+    plan = [tool("create_task", { title: "CEO self follow-up", assigneeAgentId: "self", description: "Concrete work with sufficient context." })];
+    const view = await send("agent", "ceo", id);
+    const task = view.actions[0].result.task;
+    expect(task).toMatchObject({ assigneeAgentId: "ceo", createdBy: "agent:ceo", maxAttempts: 5 });
+    plan = [tool("task_action", { id: task.id, action: "approve" })];
+    const next = await send("agent", "ceo", id);
+    const pending = next.actions.find((a: any) => a.status === "pending");
+    await call("agent", "ceo", "POST", `/${id}/actions/${pending.id}`, { approve: true });
+    await env.ownerChat.idle();
+    const end = (await call("agent", "ceo", "GET", `/${id}`)).body;
+    expect(end.actions.find((a: any) => a.id === pending.id).status).toBe("failed");
+  });
+  it("runtime preparation is restricted to the chat subject and waits for owner confirmation", async () => {
+    const id = await create("agent", worker);
+    const before = (await env.call(env.owner, "GET", `/api/agents/${worker}`)).body.config;
+    await env.call(env.owner, "PUT", `/api/agents/${worker}/config`, { credentialId: null, model: null });
+    try {
+      plan = [tool("prepare_self_runtime", { agentId: "ceo", ...config() })];
+      // Extra/unrelated fields and another agent cannot pass the literal-bound tool schema.
+      expect((await send("agent", worker, id)).actions[0].status).toBe("failed");
+      plan = [tool("prepare_self_runtime", { agentId: worker, credentialId: key, model: "claude-haiku-5-5", effort: "medium" })];
+      const view = await send("agent", worker, id);
+      const action = view.actions.find((a: any) => a.status === "pending");
+      expect(view.run.status).toBe("waiting_approval");
+      expect((await env.call(env.owner, "GET", `/api/agents/${worker}`)).body.config.credentialId).toBeNull();
+      await call("agent", worker, "POST", `/${id}/actions/${action.id}`, { approve: true });
+      await env.ownerChat.idle();
+      expect((await env.call(env.owner, "GET", `/api/agents/${worker}`)).body.config).toMatchObject(before);
+      plan = [tool("create_task", { title: "Prepared self work", assigneeAgentId: "me" })];
+      const result = await send("agent", worker, id);
+      expect(result.actions.find((a: any) => a.name === "create_task").result.task.assigneeAgentId).toBe(worker);
+    } finally { await env.call(env.owner, "PUT", `/api/agents/${worker}/config`, before); }
   });
   it("requires important-action approval scoped to this chat, preserves receipts and never treats confirmation as an authority grant", async () => {
     const id = await create("agent", worker);
@@ -151,7 +186,7 @@ describe("individual conversations", () => {
     const ownerChat = (await env.call(env.owner, "POST", "/api/owner-chats", config())).body.id;
     await env.call(env.owner, "POST", `/api/owner-chats/${ownerChat}/messages`, { requestId: crypto.randomUUID(), text: "Legacy owner history" }); await env.ownerChat.idle();
     await env.db.query("DELETE FROM owner_chats WHERE subject_type<>'owner'");
-    await env.db.query("ALTER TABLE owner_chats DROP COLUMN subject_type CASCADE, DROP COLUMN subject_id CASCADE; DELETE FROM schema_migrations WHERE version=14");
+    await env.db.query("ALTER TABLE owner_chats DROP COLUMN subject_type CASCADE, DROP COLUMN subject_id CASCADE; DELETE FROM schema_migrations WHERE version>=14");
     const old = (await env.db.query("SELECT config,config_revision FROM organizations WHERE id=$1", [env.instance.defaultOrgId])).rows[0];
     const doc = structuredClone(old.config); delete doc.world.objects[0].id;
     const supplied = doc.world.objects[1].id;

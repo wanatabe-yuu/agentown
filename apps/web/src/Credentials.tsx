@@ -227,6 +227,23 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
   const [effort, setEffort] = useState<string>(detail.config.effort ?? "");
   const [instructions, setInstructions] = useState(detail.config.instructions);
   const [maxTurns, setMaxTurns] = useState(detail.config.maxTurns);
+  const [contextLimit, setContextLimit] = useState<number | null>(detail.config.contextLimit);
+  const [dirty, setDirty] = useState(false);
+  const [externalChange, setExternalChange] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const baseline = useRef({ signature: JSON.stringify(detail.config), revision: detail.configRevision });
+  const loadSaved = (saved: AgentDetail) => {
+    setCredentialId(saved.config.credentialId ?? ""); setModel(saved.config.model ?? ""); setEffort(saved.config.effort ?? "");
+    setInstructions(saved.config.instructions); setMaxTurns(saved.config.maxTurns); setContextLimit(saved.config.contextLimit);
+    baseline.current = { signature: JSON.stringify(saved.config), revision: saved.configRevision };
+    setDirty(false); setExternalChange(false);
+  };
+  const signature = JSON.stringify(detail.config);
+  useEffect(() => {
+    if (detail.configRevision < baseline.current.revision) return;
+    if (signature === baseline.current.signature) { baseline.current.revision = detail.configRevision; return; }
+    if (dirty) setExternalChange(true); else loadSaved(detail);
+  }, [signature, detail.configRevision, dirty]);
   // Only rendered for people who hold agent.configure on this agent.
   useEffect(() => {
     api<{ credentials: Credential[] }>("GET", "/api/credentials")
@@ -237,22 +254,29 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
   const selected = creds?.find((c) => c.id === credentialId) ?? (detail.credential?.id === credentialId ? detail.credential : undefined);
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving || externalChange) return;
+    setSaving(true);
     try {
-      await api("PUT", `/api/agents/${detail.id}/config`, {
+      const saved = await api<AgentDetail>("PUT", `/api/agents/${detail.id}/config`, {
         credentialId: credentialId || null,
         model: model || null,
         effort: effort || null,
         instructions,
         maxTurns,
+        contextLimit,
+        expectedRevision: baseline.current.revision,
       });
-      notify("Saved. A key change applies by replacing the runtime once the agent is idle.", "info");
+      loadSaved(saved);
+      notify("Configuration saved and read back from the server. New tasks use these settings.", "info");
     } catch (err) {
       notify((err as Error).message, "error");
-    }
+    } finally { setSaving(false); }
   };
 
   return (
-    <form className="form" onSubmit={save}>
+    <form className="form" onSubmit={save} onChangeCapture={() => setDirty(true)}>
+      {externalChange && <div className="review-box"><p>Settings changed elsewhere while you were editing. Your draft is preserved.</p><button type="button" onClick={() => loadSaved(detail)}>Load saved settings</button></div>}
+      <p className="muted small">Saved configuration · revision {detail.configRevision}{dirty ? " · Unsaved changes" : ""}</p>
       {harness === "script" && <p className="muted small">This agent runs the deterministic script harness: model settings are stored but not used.</p>}
       <label>
         API key
@@ -289,6 +313,8 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
           ))}
         </select>
       </label>
+      <label>Context budget (tokens)<input type="number" min={8192} max={1000000} step={1024} value={contextLimit ?? ""} placeholder="Provider default" onChange={e => setContextLimit(e.target.value ? Number(e.target.value) : null)} /></label>
+      <p className="muted small">Effort controls reasoning. Context budget bounds estimated input plus reserved output and compacts task history automatically. It cannot increase the provider’s model window.</p>
       <label>
         Max turns per task
         <input type="number" min={1} max={200} value={maxTurns} onChange={(e) => setMaxTurns(Number(e.target.value))} />
@@ -298,8 +324,8 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
         <textarea rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)} maxLength={8000} />
       </label>
       <div className="btn-row">
-        <button type="submit" className="primary">
-          Save config
+        <button type="submit" className="primary" disabled={saving || externalChange}>
+          {saving ? "Saving…" : "Save config"}
         </button>
       </div>
     </form>

@@ -18,6 +18,11 @@ export async function forwardModel(service: Service, actor: Actor, req: FastifyR
   if (req.method !== "POST" || !allowed.includes(path)) throw deny("This provider endpoint is not exposed.");
   if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.model !== "string") throw badRequest("A model request is required.");
   if (!target.models.includes(body.model) || (target.model && body.model !== target.model)) throw deny("This runtime may only use its configured model.");
+  if (target.contextLimit && !path.endsWith("count_tokens")) {
+    const reserved = Number(body.max_tokens ?? body.max_completion_tokens ?? 0);
+    const estimatedInput = Math.ceil(Buffer.byteLength(JSON.stringify(body), "utf8") / 3);
+    if (!Number.isSafeInteger(reserved) || reserved < 1 || estimatedInput + reserved > target.contextLimit) throw badRequest("Request exceeds this task's configured context budget (estimated input plus output). Compact task history or increase the budget.");
+  }
   const query = req.query as Record<string, unknown>;
   if (Object.keys(query).some(k => k !== "beta") || (query.beta !== undefined && query.beta !== "true")) throw badRequest("Unsupported provider query.");
   const endpoint = protocol === "anthropic" ? `${anthropicBaseUrl(target.baseUrl) ?? "https://api.anthropic.com"}/${path}` : `${target.baseUrl}/chat/completions`;

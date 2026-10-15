@@ -15,6 +15,7 @@ export interface Agent {
   work: { state: WorkState; reported: WorkState; detail: string | null; updatedAt: string | null };
   lastHeartbeatAt: string | null;
   config: AgentConfig;
+  configRevision: number;
   runtime: {
     presetId: string;
     generation: number;
@@ -35,6 +36,7 @@ export interface AgentConfig {
   effort: Effort | null;
   instructions: string;
   maxTurns: number;
+  contextLimit: number | null;
 }
 
 export interface Credential {
@@ -77,16 +79,27 @@ export interface Task {
   requiresReview: boolean;
   inputTaskIds: string[];
   attempt: number;
+  maxAttempts: number;
   summary: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface TaskDetail extends Task {
+  configurationChanges: Array<{ id: number; agentId: string; name: string; at: string; runId: string; linked: boolean; before: Record<string, unknown> | null; saved: Record<string, unknown>; current: Record<string, unknown>; changedSince: boolean; revision: number | null; changed: boolean | null }>;
   runs: Array<{ id: string; agent_id: string; attempt: number; runtime_generation: number; status: string; started_at: string; finished_at: string | null; summary: string | null; usage: Record<string, unknown> | null }>;
   artifacts: Array<{ id: string; name: string; content_type: string; sha256: string; size: number; created_at: string }>;
   assignments: Array<{ from_agent_id: string | null; to_agent_id: string; by_actor: string; at: string }>;
   can: { review: boolean; retry: boolean; cancel: boolean };
+}
+
+export interface TaskProgress {
+  taskId: string;
+  runId: string | null;
+  canReadLogs: boolean;
+  current: { state: string; detail: string | null; updatedAt: string | null; heartbeatAt: string | null } | null;
+  events: Array<{ seq: number; at: string; type: string; message: string; detail: string | null }>;
+  logs: Array<{ seq: number; at: string; stream: string; line: string }>;
 }
 
 export type Scope = { kind: string; ids?: string[] };

@@ -85,6 +85,7 @@ export interface AgentRow {
   effort: Effort | null;
   instructions: string;
   max_turns: number;
+  context_limit: number | null;
   config_revision: number;
 }
 
@@ -619,8 +620,8 @@ export class Service {
     const seat = await ctx.c.query<{ n: string }>("SELECT count(*) AS n FROM agents WHERE org_id = $1 AND department_id = $2", [this.orgId, a.departmentId]);
     await ctx.c.query(
       `INSERT INTO agents(id, department_id, display_name, job_role, template_id, reports_to, lifecycle_state,
-         desired_runtime, created_by, spawn_key, seat, credential_id, model, effort, instructions, max_turns, org_id)
-       VALUES ($1,$2,$3,$4,$5,$6,'provisioning','running',$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+         desired_runtime, created_by, spawn_key, seat, credential_id, model, effort, instructions, max_turns, context_limit, org_id)
+       VALUES ($1,$2,$3,$4,$5,$6,'provisioning','running',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
         a.id,
         a.departmentId,
@@ -636,6 +637,7 @@ export class Service {
         cfg.effort ?? null,
         cfg.instructions ?? "",
         cfg.maxTurns ?? 40,
+        cfg.contextLimit ?? null,
         this.orgId,
       ],
     );
@@ -671,8 +673,8 @@ export class Service {
 
   // ---------------------------------------------------------------- agents
 
-  async getAgentRow(id: string, q: Queryable = this.db): Promise<AgentRow> {
-    const { rows } = await q.query<AgentRow>("SELECT * FROM agents WHERE id = $1 AND org_id = $2", [id, this.orgId]);
+  async getAgentRow(id: string, q: Queryable = this.db, lock = false): Promise<AgentRow> {
+    const { rows } = await q.query<AgentRow>(`SELECT * FROM agents WHERE id = $1 AND org_id = $2 ${lock ? "FOR UPDATE" : ""}`, [id, this.orgId]);
     if (!rows[0]) throw notFound("agent");
     return rows[0];
   }
@@ -773,6 +775,7 @@ export class Service {
       work: { state: workState, reported: a.work_state, detail: a.work_detail, updatedAt: a.work_updated_at?.toISOString() ?? null },
       lastHeartbeatAt: a.last_heartbeat_at?.toISOString() ?? null,
       config: this.agentConfig(a),
+      configRevision: a.config_revision,
       runtime: r
         ? {
             presetId: r.preset_id,
@@ -937,7 +940,7 @@ export class Service {
   // ---------------------------------------------------------------- credentials & per-agent config
 
   agentConfig(a: AgentRow): AgentConfig {
-    return { credentialId: a.credential_id, model: a.model, effort: a.effort, instructions: a.instructions, maxTurns: a.max_turns };
+    return { credentialId: a.credential_id, model: a.model, effort: a.effort, instructions: a.instructions, maxTurns: a.max_turns, contextLimit: a.context_limit };
   }
 
   /** What the harness needs per run; the provider key never leaves the server. */
@@ -957,6 +960,7 @@ export class Service {
       effort: a.effort,
       instructions: a.instructions,
       maxTurns: a.max_turns,
+      contextLimit: a.context_limit,
       hasCredential: !!a.credential_id,
     };
   }
@@ -1155,6 +1159,7 @@ export class Service {
     }
     if (next.effort !== null && !EFFORTS.includes(next.effort)) throw badRequest("invalid effort");
     if (!Number.isInteger(next.maxTurns) || next.maxTurns < 1 || next.maxTurns > 200) throw badRequest("maxTurns must be 1..200");
+    if (next.contextLimit !== null && (!Number.isInteger(next.contextLimit) || next.contextLimit < 8192 || next.contextLimit > 1000000)) throw badRequest("contextLimit must be 8192..1000000 or null");
     next.instructions = (next.instructions ?? "").slice(0, 8000);
     if (next.credentialId) {
       const cred = await this.getCredentialRow(next.credentialId, q);
@@ -1171,26 +1176,33 @@ export class Service {
     return next;
   }
 
-  async configureAgent(actor: Actor, id: string, change: Partial<AgentConfig>) {
-    await this.withTx(async (ctx) => {
-      const a = await this.getAgentRow(id, ctx.c);
+  async configureAgent(actor: Actor, id: string, change: Partial<AgentConfig>, options: { expectedRevision?: number; runId?: string; generation?: number } = {}) {
+    const receipt = await this.withTx(async (ctx) => {
+      const run = options.runId ? await this.requireOwnRun(this.requireAgent(actor), options.runId, options.generation!, ctx.c, true) : null;
+      const a = await this.getAgentRow(id, ctx.c, true);
       if (a.lifecycle_state === "retired") throw conflict("retired", "agent is retired");
       await this.require(actor, "agent.configure", { agentId: id }, {
         q: ctx.c,
         detail: { credentialId: change.credentialId, model: change.model, effort: change.effort, instructionsChanged: change.instructions !== undefined },
       });
+      if (options.expectedRevision !== undefined && options.expectedRevision !== a.config_revision) throw conflict("stale_config", "Agent configuration changed. Reload the saved settings before editing again.");
       const next = await this.validateConfig(ctx.c, a.department_id, this.agentConfig(a), change);
+      const before = { credentialId: a.credential_id, model: a.model, effort: a.effort, maxTurns: a.max_turns, contextLimit: a.context_limit };
+      const after = { credentialId: next.credentialId, model: next.model, effort: next.effort, maxTurns: next.maxTurns, contextLimit: next.contextLimit };
+      const configChange = { agentId: id, before, after, revision: a.config_revision + 1, changedFields: Object.keys(after).filter(k => before[k as keyof typeof before] !== after[k as keyof typeof after]), instructionsChanged: a.instructions !== next.instructions };
       await ctx.c.query(
-        `UPDATE agents SET credential_id=$2, model=$3, effort=$4, instructions=$5, max_turns=$6, config_revision=config_revision+1 WHERE id=$1`,
-        [id, next.credentialId, next.model, next.effort, next.instructions, next.maxTurns],
+        `UPDATE agents SET credential_id=$2, model=$3, effort=$4, instructions=$5, max_turns=$6, context_limit=$7, config_revision=config_revision+1 WHERE id=$1`,
+        [id, next.credentialId, next.model, next.effort, next.instructions, next.maxTurns, next.contextLimit],
       );
       await this.emit(ctx, {
         type: "agent.configured",
         agentId: id,
-        payload: { credentialId: next.credentialId, model: next.model, effort: next.effort, by: actorRef(actor) },
+        ...(run ? { taskId: run.task_id, runId: run.id } : {}),
+        payload: { ...after, before, after, revision: configChange.revision, changedFields: configChange.changedFields, instructionsChanged: configChange.instructionsChanged, by: actorRef(actor) },
       });
+      return configChange;
     });
-    return this.presentAgentById(id);
+    return { ...await this.presentAgentById(id), configChange: receipt };
   }
 
   /** Controller-side: non-secret broker routing metadata, tagged with a revision. */
@@ -1218,17 +1230,22 @@ export class Service {
     if (agent.lifecycle_state === "retired" || agent.desired_runtime !== "running") throw deny("Runtime is not active.");
     const preset = this.config.runtimeCatalog.find(p => p.id === rt.preset_id);
     if (preset?.harness !== "claude") throw deny("This runtime has no model broker access.");
-    if (!agent.credential_id) throw conflict("no_credential", "No API credential is configured.");
-    const cred = await this.getCredentialRow(agent.credential_id);
+    // An in-flight task keeps the configuration it claimed. Saving next-task
+    // settings must not make the following model call fail with a model 403.
+    const snapshot = (await this.db.query("SELECT config_snapshot FROM task_runs WHERE agent_id=$1 AND runtime_generation=$2 AND status='running' LIMIT 1", [id, generation])).rows[0]?.config_snapshot;
+    const credentialId = snapshot ? snapshot.credentialId : agent.credential_id;
+    if (!credentialId) throw conflict("no_credential", "No API credential is configured.");
+    const cred = await this.getCredentialRow(credentialId);
     if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
+    if (cred.departments && !cred.departments.includes(agent.department_id)) throw deny("Runtime credential is not available to this department.");
     return { provider: cred.provider, apiKey: this.secrets.open(cred.ciphertext), workspaceId: cred.workspace_id,
       baseUrl: providerBaseUrl(cred.provider, cred.base_url), protocol: apiProtocol(cred.provider, cred.api_protocol),
-      authHeader: cred.auth_header ?? defaultAuthHeader(apiProtocol(cred.provider, cred.api_protocol)), models: cred.models, model: agent.model };
+      authHeader: cred.auth_header ?? defaultAuthHeader(apiProtocol(cred.provider, cred.api_protocol)), models: cred.models, model: snapshot ? snapshot.model : agent.model, contextLimit: snapshot ? snapshot.contextLimit : agent.context_limit };
   }
 
-  async desiredSecretRev(a: AgentRow): Promise<string> {
+  async desiredSecretRev(a: AgentRow, q: Queryable = this.db): Promise<string> {
     if (!a.credential_id) return "none";
-    const cred = await this.getCredentialRow(a.credential_id);
+    const cred = await this.getCredentialRow(a.credential_id, q);
     return cred.revoked_at ? `${cred.id}:revoked` : `broker-v1:${cred.id}:${cred.revision}`;
   }
 
@@ -1350,17 +1367,45 @@ export class Service {
       requiresReview: t.requires_review,
       inputTaskIds: t.input_task_ids,
       attempt: t.attempt,
+      maxAttempts: t.max_attempts,
       summary: t.summary,
       createdAt: t.created_at.toISOString(),
       updatedAt: t.updated_at.toISOString(),
     };
   }
 
-  /** Prompt work needs a model: an LLM runtime and an API key. Without one an agent only moves around the office. */
+  private promptBlockReason(a: Pick<AgentRow, "id" | "display_name" | "credential_id" | "model" | "department_id">, connection: { preset_id: string; provider: string | null; models: string[] | null; revoked_at: Date | null; departments: string[] | null } | undefined): string | null {
+    const preset = this.config.runtimeCatalog.find(p => p.id === connection?.preset_id);
+    if (preset?.harness === "script") return `${a.display_name} runs the script harness and cannot take prompt tasks`;
+    if (!preset || preset.harness !== "claude") return `${a.display_name} needs an LLM runtime before it can take prompt tasks`;
+    if (!a.credential_id || !connection?.provider) return `${a.display_name} has no API key: configure its runtime before assigning a task`;
+    if (connection.revoked_at) return `${a.display_name}'s runtime API key is revoked`;
+    if (connection.departments && !connection.departments.includes(a.department_id)) return `${a.display_name}'s runtime key is not available to its department`;
+    const model = a.model ?? (connection.provider === "anthropic" ? preset.model ?? null : null);
+    if (!model) return `${a.display_name} has no runtime model selected. Chat settings and runtime settings are independent`;
+    if (!connection.models?.includes(model)) return `${a.display_name}'s runtime model is not available to its API key`;
+    return null;
+  }
+
+  /** Fail before creating a task that its assigned runtime cannot execute. */
   private async requirePromptable(a: AgentRow, q: Queryable) {
-    const rt = (await q.query<{ preset_id: string }>("SELECT preset_id FROM agent_runtimes WHERE agent_id=$1", [a.id])).rows[0];
-    if (this.config.runtimeCatalog.find((p) => p.id === rt?.preset_id)?.harness === "script") throw badRequest(`${a.display_name} runs the script harness and cannot take prompt tasks`);
-    if (!a.credential_id) throw badRequest(`${a.display_name} has no API key: assign one in its Config tab first`);
+    const connection = (await q.query("SELECT r.preset_id,c.provider,c.models,c.revoked_at,c.departments FROM agent_runtimes r LEFT JOIN credentials c ON c.id=$2 AND c.org_id=$3 WHERE r.agent_id=$1", [a.id, a.credential_id, this.orgId])).rows[0];
+    const reason = this.promptBlockReason(a, connection);
+    if (reason) throw badRequest(reason);
+  }
+
+  /** Non-secret, current permission/readiness guidance for conversational task tools. */
+  async chatTaskCapabilities(actor: Actor) {
+    const policy = await this.loadPolicy();
+    const rows = (await this.db.query("SELECT a.id,a.display_name,a.department_id,a.credential_id,a.model,r.preset_id,c.provider,c.models,c.revoked_at,c.departments FROM agents a LEFT JOIN agent_runtimes r ON r.agent_id=a.id LEFT JOIN credentials c ON c.id=a.credential_id AND c.org_id=a.org_id WHERE a.org_id=$1 AND a.lifecycle_state<>'retired' ORDER BY a.id", [this.orgId])).rows;
+    const projects = [null, ...this.config.projects.map(p => p.id)];
+    const targets = rows.filter(a => authorize(actor, "org.view", { agentId: a.id }, policy).allowed).map(a => {
+      const createProjects = projects.filter(projectId => authorize(actor, "task.create", { agentId: a.id, projectId }, policy).allowed);
+      const assignProjects = projects.filter(projectId => authorize(actor, "task.assign", { agentId: a.id, projectId }, policy).allowed);
+      const reason = this.promptBlockReason(a, a);
+      return { id: a.id as string, name: a.display_name as string, canCreate: createProjects.length > 0, canAssign: assignProjects.length > 0, createProjects, assignProjects, ready: !reason, reason, canPrepareRuntime: this.config.runtimeCatalog.some(p => p.id === a.preset_id && p.harness === "claude") };
+    });
+    return { self: actor.kind === "agent" ? actor.id : null, targets, note: "Use exact IDs and an allowed project. Chat credentials do not configure a runtime. Agents cannot approve their own work." };
   }
 
   private validateSpec(spec: unknown): TaskSpec {
@@ -1494,11 +1539,55 @@ export class Service {
       runs: runs.rows,
       artifacts: artifacts.rows.map((a) => ({ ...a, size: Number(a.size) })),
       assignments: assignments.rows,
+      configurationChanges: await this.taskConfigurationChanges(actor, id, policy),
       can: {
         review: t.status === "review" && !ownWork && (creatorOrOwner || authorize(actor, "task.review", target, policy).allowed),
         retry: ["failed", "blocked"].includes(t.status) && manage,
         cancel: !isTerminal(t.status) && manage,
       },
+    };
+  }
+
+  private async taskConfigurationChanges(actor: Actor, id: string, policy: LoadedPolicy) {
+    const { rows } = await this.db.query(`SELECT e.seq,e.at,e.run_id,e.payload,a.id,a.display_name,a.credential_id,a.model,a.effort,a.max_turns,a.context_limit,a.config_revision,r.id AS matched_run
+      FROM agent_events e JOIN agents a ON a.id=e.agent_id AND a.org_id=e.org_id
+      JOIN task_runs r ON r.task_id=$2 AND (e.run_id=r.id OR (e.run_id IS NULL AND e.payload->>'by'='agent:' || r.agent_id AND e.at>=r.started_at AND e.at<=COALESCE(r.finished_at,now())))
+      WHERE e.org_id=$1 AND e.type='agent.configured' ORDER BY e.seq DESC LIMIT 100`, [this.orgId, id]);
+    return rows.filter(r => authorize(actor, "org.view", { agentId: r.id }, policy).allowed).map(r => {
+      const saved = r.payload.after ?? { credentialId: r.payload.credentialId, model: r.payload.model, effort: r.payload.effort };
+      const current = { credentialId: r.credential_id, model: r.model, effort: r.effort, maxTurns: r.max_turns, contextLimit: r.context_limit };
+      return { id: Number(r.seq), agentId: r.id, name: r.display_name, at: r.at, runId: r.matched_run, linked: !!r.run_id, before: r.payload.before ?? null, saved, current,
+        changedSince: Object.entries(saved).some(([k, v]) => k in current && current[k as keyof typeof current] !== v), revision: r.payload.revision ?? null,
+        changed: Array.isArray(r.payload.changedFields) ? !!r.payload.changedFields.length || !!r.payload.instructionsChanged : null };
+    });
+  }
+
+  /** Task-scoped activity; raw runtime output retains its separate logs permission. */
+  async taskProgress(actor: Actor, id: string) {
+    const task = await this.requireTaskView(actor, id);
+    const run = (await this.db.query("SELECT id,agent_id,status,started_at,finished_at FROM task_runs WHERE task_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1", [id])).rows[0];
+    const policy = await this.loadPolicy();
+    const canReadLogs = !!run && authorize(actor, "runtime.logs", { agentId: run.agent_id }, policy).allowed;
+    const [events, logs] = await Promise.all([
+      this.db.query(`SELECT seq,at,type,payload FROM agent_events WHERE org_id=$1 AND
+        ((task_id=$2 AND type IN ('task.created','task.status','run.started','run.finished','artifact.created','harness.context')) OR
+         (type='work.state' AND agent_id=$3 AND at >= $4 AND at <= COALESCE($5::timestamptz,now())))
+        ORDER BY seq DESC LIMIT 60`, [this.orgId, id, run?.agent_id ?? null, run?.started_at ?? null, run?.finished_at ?? null]),
+      canReadLogs ? this.db.query("SELECT seq,at,stream,line FROM agent_logs WHERE agent_id=$1 AND run_id=$2 ORDER BY seq DESC LIMIT 100", [run.agent_id, run.id]) : Promise.resolve({ rows: [] }),
+    ]);
+    const current = run?.status === "running" && task.status === "in_progress" && task.assignee_agent_id === run.agent_id ? await this.getAgentRow(run.agent_id) : null;
+    const freshWork = current?.work_updated_at && current.work_updated_at >= run.started_at;
+    return {
+      taskId: id, runId: run?.id ?? null, canReadLogs,
+      current: current ? { state: freshWork ? current.work_state : "thinking", detail: canReadLogs && freshWork ? redactLine(current.work_detail ?? "") : null, updatedAt: freshWork ? current.work_updated_at : null, heartbeatAt: current.last_heartbeat_at } : null,
+      events: events.rows.reverse().map(e => {
+        const p = e.payload;
+        const message = e.type === "task.created" ? "Task created" : e.type === "task.status" ? `Status: ${p.to}` :
+          e.type === "run.started" ? `Attempt ${p.attempt} started` : e.type === "run.finished" ? `Execution ${p.outcome}` :
+          e.type === "artifact.created" ? `File ready: ${p.name}` : e.type === "harness.context" ? String(p.message ?? "Context updated") : ({ thinking: "Thinking", executing: "Running a command", waiting: "Waiting", blocked: "Blocked", idle: "Idle", error: "Error", offline: "Offline" }[p.state as string] ?? "Activity updated");
+        return { seq: Number(e.seq), at: e.at, type: e.type, message: redactLine(message), detail: canReadLogs && e.type === "work.state" && typeof p.detail === "string" ? redactLine(p.detail).slice(0, 300) : null };
+      }),
+      logs: logs.rows.reverse().map(l => ({ seq: Number(l.seq), at: l.at, stream: l.stream, line: redactLine(l.line) })),
     };
   }
 
@@ -1645,23 +1734,27 @@ export class Service {
       );
       if (existing.rows[0]) {
         const run = existing.rows[0];
-        return { run: this.presentRun(run), task: this.presentTask(await this.getTaskRow(run.task_id, ctx.c)), resumed: true, config: await this.runConfig(agent, ctx.c) };
+        const config = run.config_snapshot ?? { ...await this.runConfig(agent, ctx.c), credentialId: agent.credential_id };
+        if (!run.config_snapshot) await ctx.c.query("UPDATE task_runs SET config_snapshot=$2 WHERE id=$1", [run.id, JSON.stringify(config)]);
+        return { run: this.presentRun(run), task: this.presentTask(await this.getTaskRow(run.task_id, ctx.c)), resumed: true, config };
       }
       // Finish an existing run, then let the controller upgrade before taking more work.
       if (rt.pending_preset_id && this.config.runtimeCatalog.some((p) => p.id === rt.pending_preset_id && p.harness === "claude")) return null;
       if (!agent.accepting_work || agent.lifecycle_state === "retired") return null;
+      if (rt.applied_secret_rev && rt.applied_secret_rev !== await this.desiredSecretRev(agent, ctx.c)) return null;
       const { rows } = await ctx.c.query<TaskRow>(
         `SELECT * FROM tasks WHERE assignee_agent_id=$1 AND status='assigned' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`,
         [agentId],
       );
       const t = rows[0];
       if (!t) return null;
+      const config = { ...await this.runConfig(agent, ctx.c), credentialId: agent.credential_id };
       const runId = newId("r");
       const ins = await ctx.c.query(
-        `INSERT INTO task_runs(id, task_id, agent_id, attempt, idempotency_key, runtime_generation, lease_expires_at, status)
-         VALUES ($1,$2,$3,$4,$5,$6, now() + make_interval(secs => $7), 'running')
+        `INSERT INTO task_runs(id, task_id, agent_id, attempt, idempotency_key, runtime_generation, lease_expires_at, status,config_snapshot)
+         VALUES ($1,$2,$3,$4,$5,$6, now() + make_interval(secs => $7), 'running',$8)
          ON CONFLICT (idempotency_key) DO NOTHING RETURNING *`,
-        [runId, t.id, agentId, t.attempt, `${t.id}:${t.attempt}`, generation, LEASE_SECONDS],
+        [runId, t.id, agentId, t.attempt, `${t.id}:${t.attempt}`, generation, LEASE_SECONDS, JSON.stringify(config)],
       );
       if (!ins.rows[0]) {
         // This attempt already had a run (e.g. it finished but the status update raced). Never start it twice.
@@ -1670,7 +1763,7 @@ export class Service {
       }
       await this.setTaskStatus(ctx, t, "in_progress", null);
       await this.emit(ctx, { type: "run.started", agentId, taskId: t.id, runId, payload: { attempt: t.attempt, generation, title: t.title } });
-      return { run: this.presentRun(ins.rows[0]), task: this.presentTask(t), resumed: false, config: await this.runConfig(agent, ctx.c) };
+      return { run: this.presentRun(ins.rows[0]), task: this.presentTask(t), resumed: false, config };
     });
   }
 
@@ -2219,7 +2312,7 @@ function capConstraints(c: { templates?: string[]; repos?: string[] }): GrantCon
 }
 
 function emptyConfig(): AgentConfig {
-  return { credentialId: null, model: null, effort: null, instructions: "", maxTurns: 40 };
+  return { credentialId: null, model: null, effort: null, instructions: "", maxTurns: 40, contextLimit: null };
 }
 
 export { ApiError };

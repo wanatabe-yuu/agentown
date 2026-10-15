@@ -207,6 +207,17 @@ describe("tasks and runs", () => {
     expect(again.body.run.id).toBe(claim.body.run.id);
 
     const runId = claim.body.run.id;
+    await env.call(t, "POST", `/api/runtime/heartbeat`, { generation: g, state: "thinking", detail: "Đang phân tích yêu cầu tiếng Việt" });
+    await env.call(t, "POST", `/api/runs/${runId}/logs`, { generation: g, lines: [{ stream: "agent", line: "Đang xử lý tác vụ" }] });
+    const activeProgress = await env.call(env.owner, "GET", `/api/tasks/${created.body.task.id}/progress`);
+    expect(activeProgress.body.current).toMatchObject({ state: "thinking", detail: "Đang phân tích yêu cầu tiếng Việt" });
+    expect(activeProgress.body.logs[0].line).toBe("Đang xử lý tác vụ");
+    expect((await env.call(env.token(qaId), "GET", `/api/tasks/${created.body.task.id}/progress`)).status).toBe(403);
+    const utf8 = "# Tóm tắt cấu hình\nTiếng Việt: với tất cả mọi người ✅";
+    const md = await env.call(t, "POST", `/api/runs/${runId}/artifacts`, { generation: g, name: "config-summary.md", contentType: "text/plain", contentBase64: Buffer.from(utf8, "utf8").toString("base64") });
+    const textFile = await env.app.inject({ method: "GET", url: `/api/orgs/${env.instance.defaultOrgId}/artifacts/${md.body.id}`, headers: { authorization: `Bearer ${env.owner}` } });
+    expect(textFile.body).toBe(utf8); expect(textFile.headers["content-type"]).toMatch(/charset=utf-8/);
+    expect(textFile.headers["content-security-policy"]).toBe("sandbox");
     const art = await env.call(t, "POST", `/api/runs/${runId}/artifacts`, {
       generation: g,
       name: "index.html",
@@ -233,11 +244,19 @@ describe("tasks and runs", () => {
     expect(seen.status).toBe(200);
     const artifact = await env.app.inject({
       method: "GET",
-      url: `/api/artifacts/${seen.body.artifacts[0].id}`,
+      url: `/api/artifacts/${seen.body.artifacts.find((a: any) => a.name === "index.html").id}`,
       headers: { authorization: `Bearer ${env.token(qaId)}` },
     });
     expect(artifact.body).toBe("<h1>Hello</h1>");
     expect(artifact.headers["content-security-policy"]).toBe("sandbox");
+    const progress = await env.call(env.token(qaId), "GET", `/api/tasks/${created.body.task.id}/progress`);
+    expect(progress.status).toBe(200);
+    expect(progress.body.current).toBeNull(); expect(progress.body.canReadLogs).toBe(false);
+    expect(progress.body.logs).toEqual([]);
+    expect(progress.body.events.some((e: any) => e.message === "Execution succeeded")).toBe(true);
+    expect(progress.body.events.every((e: any) => e.detail === null)).toBe(true);
+    const finished = await env.call(env.owner, "GET", `/api/tasks/${created.body.task.id}/progress`);
+    expect(finished.body.current).toBeNull(); expect(finished.body.logs[0].line).toBe("Đang xử lý tác vụ");
     // ...but QA still cannot see unrelated work.
     expect((await env.call(env.token(qaId), "GET", "/api/agents/lead-eng/logs")).status).toBe(403);
   });
@@ -284,7 +303,7 @@ describe("tasks and runs", () => {
     const created = await env.call(env.token("lead-eng"), "POST", "/api/tasks", { title: "Flaky", assigneeAgentId: qaId });
     const t = env.token(qaId);
     const g = await gen(qaId);
-    for (let i = 1; i <= 3; i++) {
+    for (let i = 1; i <= 5; i++) {
       const c = await env.call(t, "POST", "/api/runs/claim", { generation: g });
       expect(c.body.run.attempt).toBe(i);
       await env.db.query("UPDATE task_runs SET lease_expires_at = now() - interval '1 second' WHERE id=$1", [c.body.run.id]);
@@ -292,7 +311,7 @@ describe("tasks and runs", () => {
     }
     const task = await env.call(env.owner, "GET", `/api/tasks/${created.body.task.id}`);
     expect(task.body.status).toBe("failed");
-    expect(task.body.statusReason).toMatch(/gave up after 3 attempts/);
+    expect(task.body.statusReason).toMatch(/gave up after 5 attempts/);
     expect(task.body.runs.every((r: any) => r.status === "lost")).toBe(true);
   });
 
@@ -585,7 +604,7 @@ describe("per-agent credentials and model config", () => {
     });
 
     // A keyless custom endpoint: no secret, and no Claude default model is handed to the adapter.
-    expect((await env.call(t, "PUT", `/api/agents/${agent}/config`, { credentialId: local.body.id })).status).toBe(200);
+    expect((await env.call(t, "PUT", `/api/agents/${agent}/config`, { credentialId: local.body.id, model: "llama3.3" })).status).toBe(200);
     await env.settle();
     await env.settle();
     expect(podOf(agent).llmEnv).toMatchObject({ AGENTOWN_LLM_PROVIDER: "custom", AGENTOWN_LLM_PROTOCOL: "openai", AGENTOWN_LLM_BROKER: "1" });
@@ -593,7 +612,7 @@ describe("per-agent credentials and model config", () => {
     await env.call(env.token(agent), "POST", "/api/runtime/heartbeat", { generation: g, state: "idle" });
     await env.call(t, "POST", "/api/tasks", { title: "think locally", assigneeAgentId: agent, spec: { kind: "prompt" } });
     const c = await env.call(env.token(agent), "POST", "/api/runs/claim", { generation: g });
-    expect(c.body.config).toMatchObject({ harness: "claude", provider: "custom", model: null, hasCredential: true });
+    expect(c.body.config).toMatchObject({ harness: "claude", provider: "custom", model: "llama3.3", hasCredential: true });
   });
 });
 

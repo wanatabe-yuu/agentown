@@ -72,6 +72,8 @@ const agentConfigSchema = z
     effort: z.enum(EFFORTS).nullable(),
     instructions: z.string().max(8000),
     maxTurns: z.number().int().min(1).max(200),
+    contextLimit: z.number().int().min(8192).max(1000000).nullable(),
+    expectedRevision: z.number().int().min(0),
   })
   .partial()
   .strict();
@@ -430,9 +432,12 @@ export async function buildApp(opts: AppOptions) {
     lines: await svcOf(req).logs(actorOf(req), req.params.id, Number(req.query.after ?? 0)),
   }));
 
-  r.put<{ Params: { id: string } }>("/agents/:id/config", async (req) =>
-    changed(await svcOf(req).configureAgent(actorOf(req), req.params.id, parse(S.agentConfig, req.body))),
-  );
+  r.put<{ Params: { id: string } }>("/agents/:id/config", async (req) => {
+    const { expectedRevision, ...change } = parse(S.agentConfig, req.body);
+    const runId = req.headers["x-agentown-run-id"];
+    const execution = runId === undefined ? {} : z.object({ runId: z.string().min(1).max(100), generation: z.coerce.number().int().positive() }).parse({ runId, generation: req.headers["x-agentown-generation"] });
+    return changed(await svcOf(req).configureAgent(actorOf(req), req.params.id, change, { expectedRevision, ...execution }));
+  });
 
   // ---- credentials (credential.manage; the key is write-only)
   r.get("/credentials", async (req) => ({ credentials: await svcOf(req).listCredentials(actorOf(req)) }));
@@ -472,6 +477,10 @@ export async function buildApp(opts: AppOptions) {
     return out;
   });
   r.get<{ Params: { id: string } }>("/tasks/:id", async (req) => svcOf(req).getTask(actorOf(req), req.params.id));
+  r.get<{ Params: { id: string } }>("/tasks/:id/progress", async (req, reply) => {
+    reply.header("cache-control", "no-store");
+    return svcOf(req).taskProgress(actorOf(req), req.params.id);
+  });
   r.post<{ Params: { id: string } }>("/tasks/:id/assign", async (req) =>
     svcOf(req).assignTask(actorOf(req), req.params.id, parse(S.assign, req.body).assigneeAgentId),
   );
@@ -485,7 +494,11 @@ export async function buildApp(opts: AppOptions) {
   });
   r.get<{ Params: { id: string } }>("/artifacts/:id", async (req, reply) => {
     const a = await svcOf(req).getArtifact(actorOf(req), req.params.id);
-    reply.header("content-type", a.contentType).header("x-content-sha256", a.sha256);
+    // Text artifacts are UTF-8. Without a charset Safari may interpret their
+    // Vietnamese bytes as Windows-1252, even though storage is intact.
+    const contentType = /^(text\/|application\/(?:json|xml)(?:;|$))/i.test(a.contentType)
+      ? `${a.contentType.replace(/;\s*charset=[^;]+/ig, "")}; charset=utf-8` : a.contentType;
+    reply.header("content-type", contentType).header("x-content-sha256", a.sha256);
     // Artifacts are agent-produced: never let the browser render them as our origin.
     reply.header("content-security-policy", "sandbox").header("x-content-type-options", "nosniff");
     reply.header("content-disposition", `inline; filename="${a.name}"`);

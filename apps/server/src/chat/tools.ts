@@ -51,10 +51,11 @@ export function ownerTools(s: Record<string, z.ZodType>): ChatTool[] {
   const payload = (name: string) => z.object({ id, change: s[name]! }).strict();
   return [
     { name: "inspect", description: "Read current world or organization data. Snapshot includes agents and tasks. Config contains departments, projects, roles and job templates. Read before editing; use exact IDs and revision. Agent/task need id. No secrets are returned.",
-      schema: z.object({ kind: z.enum(["snapshot", "world", "world_schema", "config", "catalog", "credentials", "users", "assets", "audit", "agent", "task", "logs"]), id: id.optional(), path: z.string().max(500).optional() }).strict(),
+      schema: z.object({ kind: z.enum(["snapshot", "capabilities", "world", "world_schema", "config", "catalog", "credentials", "users", "assets", "audit", "agent", "task", "logs"]), id: id.optional(), path: z.string().max(500).optional() }).strict(),
       execute: async ({ service: v, actor: a }, b) => {
         switch (b.kind) {
           case "snapshot": return v.snapshot(a);
+          case "capabilities": return v.chatTaskCapabilities(a);
           case "world": { const data = await v.getWorld(a); return b.path ? { revision: data.revision, path: b.path, value: readPath(data.world, b.path) } : data; }
           case "world_schema": return { schema: z.toJSONSchema(worldSchema, { target: "draft-7" }), example: { floors: [{ id: "ground", name: "Ground floor", rooms: [{ id: "lobby", name: "Lobby", area: { x: 0, z: 0, w: 10, d: 8 } }] }] }, note: "Read this before creating a new layout. Room department IDs must match the current organization; asset IDs must belong to this world." };
           case "config": { const data = await v.getConfig(a); return b.path ? { revision: data.revision, path: b.path, value: readPath(data.doc, b.path) } : data; }
@@ -97,7 +98,7 @@ export function ownerTools(s: Record<string, z.ZodType>): ChatTool[] {
     { name: "update_agent", description: "Rename an agent or change its reporting line. Reporting changes require confirmation.", schema: payload("updateAgent"), mutates: true,
       execute: ({ service, actor }, b) => service.updateAgent(actor, b.id, b.change) },
     { name: "configure_agent", description: "Change API credential assignment, model, effort, instructions or maxTurns for an agent. Credentials are IDs from inspect credentials, never raw keys. Requires confirmation.", schema: payload("agentConfig"), mutates: true, important: true,
-      execute: ({ service, actor }, b) => service.configureAgent(actor, b.id, b.change) },
+      execute: ({ service, actor }, b) => { const { expectedRevision, ...change } = b.change; return service.configureAgent(actor, b.id, change, { expectedRevision }); } },
     { name: "agent_action", description: "Pause/resume intake or start/stop/restart the isolated agent runtime. Stop/restart require confirmation.",
       schema: z.object({ id, action: z.enum(["pause", "resume", "start", "stop", "restart"]) }).strict(), mutates: true,
       execute: ({ service, actor }, b) => ["pause", "resume"].includes(b.action) ? service.setIntake(actor, b.id, b.action === "resume") : service.setRuntime(actor, b.id, b.action) },

@@ -83,6 +83,16 @@ describe("agent configuration CLI", () => {
     expect([...env.driver.pods.values()].filter((p) => ["ceo", "po", "lead-eng", "lead-ops", workerId].includes(p.agentId)).every((p) => p.providerKey === null && p.llmEnv.AGENTOWN_LLM_BROKER === "1")).toBe(true);
   });
 
+  it("saves context budgets with a server receipt and refuses stale form revisions", async () => {
+    const before = (await env.call(env.owner, "GET", `/api/agents/${workerId}`)).body;
+    const saved = await cli("ceo", "agent", "configure", workerId, "--context-limit", "200000");
+    expect(saved.code).toBe(0);
+    expect(JSON.parse(saved.stdout).configChange.after.contextLimit).toBe(200000);
+    expect(JSON.parse(saved.stdout).config.contextLimit).toBe(200000);
+    const stale = await env.call(env.owner, "PUT", `/api/agents/${workerId}/config`, { model: "claude-haiku-5-5", expectedRevision: before.configRevision });
+    expect(stale.status).toBe(409);
+    expect((await env.call(env.owner, "GET", `/api/agents/${workerId}`)).body.config.contextLimit).toBe(200000);
+  });
   it("keeps the existing self, team and organization boundaries", async () => {
     expect((await cli("ceo", "agent", "configure", "ceo", "--effort", "high")).code).toBe(13);
     expect((await cli("lead-ops", "agent", "configure", workerId, "--effort", "high")).code).toBe(13);

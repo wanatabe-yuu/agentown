@@ -237,8 +237,19 @@ describe("owner harness chat", () => {
   });
   it("does not execute unknown tools and bounds loops", async () => {
     const id = await create({ maxTurns: 1 }); plan = [tool("shell", { command: "do anything" })];
-    const data = await send(id); expect(data.actions[0].status).toBe("failed"); expect(data.run.status).toBe("failed");
-    expect(data.run.error).toMatch(/turn limit/);
+    const data = await send(id); expect(data.actions[0].status).toBe("failed"); expect(data.run.status).toBe("limited");
+    expect(data.run.error).toBeNull();
+    expect(data.messages.some((m: any) => m.role === "notice" && /Reached 1 steps/.test(m.text))).toBe(true);
+  });
+  it("stops a batch after five failed actions and continues with a valid context", async () => {
+    const id = await create();
+    plan = [{ role: "assistant", text: "Checking", calls: Array.from({ length: 12 }, (_, n) => ({ id: `bad-${n}`, name: "shell", args: { command: `invalid-${n}` } })) }];
+    const view = await send(id);
+    expect(view.run.status).toBe("limited"); expect(view.run.rounds).toBe(1);
+    expect(view.actions).toHaveLength(5);
+    const next = await send(id, "Explain the blocker");
+    expect(next.run.status).toBe("succeeded");
+    expect(next.actions).toHaveLength(5);
   });
   it("never replays interrupted writes after recovery", async () => {
     const id = await create(); const rid = "cr-recover-test", tid = "tool-interrupted";

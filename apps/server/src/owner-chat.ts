@@ -14,6 +14,7 @@ interface ChatRow {
   model_info: ModelInput["info"] | null; usage: Usage; updated_at: Date; archived_at: Date | null;
 }
 interface RunRow { id: string; chat_id: string; request_id: string; status: string; kind: string; rounds: number; partial_text: string; error: string | null }
+class ChatStepLimit extends Error {}
 interface ActionRow { id: string; run_id: string; tool_id: string; name: string; args: any; status: string; result: any }
 const active = (r: RunRow | undefined) => !!r && ["running", "waiting_approval"].includes(r.status);
 const publicChat = (c: ChatRow) => ({ id: c.id, subject: { type: c.subject_type, id: c.subject_id }, title: c.title, config: c.config, contextTokens: c.context_tokens, countMode: c.count_mode, modelInfo: c.model_info, usage: c.usage, updatedAt: c.updated_at, archivedAt: c.archived_at });
@@ -57,7 +58,7 @@ export class OwnerChat {
     const root = agents.find(x => !x.reportsToAgentId && x.lifecycleState !== "retired");
     const rootConfig = root ? (await service.getAgent(a, root.id)).config : null;
     const credential = credentials.find(c => c.id === rootConfig?.credentialId) ?? credentials[0];
-    const defaults = entity ? (entity.defaults ? chatConfigSchema.parse(entity.defaults) : null) : credential ? chatConfigSchema.parse({ credentialId: credential.id, model: credential.models.includes(rootConfig?.model ?? "") ? rootConfig!.model : credential.models[0], effort: rootConfig?.effort ?? "medium" }) : null;
+    const defaults = entity ? (entity.defaults ? chatConfigSchema.parse(entity.defaults) : null) : credential ? chatConfigSchema.parse({ credentialId: credential.id, model: credential.models.includes(rootConfig?.model ?? "") ? rootConfig!.model : credential.models[0], effort: rootConfig?.effort ?? "medium", contextLimit: rootConfig?.contextLimit ?? 64000 }) : null;
     const chats = (await this.db.query<ChatRow>("SELECT * FROM owner_chats WHERE org_id=$1 AND user_id=$2 AND (archived_at IS NOT NULL)=$3 AND subject_type=$4 AND subject_id=$5 ORDER BY updated_at DESC LIMIT 100", [orgId, actor.id, archived, subject.type, subject.id])).rows.map(publicChat);
     return { chats, credentials, defaults, profile: entity?.profile ?? null };
   }
@@ -178,24 +179,27 @@ export class OwnerChat {
     const ctx = await this.authorize(c.org_id, c.user_id);
     const subject = { type: c.subject_type, id: c.subject_id };
     if (subject.type === "owner") return { ...ctx, owner: ctx.actor, tools: this.tools, system: systemPrompt(c.org_id) };
-    const entity = await entityProfile(ctx.service, ctx.actor, subject, this.tools);
+    const entity = await entityProfile(ctx.service, ctx.actor, subject, this.tools, c.config);
     requireEntityCredential(entity.credentials, c.config.credentialId);
     return { service: ctx.service, owner: ctx.actor, actor: entity.actor, tools: entity.tools, system: entity.system };
   }
   private async resolveCalls(c: ChatRow, r: RunRow, signal: AbortSignal) {
     const last = [...c.context].reverse().find(m => m.role === "assistant");
     const resolved = new Set(c.context.filter(m => m.role === "tool").map(m => m.toolId));
+    let failures = Number((await this.db.query("SELECT count(*)::int AS n FROM owner_chat_actions WHERE run_id=$1 AND status='failed'", [r.id])).rows[0].n);
     for (const call of last?.calls ?? []) {
       if (resolved.has(call.id)) continue;
       signal.throwIfAborted();
+      if (failures >= 5) throw new ChatStepLimit("Stopped after 5 unsuccessful actions. Completed actions are saved. Check the details or tell me how you want to continue.");
       const { service, actor, tools } = await this.execution(c);
       const tool = tools.find(t => t.name === call.name);
       const parsed = tool?.schema.safeParse(call.args);
       let action = (await this.db.query<ActionRow>("SELECT * FROM owner_chat_actions WHERE run_id=$1 AND tool_id=$2", [r.id, call.id])).rows[0];
       if (!action) {
+        const repeated = (await this.db.query("SELECT result FROM owner_chat_actions WHERE run_id=$1 AND name=$2 AND args=$3::jsonb AND status IN ('failed','rejected','uncertain') ORDER BY created_at DESC LIMIT 1", [r.id, call.name, JSON.stringify(call.args)])).rows[0];
         const valid = !!parsed?.success && JSON.stringify(call.args).length < 256000;
         action = (await this.db.query<ActionRow>("INSERT INTO owner_chat_actions(id,run_id,tool_id,name,args,status,result) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *", [newId("ca"), r.id, call.id, call.name, JSON.stringify(call.args),
-          valid ? needsApproval(tool!, parsed!.data, c.config.approvalMode) ? "pending" : "approved" : "failed", valid ? null : JSON.stringify({ error: "Unknown tool or invalid arguments. Read the tool schema and correct the request." })])).rows[0]!;
+          valid && !repeated ? needsApproval(tool!, parsed!.data, c.config.approvalMode) ? "pending" : "approved" : "failed", repeated ? JSON.stringify({ error: "This action already failed or was declined in this response. Do not repeat it. Explain the blocker or choose a permitted approach.", previous: repeated.result }) : valid ? null : JSON.stringify({ error: "Unknown tool or invalid arguments. Read the tool schema and correct the request." })])).rows[0]!;
       }
       if (action.status === "pending") {
         await this.db.query("UPDATE owner_chat_runs SET status='waiting_approval',partial_text='' WHERE id=$1 AND status='running'", [r.id]);
@@ -212,12 +216,13 @@ export class OwnerChat {
           action.result = json.length > 32000 ? { truncated: true, preview: json.slice(0, 30000), message: "Inspect a specific agent/task or smaller world section for more details." } : JSON.parse(json);
           action.status = "applied";
           if (tool.mutates) this.changed?.();
-        } catch (e) { action.status = "failed"; action.result = { error: safeError(e) }; }
+        } catch (e) { action.status = "failed"; action.result = { error: safeError(e), ...(e instanceof ApiError ? { code: e.code } : {}) }; }
         await this.db.query("UPDATE owner_chat_actions SET status=$2,result=$3 WHERE id=$1", [action.id, action.status, JSON.stringify(action.result)]);
       }
       if (action.status === "applying") { action.status = "uncertain"; action.result = { error: "Execution was interrupted; inspect the world before retrying. This action will not be replayed." }; }
       c.context.push({ role: "tool", toolId: call.id, text: JSON.stringify(action.result ?? { status: action.status }), isError: action.status !== "applied" });
       await this.save(c);
+      if (action.status === "failed" && ++failures >= 5) throw new ChatStepLimit("Stopped after 5 unsuccessful actions. Completed actions are saved. Check the details or tell me how you want to continue.");
     }
     return true;
   }
@@ -234,6 +239,11 @@ export class OwnerChat {
       while (true) {
         signal.throwIfAborted();
         if (!await this.resolveCalls(c, r!, signal)) return;
+        const failures = Number((await this.db.query("SELECT count(*)::int AS n FROM owner_chat_actions WHERE run_id=$1 AND status='failed'", [id])).rows[0].n);
+        if (r!.rounds >= c.config.maxTurns || failures >= 5) {
+          await this.transcript(c.id, id, "notice", failures >= 5 ? "Stopped after 5 unsuccessful actions. Completed actions are saved. Check the details or tell me how you want to continue." : `Reached ${c.config.maxTurns} steps for this reply. Completed actions are saved; send a follow-up to continue.`);
+          await this.finish(c, r!, "limited"); return;
+        }
         const { service, owner, tools, system } = await this.execution(c);
         const definitions = { system, tools: tools.map(t => ({ name: t.name, description: t.description, schema: z.toJSONSchema(t.schema, { target: "draft-7" }) })) };
         const target = await service.ownerChatCredential(owner, c.config.credentialId);
@@ -259,7 +269,6 @@ export class OwnerChat {
           if (r!.kind === "compact") { await this.finish(c, r!, "succeeded"); return; }
         }
         if (count.tokens + reserve >= budget) throw new ModelError("The request exceeds the context budget.");
-        if (r!.rounds >= c.config.maxTurns) throw new ModelError("Reached the tool-turn limit. Send a follow-up to continue; completed actions are saved.");
         r!.rounds++;
         await this.db.query("UPDATE owner_chat_runs SET rounds=$2,partial_text='' WHERE id=$1", [id, r!.rounds]);
         partial = "";
@@ -304,6 +313,10 @@ export class OwnerChat {
     } catch (e) {
       if (modelInFlight) this.addUsage(c, { ...emptyUsage(), incompleteRequests: 1 });
       if (partial) await this.transcript(c.id, id, "assistant", partial, true);
+      if (e instanceof ChatStepLimit && !signal.aborted) {
+        await this.transcript(c.id, id, "notice", e.message);
+        await this.finish(c, r!, "limited"); return;
+      }
       await this.finish(c, r!, signal.aborted ? "cancelled" : "failed", signal.aborted ? "Stopped. Completed actions remain in the world." : safeError(e));
     }
   }
