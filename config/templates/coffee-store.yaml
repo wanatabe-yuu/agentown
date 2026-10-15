@@ -263,6 +263,32 @@ world:
           - { shape: cylinder, size: [0.22, 0.01, 0.22], offset: [0.95, 1.66, 0.052], rotation: [90, 0, 0], color: "#c0773a" }
       behaviors:
         - { type: flicker, part: title, speed: 0.4, amount: 0.5 }
+    neon-sign:
+      name: Neon sign
+      category: dynamic
+      look:
+        parts:
+          - { shape: roundbox, size: [1.56, 0.66, 0.03], offset: [0, 1.75, 0], color: "#1a1720", finish: gloss }
+          - { shape: cylinder, size: [0.03, 0.05, 0.03], offset: [-0.68, 1.99, 0.03], rotation: [90, 0, 0], color: "#c9c4bd", finish: metal }
+          - { shape: cylinder, size: [0.03, 0.05, 0.03], offset: [0.68, 1.99, 0.03], rotation: [90, 0, 0], color: "#c9c4bd", finish: metal }
+          - { shape: cylinder, size: [0.03, 0.05, 0.03], offset: [-0.68, 1.51, 0.03], rotation: [90, 0, 0], color: "#c9c4bd", finish: metal }
+          - { shape: cylinder, size: [0.03, 0.05, 0.03], offset: [0.68, 1.51, 0.03], rotation: [90, 0, 0], color: "#c9c4bd", finish: metal }
+          - { shape: torus, size: [0.27, 0.38, 0.17], offset: [-0.48, 1.79, 0.045], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.374, 0.034], offset: [-0.27, 1.79, 0.045], rotation: [0, 0, 0], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.214, 0.034], offset: [-0.18, 1.96, 0.045], rotation: [0, 0, -90], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.174, 0.034], offset: [-0.05, 1.86, 0.045], rotation: [0, 0, 0], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.214, 0.034], offset: [-0.18, 1.79, 0.045], rotation: [0, 0, -90], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.374, 0.034], offset: [0.05, 1.79, 0.045], rotation: [0, 0, 0], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.254, 0.034], offset: [0.16, 1.96, 0.045], rotation: [0, 0, -90], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.204, 0.034], offset: [0.135, 1.79, 0.045], rotation: [0, 0, -90], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.254, 0.034], offset: [0.16, 1.62, 0.045], rotation: [0, 0, -90], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.374, 0.034], offset: [0.37, 1.79, 0.045], rotation: [0, 0, 0], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.374, 0.034], offset: [0.59, 1.79, 0.045], rotation: [0, 0, 0], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 0.439, 0.034], offset: [0.48, 1.79, 0.045], rotation: [0, 0, -147.095], color: "#ff5fa2", emissive: "#ff3d8b", finish: gloss, part: tube }
+          - { shape: capsule, size: [0.034, 1.274, 0.034], offset: [0, 1.54, 0.045], rotation: [0, 0, -90], color: "#ffc36b", emissive: "#ffab3d", finish: gloss, part: line }
+      behaviors:
+        - { type: flicker, part: tube, speed: 0.8, amount: 1 }
+        - { type: flicker, part: line, speed: 0.5, amount: 0.6 }
     pendant-lamp:
       name: Pendant lamp
       category: dynamic
@@ -680,6 +706,7 @@ world:
     # 1A counter & seating
     - { kind: counter, room: 1a, at: [7, 1.0] }
     - { kind: menu-board, room: 1a, at: [7, 0.1] }
+    - { kind: neon-sign, room: 1a, at: [9.7, 0.2], label: Open }
     - { kind: pendant-lamp, room: 1a, at: [5.6, 1.6] }
     - { kind: pendant-lamp, room: 1a, at: [8.4, 1.6] }
     - { kind: rug, room: 1a, at: [5.4, 5.4] }
