@@ -48,6 +48,8 @@ describe("what objects are doing", () => {
     const r = await act(cat, { action: "pet", agentId: worker });
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ objectId: cat, action: "pet", state: "purr", by: { type: "agent", id: worker } });
+    // 30 s of petting plus the walk over.
+    expect(Date.parse(r.body.until) - Date.now()).toBeGreaterThan(45_000);
     const snap = (await env.call(env.owner, "GET", "/api/office/snapshot")).body;
     expect(snap.objectStates).toContainEqual(expect.objectContaining({ objectId: cat, state: "purr" }));
     const events = await env.service.eventsAfter({ kind: "agent", id: "ceo" }, 0, 10000);

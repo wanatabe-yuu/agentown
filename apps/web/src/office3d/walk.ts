@@ -137,7 +137,11 @@ export function stepErrand(nav: Nav, r: Roamer, now: number, dt: number, target:
       return false;
     }
   }
-  if (advance(r, now, dt) === "arrived") e.arrived = true;
+  // Arriving late still means doing it for a moment, not turning straight back.
+  if (advance(r, now, dt) === "arrived") {
+    e.arrived = true;
+    e.until = Math.max(e.until, now + 5000);
+  }
   return true;
 }
 

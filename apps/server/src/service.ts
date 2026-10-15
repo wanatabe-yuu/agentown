@@ -481,7 +481,7 @@ export class Service {
     if (actor.kind === "agent" && (doer?.type !== "agent" || doer.id !== actor.id)) throw deny("an agent acts only for itself");
     if (actor.kind === "human" && !isOwner(actor)) throw deny("only the owner directs objects");
     if (doer?.type === "object" && doer.id !== objectId) throw deny("an object only changes itself");
-    let action: { id: string; state: string; seconds: number };
+    let action: { id: string; state: string; seconds: number; gesture?: string };
     if ("state" in choice) {
       if (doer?.type !== "object") throw deny("pick one of its actions");
       if (!kind.states.some((x) => x.id === choice.state)) throw badRequest(`${kind.name} has no state ${choice.state}`);
@@ -499,12 +499,14 @@ export class Service {
       if (!reachable) throw deny(`${agent.display_name} cannot reach ${object.label ?? kind.name}: it is in another department's room`);
     }
     const who = doer ?? { type: "human" as const, id: actor.id };
+    // Someone who walks over first gets the way there on top (the cat purrs as they come).
+    const seconds = action.seconds + (doer?.type === "agent" && (action.gesture ?? "none") !== "none" ? 20 : 0);
     return this.withTx(async (ctx) => {
       const { rows } = await ctx.c.query(
         `INSERT INTO object_states(org_id, object_id, action, state, by_type, by_id, until) VALUES ($1,$2,$3,$4,$5,$6, now() + make_interval(secs => $7))
          ON CONFLICT (org_id, object_id) DO UPDATE SET action=EXCLUDED.action, state=EXCLUDED.state, by_type=EXCLUDED.by_type, by_id=EXCLUDED.by_id, until=EXCLUDED.until, at=now()
          RETURNING until`,
-        [this.orgId, objectId, action.id, action.state, who.type, who.id, action.seconds],
+        [this.orgId, objectId, action.id, action.state, who.type, who.id, seconds],
       );
       const out = { objectId, action: action.id, state: action.state, by: who, until: (rows[0].until as Date).toISOString() };
       await this.emit(ctx, { type: "org.object", payload: out });
