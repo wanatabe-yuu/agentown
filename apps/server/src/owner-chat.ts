@@ -3,7 +3,8 @@ import type { Actor } from "@agentown/core";
 import { z } from "zod";
 import type { Instance } from "./instance.ts";
 import { tx, type Queryable } from "./db.ts";
-import { ApiError, badRequest, conflict, deny, newId, notFound, redactLine, sha256 } from "./util.ts";
+import { ApiError, actorRef, badRequest, conflict, deny, newId, notFound, redactLine, sha256 } from "./util.ts";
+import { openProposal, recordProposal } from "./proposals.ts";
 import { createChatModel, ModelError } from "./chat/provider.ts";
 import { needsApproval } from "./chat/tools.ts";
 import { chatConfigSchema, emptyUsage, type ChatConfig, type ChatModelFactory, type ChatTool, type Message, type ModelInput, type Usage } from "./chat/types.ts";
@@ -153,6 +154,10 @@ export class OwnerChat {
     this.jobs.set(id, { abort, done });
   }
   private async finish(c: ChatRow, r: RunRow, status: string, error: string | null = null) {
+    await this.db.query(
+      "UPDATE proposals SET status='withdrawn', updated_at=now() WHERE source_type='chat_action' AND status IN ('pending','approved') AND source_id IN (SELECT id FROM owner_chat_actions WHERE run_id=$1 AND status IN ('pending','approved','planned'))",
+      [r.id],
+    );
     await this.db.query("UPDATE owner_chat_actions SET status='rejected',result=$2 WHERE run_id=$1 AND status IN ('pending','approved','planned')", [r.id, JSON.stringify({ error: "Response ended before action execution." })]);
     await this.repair(c);
     // Publish the idle state and its model context together; a new send cannot race this save.
@@ -202,6 +207,13 @@ export class OwnerChat {
           valid && !repeated ? needsApproval(tool!, parsed!.data, c.config.approvalMode) ? "pending" : "approved" : "failed", repeated ? JSON.stringify({ error: "This action already failed or was declined in this response. Do not repeat it. Explain the blocker or choose a permitted approach.", previous: repeated.result }) : valid ? null : JSON.stringify({ error: "Unknown tool or invalid arguments. Read the tool schema and correct the request." })])).rows[0]!;
       }
       if (action.status === "pending") {
+        await openProposal(this.db, {
+          orgId: c.org_id, kind: "capability_call", title: `${call.name}${c.subject_type === "owner" ? "" : ` (${c.subject_type} ${c.subject_id})`}`,
+          proposer: actorRef(actor), subject: c.subject_type === "owner" ? null : { type: c.subject_type, id: c.subject_id },
+          payload: { chatId: c.id, chatSubject: { type: c.subject_type, id: c.subject_id }, tool: call.name, args: call.args },
+          source: { type: "chat_action", id: action.id }, approvers: { kind: "owner" },
+          evaluation: [{ rule: c.config.approvalMode === "all" ? "approval_mode_all" : "important_action", verdict: "require_approval", reason: "the owner confirms this action before it runs" }],
+        });
         await this.db.query("UPDATE owner_chat_runs SET status='waiting_approval',partial_text='' WHERE id=$1 AND status='running'", [r.id]);
         return false;
       }
@@ -218,6 +230,7 @@ export class OwnerChat {
           if (tool.mutates) this.changed?.();
         } catch (e) { action.status = "failed"; action.result = { error: safeError(e), ...(e instanceof ApiError ? { code: e.code } : {}) }; }
         await this.db.query("UPDATE owner_chat_actions SET status=$2,result=$3 WHERE id=$1", [action.id, action.status, JSON.stringify(action.result)]);
+        await recordProposal(this.db, { type: "chat_action", id: action.id }, action.status === "applied" ? { status: "applied", receipt: action.result } : { status: "failed", error: JSON.stringify(action.result).slice(0, 2000) });
       }
       if (action.status === "applying") { action.status = "uncertain"; action.result = { error: "Execution was interrupted; inspect the world before retrying. This action will not be replayed." }; }
       c.context.push({ role: "tool", toolId: call.id, text: JSON.stringify(action.result ?? { status: action.status }), isError: action.status !== "applied" });
@@ -329,6 +342,7 @@ export class OwnerChat {
       if (a.status !== "pending") return a.run_id;
       if (a.run_status !== "waiting_approval") throw conflict("ended", "This response is no longer awaiting approval.");
       await q.query("UPDATE owner_chat_actions SET status=$2,result=$3 WHERE id=$1", [actionId, approve ? "approved" : "rejected", approve ? null : JSON.stringify({ rejected: true, message: "The owner rejected this action. Do not try an equivalent operation." })]);
+      await recordProposal(q, { type: "chat_action", id: actionId }, { status: approve ? "approved" : "rejected", decision: { by: actorRef(actor), verdict: approve ? "approve" : "reject" } });
       return a.run_id;
     });
     // An approval may arrive just as the background loop parks at the pending card.

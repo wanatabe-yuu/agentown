@@ -48,6 +48,7 @@ import type { AgentEventRow, EventBus } from "./bus.ts";
 import { type Db, type Queryable, tx } from "./db.ts";
 import { type ModelLister, normalizeBaseUrl, PROVIDER_INFO, PROVIDERS, type Provider, providerBaseUrl, providerInfo, WORKSPACE_ID_PATTERN } from "./providers.ts";
 import type { RuntimeLlm } from "./runtime/driver.ts";
+import { openProposal, recordProposal } from "./proposals.ts";
 import type { SecretBox } from "./secrets.ts";
 import {
   ApiError,
@@ -1501,6 +1502,13 @@ export class Service {
         ...(run ? { taskId: run.task_id, runId: run.id } : {}),
         payload: { ...after, before, after, revision: configChange.revision, changedFields: configChange.changedFields, instructionsChanged: configChange.instructionsChanged, by: actorRef(actor) },
       });
+      // Already authorized and applied: the proposal record is its receipt.
+      await openProposal(ctx.c, {
+        orgId: this.orgId, kind: "config_change", title: `Configure ${a.display_name}: ${configChange.changedFields.join(", ") || (configChange.instructionsChanged ? "instructions" : "no change")}`,
+        proposer: actorRef(actor), subject: { type: "agent", id }, payload: { change, ...(run ? { taskId: run.task_id, runId: run.id } : {}) },
+        source: { type: "agent_config", id: `${id}:${configChange.revision}` }, status: "applied", receipt: configChange,
+        evaluation: [{ rule: "permission", verdict: "allow", reason: "agent.configure granted" }],
+      });
       return configChange;
     });
     return { ...await this.presentAgentById(id), configChange: receipt };
@@ -1901,6 +1909,19 @@ export class Service {
       summary ?? null,
     ]);
     await this.emit(ctx, { type: "task.status", agentId: t.assignee_agent_id, taskId: t.id, payload: { from: t.status, to, reason, title: t.title } });
+    // Finished work waiting for review is a proposal; leaving review settles it.
+    const source = { type: "task", id: `${t.id}:${t.attempt}` };
+    if (to === "review" && t.status !== "review") {
+      await openProposal(ctx.c, {
+        orgId: this.orgId, kind: "task_result", title: `Review: ${t.title}`,
+        proposer: t.assignee_agent_id ? `agent:${t.assignee_agent_id}` : "system", subject: { type: "task", id: t.id },
+        payload: { taskId: t.id, attempt: t.attempt, summary: summary ?? t.summary ?? null },
+        source, approvers: { kind: "task_reviewer", createdBy: t.created_by },
+        evaluation: [{ rule: "requires_review", verdict: "require_approval", reason: "the requester asked to review results" }],
+      });
+    } else if (t.status === "review" && to !== "review") {
+      await recordProposal(ctx.c, source, { status: to === "done" ? "applied" : to === "assigned" ? "rejected" : "withdrawn" });
+    }
     t.status = to;
   }
 
@@ -1975,6 +1996,10 @@ export class Service {
       } else {
         await this.require(actor, "task.review", { agentId: t.assignee_agent_id ?? undefined, projectId: t.project_id }, { q: ctx.c, detail: { decision } });
       }
+      await recordProposal(ctx.c, { type: "task", id: `${t.id}:${t.attempt}` }, {
+        status: decision === "approve" ? "approved" : "rejected",
+        decision: { by: actorRef(actor), verdict: decision, ...(note ? { note } : {}) },
+      });
       if (decision === "approve") await this.setTaskStatus(ctx, t, "done", note || `approved by ${actorRef(actor)}`);
       else {
         await ctx.c.query("UPDATE tasks SET attempt = attempt + 1, max_attempts = GREATEST(max_attempts, attempt + 1) WHERE id=$1", [id]);

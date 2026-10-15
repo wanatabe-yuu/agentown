@@ -1,5 +1,6 @@
 import { type Actor, authorize, teamsOf } from "@agentown/core";
 import type { AgentRow, Service } from "./service.ts";
+import { canDecide } from "./proposals.ts";
 import { badRequest, deny, notFound, redactLine } from "./util.ts";
 
 /**
@@ -22,6 +23,8 @@ export interface FeedItem {
   text: string;
   status?: string;
   taskId?: string | null;
+  proposalId?: string;
+  canDecide?: boolean;
 }
 
 const EVENT_TYPES = ["task.created", "task.assigned", "task.status", "run.started", "run.finished", "run.lost", "agent.spawned", "agent.retired", "agent.team", "agent.resources", "runtime.generation", "artifact.created"];
@@ -125,50 +128,42 @@ export async function feed(svc: Service, actor: Actor, opts: { kind?: FeedKind; 
     }
   }
 
-  if (want("tool") || want("proposal")) {
-    // Actions proposed in this person's own chats (chats are private to their owner).
-    if (actor.kind === "human") {
-      const { rows } = await svc.db.query(
-        `SELECT a.id, a.name, a.args, a.status, a.created_at, c.subject_type, c.subject_id FROM owner_chat_actions a
-           JOIN owner_chat_runs r ON r.id=a.run_id JOIN owner_chats c ON c.id=r.chat_id
-          WHERE c.org_id=$1 AND c.user_id=$2 ORDER BY a.created_at DESC LIMIT $3`,
-        [svc.orgId, actor.id, limit],
-      );
-      for (const r of rows) {
-        const proposal = ["pending", "approved", "rejected"].includes(r.status);
-        const kind: FeedKind = proposal ? "proposal" : "tool";
-        if (!want(kind)) continue;
-        const agentId = r.subject_type === "agent" ? r.subject_id : null;
-        if ((opts.agentId || opts.teamId) && !inScope(agentId)) continue;
-        items.push({
-          id: `c${r.id}`, at: r.created_at.toISOString(), kind, agentId, teamId: agentId ? teamOf.get(agentId) ?? null : null,
-          title: r.name, text: summarizeArgs(r.args), status: r.status,
-        });
-      }
+  if (want("tool") && actor.kind === "human") {
+    // Actions taken in this person's own chats (chats are private to their owner).
+    const { rows } = await svc.db.query(
+      `SELECT a.id, a.name, a.args, a.status, a.created_at, c.subject_type, c.subject_id FROM owner_chat_actions a
+         JOIN owner_chat_runs r ON r.id=a.run_id JOIN owner_chats c ON c.id=r.chat_id
+        WHERE c.org_id=$1 AND c.user_id=$2 ORDER BY a.created_at DESC LIMIT $3`,
+      [svc.orgId, actor.id, limit],
+    );
+    for (const r of rows) {
+      const agentId = r.subject_type === "agent" ? r.subject_id : null;
+      if ((opts.agentId || opts.teamId) && !inScope(agentId)) continue;
+      items.push({
+        id: `c${r.id}`, at: r.created_at.toISOString(), kind: "tool", agentId, teamId: agentId ? teamOf.get(agentId) ?? null : null,
+        title: r.name, text: summarizeArgs(r.args), status: r.status,
+      });
     }
   }
 
-  if (want("proposal") && viewIds.length) {
-    // Finished work waiting for a decision.
+  if (want("proposal")) {
+    // Everything proposed, from the Proposal Engine: what the caller proposed, may decide, or concerns agents they can see.
+    const owner = actor.kind === "human" && actor.owner;
+    const me = `${actor.kind}:${actor.id}`;
     const { rows } = await svc.db.query(
-      `SELECT id, title, assignee_agent_id, updated_at, summary FROM tasks
-        WHERE org_id=$1 AND status='review' AND assignee_agent_id = ANY($2) ORDER BY updated_at DESC LIMIT $3`,
-      [svc.orgId, viewIds, limit],
+      `SELECT * FROM proposals WHERE org_id=$1 ORDER BY (status='pending') DESC, created_at DESC LIMIT $2`,
+      [svc.orgId, limit * 3],
     );
-    for (const t of rows) {
+    for (const p of rows) {
+      const agentId = p.subject_type === "agent" ? p.subject_id : p.proposer.startsWith("agent:") ? p.proposer.slice(6) : null;
+      const visible = owner || p.proposer === me || p.approvers?.createdBy === me || (agentId && viewIds.includes(agentId));
+      if (!visible) continue;
+      if ((opts.agentId || opts.teamId) && !inScope(agentId)) continue;
       items.push({
-        id: `t${t.id}`, at: t.updated_at.toISOString(), kind: "proposal", agentId: t.assignee_agent_id, teamId: teamOf.get(t.assignee_agent_id) ?? null,
-        title: `Review: ${t.title}`, text: (t.summary ?? "").slice(0, 500), status: "review", taskId: t.id,
-      });
-    }
-    const { rows: cfg } = await svc.db.query(
-      `SELECT seq, at, agent_id, payload FROM agent_events WHERE org_id=$1 AND type='agent.configured' AND agent_id = ANY($2) ORDER BY seq DESC LIMIT $3`,
-      [svc.orgId, viewIds, limit],
-    );
-    for (const e of cfg) {
-      items.push({
-        id: `e${e.seq}`, at: e.at.toISOString(), kind: "proposal", agentId: e.agent_id, teamId: teamOf.get(e.agent_id) ?? null,
-        title: "Configuration change", text: `changed: ${((e.payload?.changedFields as string[]) ?? []).join(", ") || "—"}`, status: "applied",
+        id: `p${p.id}`, at: p.created_at.toISOString(), kind: "proposal", agentId, teamId: agentId ? teamOf.get(agentId) ?? null : null,
+        title: p.title, text: describeProposal(p), status: p.status,
+        taskId: p.kind === "task_result" ? (p.payload?.taskId ?? null) : null,
+        proposalId: p.id, canDecide: p.status === "pending" && canDecide(actor, p),
       });
     }
   }
@@ -198,6 +193,14 @@ async function nameMap(svc: Service) {
   const { rows: u } = await svc.db.query("SELECT u.id, u.display_name FROM org_members m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1", [svc.orgId]);
   for (const r of u) names.set(`human:${r.id}`, r.display_name);
   return names;
+}
+
+function describeProposal(p: { kind: string; payload: any; receipt: any; error: string | null; proposer: string }): string {
+  const who = p.proposer.replace(/^(agent|human):/, "");
+  if (p.kind === "task_result") return `${who}: ${String(p.payload?.summary ?? "").slice(0, 400)}`;
+  if (p.kind === "config_change") return `changed: ${(p.receipt?.changedFields ?? []).join(", ") || "—"}`;
+  if (p.kind === "capability_call") return `${who} → ${p.payload?.tool ?? p.payload?.capability} ${summarizeArgs(p.payload?.args)}${p.error ? ` · ${p.error.slice(0, 200)}` : ""}`;
+  return summarizeArgs(p.payload);
 }
 
 function summarizeArgs(args: unknown): string {

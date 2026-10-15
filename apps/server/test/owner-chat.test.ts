@@ -170,6 +170,20 @@ describe("owner harness chat", () => {
     await call("POST", `/${id}/actions/${actionId}`, { approve: true }); await env.ownerChat.idle();
     expect((await env.service.getAgent({ kind: "human", id: ownerId, owner: true }, "ceo")).desiredRuntime).toBe("running");
   });
+  it("a chat action waiting for approval is a proposal that can be decided from the proposals inbox", async () => {
+    const id = await create({ approvalMode: "all" });
+    plan = [tool("update_agent", { id: "po", change: { displayName: "Inbox renamed" } })];
+    const pending = await send(id);
+    const list = (await env.call(env.owner, "GET", "/api/proposals?status=pending")).body.proposals;
+    const p = list.find((x: any) => x.source.type === "chat_action" && x.source.id === pending.actions[0].id);
+    expect(p).toMatchObject({ kind: "capability_call", canDecide: true, payload: { tool: "update_agent", chatId: id } });
+    expect((await env.call(env.owner, "POST", `/api/proposals/${p.id}/decide`, { verdict: "approve" })).status).toBe(200);
+    await env.ownerChat.idle();
+    expect((await env.db.query("SELECT display_name FROM agents WHERE id='po'")).rows[0].display_name).toBe("Inbox renamed");
+    const settled = (await env.call(env.owner, "GET", "/api/proposals")).body.proposals.find((x: any) => x.id === p.id);
+    expect(settled).toMatchObject({ status: "applied", decisions: [{ verdict: "approve" }] });
+    expect((await env.call(env.owner, "POST", `/api/proposals/${p.id}/decide`, { verdict: "approve" })).status).toBe(409);
+  });
   it("approval executes the exact proposal only once, then continues the response", async () => {
     const id = await create({ approvalMode: "all" });
     plan = [tool("update_agent", { id: "po", change: { displayName: "Owner renamed" } })];

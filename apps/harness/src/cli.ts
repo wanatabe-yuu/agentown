@@ -21,6 +21,10 @@ const HELP = `agentown <command>
   spawn --template T --name N [--manager M] [--team TEAM] [--cpu 100m] [--memory 192Mi] [--key K]
                                            hire a new agent from an approved template; it joins
                                            TEAM's runtime and adds the declared cpu/memory to it
+  tools                                    capabilities you may call (id, effect, approval)
+  tool ID [JSON_ARGS]                      call a capability through the gateway; a call that needs
+                                           approval prints {"status":"pending","proposalId":...}
+  proposals [--status pending]             proposals you made or may decide
   team                                     your team's channel (latest messages)
   team say TEXT                            post to your team's channel
   task create --to AGENT --title T [--desc D] [--criteria C] [--project P]
@@ -93,6 +97,29 @@ async function main() {
         idempotencyKey: one("key"),
       });
       return out(r.agent.id);
+    }
+    case "tools": {
+      const r = await api.get("/api/tools");
+      for (const t of r.tools) out(`${t.id}\t${t.effect}\t${t.approval}\t${t.executor}\t${t.description.slice(0, 100)}`);
+      return;
+    }
+    case "tool": {
+      if (!sub) throw new Error("tool requires a capability ID (see `agentown tools`)");
+      let args: unknown = {};
+      if (rest.length) {
+        try {
+          args = JSON.parse(rest.join(" "));
+        } catch {
+          throw new Error("tool arguments must be one JSON object");
+        }
+      }
+      return out(await api.post(`/api/tools/${encodeURIComponent(sub)}/invoke`, { args }));
+    }
+    case "proposals": {
+      const { one } = parseFlags([sub ?? "", ...rest].filter(Boolean));
+      const r = await api.get(`/api/proposals${one("status") ? `?status=${encodeURIComponent(one("status")!)}` : ""}`);
+      for (const p of r.proposals) out(`${p.id}\t${p.status}\t${p.kind}\t${p.title}`);
+      return;
     }
     case "team": {
       const me = await api.get(`/api/agents/${process.env.AGENTOWN_AGENT_ID}`);

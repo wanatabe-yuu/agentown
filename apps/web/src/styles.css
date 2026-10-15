@@ -2025,3 +2025,10 @@ input.short {
     gap: 2px;
   }
 }
+.other-feed li.decidable {
+  border-left: 3px solid var(--warn);
+  padding-left: 6px;
+}
+.other-feed .decide-row {
+  margin: 2px 0 8px;
+}

@@ -194,6 +194,8 @@ function FeedDialog({ kind, snapshot, now, onClose, onOpenTask }: { kind: FeedKi
   const [team, setTeam] = useState("");
   const [items, setItems] = useState<FeedItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
   const label = OTHER.find((o) => o.kind === kind)!;
   useEffect(() => {
     let live = true;
@@ -207,7 +209,19 @@ function FeedDialog({ kind, snapshot, now, onClose, onOpenTask }: { kind: FeedKi
       live = false;
       clearInterval(t);
     };
-  }, [kind, team]);
+  }, [kind, team, tick]);
+  const decide = async (id: string, verdict: "approve" | "reject") => {
+    const note = verdict === "reject" ? prompt("Lý do từ chối (tuỳ chọn)") ?? "" : "";
+    setBusy(id);
+    try {
+      await api("POST", `/api/proposals/${id}/decide`, { verdict, note });
+      setTick((n) => n + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
   const name = (id: string | null) => snapshot.agents.find((a) => a.id === id)?.displayName ?? (id ? id : "Bạn");
   return (
     <Modal title={`Khác · ${label.label}`} onClose={onClose} wide className="feed-dialog">
@@ -228,13 +242,23 @@ function FeedDialog({ kind, snapshot, now, onClose, onOpenTask }: { kind: FeedKi
       {items?.length === 0 && <p className="muted">Chưa có gì.</p>}
       <ul className="feed other-feed">
         {items?.map((i) => (
-          <li key={i.id}>
+          <li key={i.id} className={i.canDecide ? "decidable" : ""}>
             <button type="button" className={`feed-row kind-${i.kind}`} disabled={!i.taskId} onClick={() => i.taskId && onOpenTask(i.taskId)}>
               <span className="muted small">{ago(i.at, now)}</span> <b>{name(i.agentId)}</b>
               {i.kind !== "self" && <span className="tag">{i.title}</span>}
               {i.status && <StatusPill state={i.status} />}
               <span className={i.kind === "tool" ? "mono" : ""}>{i.text}</span>
             </button>
+            {i.canDecide && i.proposalId && (
+              <div className="btn-row decide-row">
+                <button type="button" className="primary" disabled={busy === i.proposalId} onClick={() => void decide(i.proposalId!, "approve")}>
+                  Duyệt
+                </button>
+                <button type="button" disabled={busy === i.proposalId} onClick={() => void decide(i.proposalId!, "reject")}>
+                  Từ chối
+                </button>
+              </div>
+            )}
           </li>
         ))}
       </ul>

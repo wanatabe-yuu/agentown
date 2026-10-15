@@ -198,6 +198,8 @@ export interface FeedItem {
   text: string;
   status?: string;
   taskId?: string | null;
+  proposalId?: string;
+  canDecide?: boolean;
 }
 
 export interface AgentEvent {

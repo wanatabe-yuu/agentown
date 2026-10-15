@@ -129,7 +129,7 @@ describe("conversations", () => {
     const tool = (await env.call(env.owner, "GET", "/api/feed?kind=tool&teamId=eng")).body.items;
     expect(tool[0]).toMatchObject({ kind: "tool", title: "bash", text: "pnpm test" });
     const proposals = (await env.call(env.owner, "GET", "/api/feed?kind=proposal")).body.items;
-    expect(proposals.some((p: any) => p.title === "Review: Think aloud" && p.status === "review")).toBe(true);
+    expect(proposals.some((p: any) => p.title === "Review: Think aloud" && p.status === "pending" && p.canDecide)).toBe(true);
     const events = (await env.call(env.owner, "GET", "/api/feed?kind=event&agentId=lead-eng")).body.items;
     expect(events.some((e: any) => e.title === "run.finished")).toBe(true);
     // Reasoning and commands need runtime.logs on that agent.

@@ -436,6 +436,36 @@ const MIGRATIONS: string[] = [
      at timestamptz NOT NULL DEFAULT now()
    );
    CREATE INDEX IF NOT EXISTS team_messages_team ON team_messages(org_id, team_id, id);`,
+  // Proposal & Approval Engine: one record per proposed change, whatever proposed it.
+  `CREATE TABLE IF NOT EXISTS proposals (
+     id text PRIMARY KEY,
+     org_id text NOT NULL REFERENCES organizations(id),
+     kind text NOT NULL CHECK (kind IN ('capability_call','config_change','task_result','world_change','permission_change','runtime_change','team_change')),
+     title text NOT NULL,
+     proposer text NOT NULL,
+     subject_type text,
+     subject_id text,
+     payload jsonb NOT NULL DEFAULT '{}',
+     source_type text NOT NULL,
+     source_id text NOT NULL,
+     status text NOT NULL CHECK (status IN ('pending','approved','rejected','applying','applied','failed','expired','withdrawn')),
+     evaluation jsonb NOT NULL DEFAULT '[]',
+     approvers jsonb NOT NULL DEFAULT '{"kind":"owner"}',
+     decisions jsonb NOT NULL DEFAULT '[]',
+     receipt jsonb,
+     error text,
+     created_at timestamptz NOT NULL DEFAULT now(),
+     updated_at timestamptz NOT NULL DEFAULT now(),
+     UNIQUE (source_type, source_id)
+   );
+   CREATE INDEX IF NOT EXISTS proposals_org ON proposals(org_id, status, created_at DESC);
+   INSERT INTO proposals(id, org_id, kind, title, proposer, subject_type, subject_id, payload, source_type, source_id, status, approvers)
+   SELECT 'p-' || substr(md5(t.id || ':' || t.attempt), 1, 12), t.org_id, 'task_result', 'Review: ' || t.title,
+          COALESCE('agent:' || t.assignee_agent_id, 'system'), 'task', t.id,
+          jsonb_build_object('taskId', t.id, 'attempt', t.attempt, 'summary', t.summary),
+          'task', t.id || ':' || t.attempt, 'pending', jsonb_build_object('kind', 'task_reviewer', 'createdBy', t.created_by)
+     FROM tasks t WHERE t.status = 'review'
+   ON CONFLICT (source_type, source_id) DO NOTHING;`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

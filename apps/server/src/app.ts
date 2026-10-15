@@ -1,4 +1,4 @@
-import { chatSubjectSchema } from "./chat/subjects.ts";
+import { chatSubjectSchema, type ChatSubject } from "./chat/subjects.ts";
 import { existsSync } from "node:fs";
 import { PassThrough, Readable } from "node:stream";
 import { ACTIONS, type Actor, EFFORTS, WORK_STATES, authHeaderSchema } from "@agentown/core";
@@ -14,6 +14,8 @@ import type { Service } from "./service.ts";
 import { ApiError, badRequest } from "./util.ts";
 import { OwnerChat } from "./owner-chat.ts";
 import { FEED_KINDS, type FeedKind, feed, listTeamMessages, postTeamMessage } from "./conversations.ts";
+import { PROPOSAL_KINDS, PROPOSAL_STATUSES, ProposalEngine } from "./proposals.ts";
+import { CapabilityGateway } from "./capabilities.ts";
 import { ownerTools } from "./chat/tools.ts";
 import type { ChatModelFactory } from "./chat/types.ts";
 import { forwardModel } from "./model-broker.ts";
@@ -104,6 +106,9 @@ const S = {
   setTeam: z.object({ teamId: z.string().min(1).max(60) }),
   resources: z.object({ cpu: z.string().max(20).optional(), memory: z.string().max(20).optional() }),
   teamMessage: z.object({ text: z.string().trim().min(1).max(4000) }),
+  invoke: z.object({ args: z.unknown().optional(), idempotencyKey: z.string().max(100).optional() }).prefault({}),
+  proposalQuery: z.object({ status: z.enum(PROPOSAL_STATUSES).optional(), kind: z.enum(PROPOSAL_KINDS).optional(), limit: z.coerce.number().int().min(1).max(300).optional() }),
+  decide: z.object({ verdict: z.enum(["approve", "reject"]), note: z.string().max(2000).default("") }),
   feed: z.object({
     kind: z.enum(FEED_KINDS as [FeedKind, ...FeedKind[]]).optional(),
     teamId: z.string().max(60).optional(),
@@ -205,6 +210,18 @@ export async function buildApp(opts: AppOptions) {
   for (const row of (await instance.db.query("SELECT ciphertext FROM credentials")).rows) instance.secrets.open(row.ciphertext);
   const app = Fastify({ logger: opts.logger ? { level: "info" } : false, bodyLimit: 4 * 1024 * 1024, forceCloseConnections: true });
   const ownerChat = new OwnerChat(instance, ownerTools(S), opts.chatModelFactory, opts.onStateChange);
+  // Proposals are decided here whatever proposed them; each source's own code carries the decision out.
+  const proposals = new ProposalEngine(instance.db);
+  proposals.register("chat_action", {
+    decide: async (actor, p, verdict) => {
+      const { chatId, chatSubject } = p.payload as { chatId: string; chatSubject: ChatSubject };
+      return ownerChat.decide(p.org_id, actor, chatId, p.source_id, verdict === "approve", chatSubject);
+    },
+  });
+  proposals.register("task", {
+    decide: async (actor, p, verdict, note) => (await instance.org(p.org_id)).reviewTask(actor, String(p.payload.taskId), verdict, note),
+  });
+  const gateway = new CapabilityGateway(instance, proposals, ownerTools(S));
   await ownerChat.recover();
   app.addHook("onClose", async () => ownerChat.close());
   await app.register(fastifyWebsocket);
@@ -448,6 +465,23 @@ export async function buildApp(opts: AppOptions) {
     changed(await svcOf(req).setResources(actorOf(req), req.params.id, parse(S.resources, req.body))),
   );
   r.get("/teams", async (req) => ({ teams: await svcOf(req).listTeams(actorOf(req)) }));
+
+  // ---- capability system (registry, discovery, gateway) and proposals
+  r.get("/tools", async (req) => ({ tools: await gateway.discover(svcOf(req), actorOf(req)) }));
+  r.post<{ Params: { id: string } }>("/tools/:id/invoke", async (req, reply) => {
+    const body = parse(S.invoke, req.body);
+    const out = await gateway.invoke(svcOf(req), actorOf(req), req.params.id, body.args, body.idempotencyKey);
+    reply.status(out.status === "pending" ? 202 : 200);
+    return changed(out);
+  });
+  r.get<{ Querystring: { status?: string; kind?: string; limit?: string } }>("/proposals", async (req) => {
+    const q = parse(S.proposalQuery, req.query);
+    return { proposals: await proposals.list(svcOf(req).orgId, actorOf(req), q) };
+  });
+  r.post<{ Params: { id: string } }>("/proposals/:id/decide", async (req) => {
+    const b = parse(S.decide, req.body);
+    return changed(await proposals.decide(svcOf(req).orgId, actorOf(req), req.params.id, b.verdict, b.note));
+  });
   r.get<{ Params: { id: string }; Querystring: { after?: string } }>("/teams/:id/messages", async (req) =>
     listTeamMessages(svcOf(req), actorOf(req), req.params.id, Number(req.query.after ?? 0)),
   );
