@@ -851,6 +851,10 @@ const VI: Record<string, string> = {
   "Stopped after 5 unsuccessful actions. Completed actions are saved. Check the details or tell me how you want to continue.": "Đã dừng sau 5 thao tác không thành công. Những gì đã làm được giữ lại. Xem chi tiết hoặc cho tôi biết muốn làm tiếp thế nào.",
   "Context compacted. Full conversation history remains available.": "Đã rút gọn ngữ cảnh. Toàn bộ lịch sử vẫn còn.",
   "Look up who and what": "Xem danh bạ",
+  "The server is restarting or briefly unreachable ({status}). Try again in a moment.": "Server đang khởi động lại hoặc tạm thời không phản hồi ({status}). Thử lại sau giây lát.",
+  "Unexpected reply from the server ({status}).": "Server trả về phản hồi không hợp lệ ({status}).",
+  "Hide revoked keys": "Ẩn key đã thu hồi",
+  "Show {n} revoked keys": "Hiện {n} key đã thu hồi",
   // activity
   "{name} joined as {role}": "{name} gia nhập với vị trí {role}",
   "{from} → {to}: {title}": "{from} → {to}: {title}",

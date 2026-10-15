@@ -1,6 +1,6 @@
 # System chat
 
-The **System chat** button (a gear) beside **New task** opens a private, persistent conversation for the current organization. It runs independently of agents and tasks. Closing the modal or reloading the page does not cancel the response; **Stop** cancels further generation and tools while preserving completed changes and receipts.
+The **System chat** button (a speech bubble) beside **New task** opens a private, persistent conversation for the current organization. It runs independently of agents and tasks. Closing the modal or reloading the page does not cancel the response; **Stop** cancels further generation and tools while preserving completed changes and receipts.
 
 Choose an existing organization API key, model, effort, context budget, output limit, tool-turn limit and confirmation mode in **Settings**. A new chat starts from the organization's root agent's available key/model settings (or its first available key); these are only defaults. Saving chat settings never edits an agent. Organizations and owners have separate conversation lists and credentials.
 
@@ -18,7 +18,7 @@ There is no host shell, arbitrary HTTP proxy, raw-key/token tool or install-leve
 
 ## Who said it, and who was mentioned
 
-Migration 22 adds an author to chat lines (`author_type`/`author_id`): a reply relayed by `ask` and a task report carry the agent or object they come from. Every line shows an avatar: the owner ("you"), the system chat (a gear), or the agent/object who said it. A relayed message appears in the persona's own chat as the owner speaking "via the system chat".
+Migration 22 adds an author to chat lines (`author_type`/`author_id`): a reply relayed by `ask` and a task report carry the agent or object they come from. Every line shows an avatar: the owner ("you"), the system chat (a speech bubble), or the agent/object who said it. A relayed message appears in the persona's own chat as the owner speaking "via the system chat".
 
 `chat_refs` records which conversations bring someone up: an `ask`, a hand-off to the CEO, or a line naming an agent or a named talking/acting object. That someone's chat lists those conversations ("Mentioned in…") and opens them at that conversation.
 

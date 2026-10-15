@@ -1676,7 +1676,7 @@ input.short {
   .chat-send-row small { font-size: 10px; }
 }
 @media (max-width: 700px) {
-  .modal-backdrop:has(.owner-chat-modal) { height: var(--chat-viewport-height, 100dvh); bottom: auto; }
+  .modal-backdrop:has(.owner-chat-modal) { top: var(--chat-viewport-top, 0px); height: var(--chat-viewport-height, 100dvh); bottom: auto; }
   .modal.owner-chat-modal { height: calc(var(--chat-viewport-height, 100dvh) - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); max-height: calc(var(--chat-viewport-height, 100dvh) - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
 }
 @media (max-width: 700px) {
@@ -2387,7 +2387,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 }
 .who-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .who-you { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
-.who-system { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
+.who-system { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 
 .chat-message:not(.chat-notice) { display: flex; gap: 10px; align-items: flex-start; padding: 0; background: none; border: 0; }
 .chat-message .chat-avatar { margin-top: 2px; }
@@ -2473,3 +2473,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 .chat-notice-by .chat-message-text { font-size: 12px; }
 .object-refs { display: grid; gap: 4px; }
 .object-refs h3 { margin: 0 0 4px; }
+
+/* While a chat is open the page behind does not scroll (iOS scrolls it to show the focused field). */
+html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: none; }

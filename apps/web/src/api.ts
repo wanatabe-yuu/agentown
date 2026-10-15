@@ -1,3 +1,4 @@
+import { t } from "./i18n.ts";
 /**
  * Browser API client. The browser holds only the signed-in person's Agentown
  * token, and only inside an HttpOnly cookie that page scripts cannot read —
@@ -28,6 +29,17 @@ export function orgPath(path: string): string {
   return orgBase + path.slice(4);
 }
 
+/**
+ * A reply that is not ours (a proxy's error page while the server restarts):
+ * a short sentence, never the page's HTML.
+ */
+export function plainError(status: number, text: string): string {
+  if (status === 502 || status === 503 || status === 504 || /<html|<!doctype/i.test(text)) {
+    return status >= 502 && status <= 504 ? t("The server is restarting or briefly unreachable ({status}). Try again in a moment.", { status }) : t("Unexpected reply from the server ({status}).", { status });
+  }
+  return text.trim().slice(0, 300) || `HTTP ${status}`;
+}
+
 export async function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(orgPath(path), {
     method,
@@ -40,7 +52,7 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
-    json = { message: text };
+    json = { message: plainError(res.status, text) };
   }
   // Show the server's reason for a denial instead of silently hiding things.
   if (!res.ok) throw new HttpError(res.status, json?.message ?? `HTTP ${res.status}`);

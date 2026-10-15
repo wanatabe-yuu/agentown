@@ -10,6 +10,8 @@ const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 /** Owner-only key manager. Saved key values and fragments are never returned. */
 export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: Catalog | null; onClose: () => void; notify: Notify; now: number }) {
   const [rows, setRows] = useState<Credential[] | null>(null);
+  // Revoked keys are history: out of the way unless asked for.
+  const [showRevoked, setShowRevoked] = useState(false);
   const [name, setName] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
@@ -96,7 +98,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
             </tr>
           </thead>
           <tbody>
-            {(rows ?? []).map((c) => (
+            {(rows ?? []).filter((c) => showRevoked || !c.revokedAt).map((c) => (
               <tr key={c.id} className={c.revokedAt ? "muted" : ""}>
                 <td>
                   <strong>{c.name}</strong>
@@ -139,7 +141,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
                 </td>
               </tr>
             ))}
-            {rows?.length === 0 && (
+            {rows?.filter((c) => !c.revokedAt).length === 0 && !showRevoked && (
               <tr>
                 <td colSpan={5} className="muted">
                   {tr("No keys yet.")}
@@ -149,6 +151,11 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
           </tbody>
         </table>
       </div>
+      {!!rows?.some((c) => c.revokedAt) && (
+        <button type="button" className="link" onClick={() => setShowRevoked((x) => !x)}>
+          {showRevoked ? tr("Hide revoked keys") : tr("Show {n} revoked keys", { n: rows.filter((c) => c.revokedAt).length })}
+        </button>
+      )}
       <form ref={form} className="form" onSubmit={add} style={{ marginTop: 16 }}>
         <h3>{editing ? tr("Edit connection · {name}", { name: editing.name }) : tr("Add a key")}</h3>
         {editing ? <p className="muted small">{tr("Uses the saved API key. Models are checked again before saving; the key stays encrypted and existing agent assignments are retained.")}</p> : <>

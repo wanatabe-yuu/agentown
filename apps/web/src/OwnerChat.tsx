@@ -80,7 +80,8 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
   const [older, setOlder] = useState<Entry[]>([]);
   const [historyExhausted, setHistoryExhausted] = useState(false);
   const [retry, setRetry] = useState<{ requestId: string; text: string; chatId: string } | null>(null);
-  const [viewportHeight, setViewportHeight] = useState(window.visualViewport?.height);
+  // The part of the page left visible above the keyboard: its size and, on iOS, where the page was scrolled to.
+  const [viewport, setViewport] = useState({ height: window.visualViewport?.height, top: window.visualViewport?.offsetTop ?? 0 });
   const scroll = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const stick = useRef(true);
@@ -93,10 +94,17 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
   const selectedKey = index?.credentials.find(k => k.id === config?.credentialId);
   const changed = view && config && Object.keys(config).some(k => config[k as keyof Config] !== view.chat.config[k as keyof Config]);
   useEffect(() => {
-    const viewport = window.visualViewport;
-    const resize = () => setViewportHeight(viewport?.height);
-    viewport?.addEventListener("resize", resize);
-    return () => viewport?.removeEventListener("resize", resize);
+    const v = window.visualViewport;
+    const update = () => setViewport({ height: v?.height, top: v?.offsetTop ?? 0 });
+    v?.addEventListener("resize", update);
+    v?.addEventListener("scroll", update);
+    // The page behind stays put while the chat is open (iOS would scroll it to show the focused field).
+    document.documentElement.classList.add("chat-open");
+    return () => {
+      v?.removeEventListener("resize", update);
+      v?.removeEventListener("scroll", update);
+      document.documentElement.classList.remove("chat-open");
+    };
   }, []);
 
   useEffect(() => {
@@ -230,7 +238,7 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
   const whoOf = (m: Entry): Who => m.role === "user" ? { type: "you" } : m.author_type && m.author_id ? { type: m.author_type, id: m.author_id } : self;
   const nameOf = (m: Entry) => m.author_type && m.author_id ? <WhoName who={{ type: m.author_type, id: m.author_id }} /> : assistantName;
   const refWho = (r: Ref): Who => r.subject.type === "owner" ? { type: "system" } : { type: r.subject.type, id: r.subject.id };
-  return <Modal title={subject ? t("Chat · {name}", { name: assistantName }) : t("System chat · {org}", { org: orgName })} onClose={onClose} wide className="owner-chat-modal" style={{ "--chat-viewport-height": viewportHeight ? `${viewportHeight}px` : "100dvh" } as CSSProperties}>
+  return <Modal title={subject ? t("Chat · {name}", { name: assistantName }) : t("System chat · {org}", { org: orgName })} onClose={onClose} wide className="owner-chat-modal" style={{ "--chat-viewport-height": viewport.height ? `${viewport.height}px` : "100dvh", "--chat-viewport-top": `${viewport.top}px` } as CSSProperties}>
     <div className="owner-chat-shell">
       <div className="owner-chat-toolbar">
         <select aria-label={t("Conversation")} value={id ?? ""} disabled={busy} onChange={e => choose(e.target.value || null)}>

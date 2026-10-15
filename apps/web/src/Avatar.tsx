@@ -7,7 +7,7 @@ import type { Agent, Department } from "./types.ts";
 /**
  * Who said or did something, as a small round picture: an uploaded image, else
  * a portrait of their 3D model, else their initial. The owner is "you"; the
- * system chat is a gear.
+ * system chat is a speech bubble.
  */
 export type Who = { type: "you" } | { type: "system" } | { type: "agent" | "object"; id: string };
 
@@ -49,10 +49,11 @@ function useWho(who: Who): { name: string; image: string | null; color: string; 
   return { name, image: uploaded ? imageUrl(uploaded) : picture, color, initial };
 }
 
-const Gear = () => (
-  <svg viewBox="0 0 24 24" aria-hidden width="62%" height="62%" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="3.2" />
-    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+/** The system chat: a speech bubble, like every other chat (a gear read as "settings"). */
+const Bubble = () => (
+  <svg viewBox="0 0 24 24" aria-hidden width="60%" height="60%" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12z" />
+    <path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01" strokeWidth="2.6" />
   </svg>
 );
 
@@ -65,7 +66,7 @@ export function Avatar({ who, size = 28, className = "" }: { who: Who; size?: nu
   const w = useWho(who);
   return (
     <span className={`who-avatar who-${who.type} ${className}`} style={{ width: size, height: size, "--who": w.color } as React.CSSProperties} title={w.name} aria-hidden>
-      {who.type === "system" ? <Gear /> : w.image ? <img src={w.image} alt="" draggable={false} /> : <span style={{ fontSize: size * 0.42 }}>{w.initial}</span>}
+      {who.type === "system" ? <Bubble /> : w.image ? <img src={w.image} alt="" draggable={false} /> : <span style={{ fontSize: size * 0.42 }}>{w.initial}</span>}
     </span>
   );
 }
