@@ -93,7 +93,7 @@ export function applyBehavior(an: Animated, sec: number) {
         const k = (sec * b.speed * 0.6 + i / an.puffs!.length + an.seed) % 1;
         const bp = p.userData.base as THREE.Vector3;
         p.position.set(bp.x + Math.sin((k + i) * 5) * 0.04, bp.y + k * 0.5 * b.amount, bp.z);
-        p.scale.setScalar((0.05 + k * 0.12) * Math.sin(Math.PI * k) * b.amount + 0.001);
+        p.scale.setScalar((0.07 + k * 0.16) * Math.sin(Math.PI * k) * b.amount + 0.001);
       }
       break;
     case "wander": {

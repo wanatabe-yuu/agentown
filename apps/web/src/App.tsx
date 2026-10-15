@@ -137,6 +137,16 @@ function OrgApp({
     setSelectedObject(id);
     if (id) setSelectedAgent(null);
   };
+  // A link can point at one object: …/#object=<id> opens its panel.
+  useEffect(() => {
+    const open = () => {
+      const m = location.hash.match(/^#object=([a-z0-9-]+)$/);
+      if (m) selectObject(m[1]!);
+    };
+    open();
+    window.addEventListener("hashchange", open);
+    return () => window.removeEventListener("hashchange", open);
+  }, []);
   const [openTask, setOpenTask] = useState<string | null>(null);
   const [newTaskFor, setNewTaskFor] = useState<string | null | undefined>(undefined);
   // The 3D office is the default everywhere (it falls back to a flat view without WebGL).

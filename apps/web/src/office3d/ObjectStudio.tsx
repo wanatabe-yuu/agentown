@@ -15,7 +15,7 @@ type Kind = World["kinds"][string];
  * its behaviors make it do (spinning, steaming, glowing), framed to its size.
  * Drag sideways to turn it. A character (the shop cat) can be shown walking.
  */
-export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: boolean }) {
+export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: boolean; /** Outline this part (index into the look's parts). */ highlight?: number | null }) {
   const wrap = useRef<HTMLDivElement>(null);
   const stage = useRef<{ holder: THREE.Group; fit: () => void } | null>(null);
   const walking = useRef(!!p.walking);
@@ -102,6 +102,7 @@ export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: b
       frame = requestAnimationFrame(loop);
       const sec = now / 1000;
       for (const an of (holder.userData.animated as ReturnType<typeof prepareBehaviors> | undefined) ?? []) applyBehavior(an, sec);
+      for (const c of holder.children) if (c instanceof THREE.BoxHelper) c.update();
       const body = holder.children[0];
       if (body?.userData.character) {
         const lift = ((body.userData.lift as number | undefined) ?? 0) * body.scale.y;
@@ -125,7 +126,7 @@ export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: b
   }, []);
 
   // The model itself, rebuilt when its look or placement changes (edits preview right away).
-  const key = JSON.stringify([p.kind.look, p.kind.behaviors, p.scale]);
+  const key = JSON.stringify([p.kind.look, p.kind.behaviors, p.scale, p.highlight]);
   useEffect(() => {
     const s = stage.current;
     if (!s) return;
@@ -137,6 +138,13 @@ export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: b
     s.holder.add(obj);
     s.holder.updateMatrixWorld(true);
     s.holder.userData.animated = prepareBehaviors(obj, p.kind, 0, null);
+    if (p.highlight != null) {
+      let hit: THREE.Object3D | undefined;
+      obj.traverse((m) => {
+        if (m.userData.partIndex === p.highlight) hit = m;
+      });
+      if (hit) s.holder.add(new THREE.BoxHelper(hit, getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#c0773a"));
+    }
     let alive = true;
     loadModels(s.holder, [], () => alive);
     s.fit();

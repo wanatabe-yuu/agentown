@@ -2415,3 +2415,12 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 @media (prefers-color-scheme: dark) {
   .studio-stage { background: radial-gradient(70% 60% at 50% 40%, color-mix(in srgb, var(--accent) 14%, #1f2026), #121316 80%); }
 }
+.shape-edit { display: flex; flex-direction: column; gap: 8px; }
+.part-chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 120px; overflow: auto; padding: 2px; }
+.part-chips button { min-height: 28px; padding: 0 10px; font-size: 12px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; }
+.part-chips button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.part-chips button.add { border-style: dashed; }
+.part-chips .dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.2); }
+.part-form { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.vec3 { display: grid; grid-template-columns: 64px repeat(3, minmax(0, 1fr)); gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.vec3 input { min-width: 0; padding: 4px 4px; font-size: 12px; }

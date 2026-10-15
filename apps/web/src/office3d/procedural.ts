@@ -54,9 +54,10 @@ function mesh(shape: Shape, size: [number, number, number], at: [number, number,
 /** An object made of primitives; named parts become named children so behaviors can move them. */
 export function partsObject(parts: Primitive[]): THREE.Group {
   const g = new THREE.Group();
-  for (const p of parts) {
+  for (const [i, p] of parts.entries()) {
     // Emissive parts get their own material: blink and flicker change its intensity.
     const m = mesh(p.shape, p.size, p.offset, material(p.color, p.emissive, !!p.emissive, p.finish ?? "matte"), p.rotation);
+    m.userData.partIndex = i; // the object panel outlines the part being edited
     if (p.part) {
       // Several primitives can share a part name: they move together.
       const existing = g.getObjectByName(p.part);
