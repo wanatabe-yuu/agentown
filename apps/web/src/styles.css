@@ -2093,7 +2093,8 @@ input.short {
   .topbar > .menu:last-child { grid-column: 3; grid-row: 1; }
   .topbar > .conn { grid-column: 1; grid-row: 1; justify-self: end; margin-right: 4px; }
   .brand { grid-column: 1; grid-row: 1; padding-right: 40px; }
-  .has-owner-chat .stage, .stage { height: max(320px, calc(100dvh - 118px)); }
+  /* the 3D canvas swallows touch drags, so leave room below it to scroll to the panel */
+  .has-owner-chat .stage, .stage { height: max(300px, 60dvh); }
   .world-nav .edit-world { display: none; }
   .world-nav { right: 60px; flex-wrap: nowrap; }
   .world-nav select { min-width: 96px; }

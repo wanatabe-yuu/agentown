@@ -15,7 +15,7 @@ export const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null
   "artifact.created": (e, n) => t("{name} delivered {file}", { name: n(e.agentId), file: e.payload.name }),
   "agent.configured": (e, n) => t("{name} now uses {model}", { name: n(e.agentId), model: e.payload.model ?? t("the default model") }),
   "agent.team": (e, n) => t("{name} moved to team {team}", { name: n(e.agentId), team: e.payload.teamId }),
-  "runtime.generation": (e, n) => t("{name} got a fresh runtime: {why}", { name: n(e.agentId), why: String(e.payload.reason ?? "").replace(/^harness image.*/, t("new runtime image")).replace(/^resize /, t("resources") + " ").replace(" - ", " → ") }),
+  "runtime.generation": (e, n) => t("{name} got a fresh runtime: {why}", { name: n(e.agentId), why: String(e.payload.reason ?? "").replace(/^harness image.*/, t("new runtime image")).replace(/^resize /, t("resources") + " ").replace(/^restart requested by (?:human:)?(.*)$/, (_, who: string) => t("restart requested by {who}", { who: who === "owner" ? t("the owner") : who })).replace(" - ", " → ") }),
   "agent.retired": (e, n) => t("{name} retired", { name: n(e.agentId) }),
   "grant.created": (e, n) => t("{name} received {action}", { name: n(e.agentId), action: e.payload.action }),
   "grant.revoked": (e, n) => t("{name} lost {action}", { name: n(e.agentId), action: e.payload.action }),

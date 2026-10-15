@@ -660,6 +660,8 @@ const VI: Record<string, string> = {
   "{name} retired": "{name} đã nghỉ",
   "{name} got a fresh runtime: {why}": "{name} được khởi động lại runtime: {why}",
   "new runtime image": "image runtime mới",
+  "restart requested by {who}": "{who} yêu cầu khởi động lại",
+  "the owner": "owner",
   "resources": "tài nguyên",
   "{name} received {action}": "{name} được cấp {action}",
   "{name} lost {action}": "{name} bị thu hồi {action}",
