@@ -2110,3 +2110,11 @@ input.short {
 .team-msg-text .report-markdown { font-size: inherit; }
 .team-msg-text .report-markdown > :first-child { margin-top: 0; }
 .team-msg-text .report-markdown > :last-child { margin-bottom: 0; }
+
+/* ---- settings */
+.settings-section { display: flex; flex-direction: column; gap: 6px; padding: 4px 0 14px; }
+.settings-section + .settings-section { border-top: 1px solid var(--border); padding-top: 14px; }
+.settings-section h3 { margin: 0; }
+.settings-section p { margin: 0; }
+.settings-section select { max-width: 280px; }
+.settings-section .ok { color: var(--good, #3fa37a); }

@@ -21,6 +21,7 @@ import type { ChatModelFactory } from "./chat/types.ts";
 import { forwardModel } from "./model-broker.ts";
 import { redactProviderKeys, redactedBody } from "./key-redaction.ts";
 import { redactLine } from "./util.ts";
+import { LANGUAGES } from "./locales.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -137,6 +138,7 @@ const S = {
     id: z.string(),
     name: z.string().trim().min(1).max(80),
     templateId: z.string(),
+    language: z.enum(LANGUAGES).optional(),
     owner: z.union([z.object({ userId: z.string() }), z.object({ displayName: z.string().trim().min(1).max(60) })]),
   }),
   updateOrg: z.object({ name: z.string().trim().min(1).max(80).optional(), ownerUserId: z.string().optional(), archived: z.boolean().optional() }),
@@ -384,6 +386,7 @@ export async function buildApp(opts: AppOptions) {
       r.get("/me", async (req) => svcOf(req).me(actorOf(req)));
       // The organization's structure (owner only), and saving it as a template.
       r.get("/config", async (req) => svcOf(req).getConfig(actorOf(req)));
+      r.put("/language", async (req) => changed(await svcOf(req).setLanguage(actorOf(req), parse(z.object({ language: z.enum(LANGUAGES) }), req.body).language)));
       r.put("/config", async (req) => changed(await instance.updateOrgConfig(svcOf(req), actorOf(req), parse(S.orgConfig, req.body))));
       r.post("/templates", async (req, reply) => {
         reply.status(201);

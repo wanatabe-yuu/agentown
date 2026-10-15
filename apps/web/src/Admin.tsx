@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { t as tr } from "./i18n.ts";
+import { type Lang, lang, LANGUAGES, t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import type { Account } from "./types.ts";
 import { Modal } from "./ui.tsx";
@@ -48,6 +48,7 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
   const [id, setId] = useState("");
   const [idTouched, setIdTouched] = useState(false);
   const [templateId, setTemplateId] = useState("company");
+  const [language, setLanguage] = useState<Lang>(lang);
   const [owner, setOwner] = useState(account.user?.id ?? "");
   const [ownerName, setOwnerName] = useState("");
   const [issued, setIssued] = useState<{ org: string; token: string } | null>(null);
@@ -75,9 +76,10 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
         id,
         name,
         templateId,
+        language,
         owner: owner ? { userId: owner } : { displayName: ownerName },
       });
-      notify(`${r.org.name} created; its agents start once the cluster provisioner has run`, "info");
+      notify(tr("{org} created; its agents start once the cluster provisioner has run", { org: r.org.name }), "info");
       if (r.ownerToken) setIssued({ org: r.org.name, token: r.ownerToken });
       setName("");
       setId("");
@@ -127,7 +129,7 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
                 <td>
                   <strong>{o.name}</strong> {o.archivedAt && <span className="tag">{tr("archived")}</span>}
                   <div className="muted small">
-                    <code>{o.id}</code> · {o.runtimeNamespace ?? "per-department namespaces"}
+                    <code>{o.id}</code> · {o.runtimeNamespace ?? tr("per-department namespaces")}
                   </div>
                 </td>
                 <td data-label={tr("Template")} className="small">{o.templateId ?? "—"}</td>
@@ -178,9 +180,20 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
             ))}
           </select>
         </label>
+        <label>
+          {tr("Template language")}
+          <select value={language} onChange={(e) => setLanguage(e.target.value as Lang)}>
+            {LANGUAGES.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+          <small className="muted">{tr("Names from the template and the agents' working language.")}</small>
+        </label>
         {template && (
           <p className="muted small">
-            {template.description} Departments: {template.departments.join(", ")}.
+            {template.description} {tr("Departments: {list}.", { list: template.departments.join(", ") })}
           </p>
         )}
         <div className="form-row">
@@ -213,8 +226,8 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
           <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label={tr("Owner")}>
             {accounts.map((u) => (
               <option key={u.id} value={u.id}>
-                Owner: {u.displayName}
-                {u.id === account.user?.id ? " (you)" : ""}
+                {tr("Owner: {name}", { name: u.displayName })}
+                {u.id === account.user?.id ? tr(" (you)") : ""}
               </option>
             ))}
             <option value="">{tr("Owner: a new person…")}</option>

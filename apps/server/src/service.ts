@@ -52,6 +52,7 @@ import type { Permissions } from "./kernel/permissions.ts";
 
 export type { LoadedPolicy, Share };
 import type { SecretBox } from "./secrets.ts";
+import { type Language, languageInstruction, translateNames } from "./locales.ts";
 import {
   ApiError,
   actorRef,
@@ -364,6 +365,28 @@ export class Service {
       });
       await this.emit(ctx, { type: "org.config", payload: { revision } });
       return { revision, doc };
+    });
+  }
+
+  /**
+   * Template language: agents write in it from their next run, chats default to
+   * it, and the names the template brought (departments, rooms, objects…) switch
+   * over. Names the owner wrote themselves are left as they are.
+   */
+  async setLanguage(actor: Actor, language: Language) {
+    this.requireOrgOwner(actor, "org.language");
+    return this.withTx(async (ctx) => {
+      const { rows } = await ctx.c.query<{ config: Record<string, unknown>; language: Language }>("SELECT config, language FROM organizations WHERE id=$1 FOR UPDATE", [this.orgId]);
+      const from = rows[0]!.language;
+      if (from === language) return { language };
+      const upd = await ctx.c.query<{ config_revision: number }>(
+        "UPDATE organizations SET language=$2, config=$3, config_revision=config_revision+1 WHERE id=$1 RETURNING config_revision",
+        [this.orgId, language, JSON.stringify(translateNames(rows[0]!.config, from, language))],
+      );
+      const revision = upd.rows[0]!.config_revision;
+      await this.audit(ctx.c, actor, "org.language", this.orgId, true, "organization owner", { from, to: language, revision });
+      await this.emit(ctx, { type: "org.config", payload: { revision, part: "language" } });
+      return { language, revision };
     });
   }
 
@@ -1126,7 +1149,7 @@ export class Service {
       // The preset's default model is a Claude model: only meaningful with an Anthropic key.
       model: a.model ?? (provider === null || provider === "anthropic" ? (preset.model ?? null) : null),
       effort: a.effort,
-      instructions: a.instructions,
+      instructions: [languageInstruction(this.config.organization.language), a.instructions].filter(Boolean).join("\n\n"),
       maxTurns: a.max_turns,
       contextLimit: a.context_limit,
       hasCredential: !!a.credential_id,

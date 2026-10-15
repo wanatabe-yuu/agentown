@@ -60,7 +60,7 @@ export function useOffice(signedIn: boolean, onEvent?: (e: AgentEvent) => void) 
               // The organization's structure changed: departments and projects come from the snapshot.
               if (e.type === "org.config") {
                 void api<Snapshot>("GET", "/api/office/snapshot")
-                  .then((fresh) => setSnapshot((s) => (s ? { ...s, organization: fresh.organization, departments: fresh.departments, projects: fresh.projects } : s)))
+                  .then((fresh) => setSnapshot((s) => (s ? { ...s, organization: fresh.organization, departments: fresh.departments, projects: fresh.projects, teams: fresh.teams, world: fresh.world } : s)))
                   .catch(() => {});
               }
               setFeed((f) => [e, ...f].slice(0, 80));

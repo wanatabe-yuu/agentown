@@ -91,7 +91,7 @@ export type TeamConfig = z.infer<typeof teamSchema>;
 
 export const orgConfigSchema = z
   .object({
-    organization: z.object({ id: idSchema, name: z.string() }),
+    organization: z.object({ id: idSchema, name: z.string(), language: z.enum(["en", "vi"]).default("en") }),
     departments: z.array(z.object({ id: idSchema, name: z.string(), color: z.string().default("#8aa") })).min(1),
     projects: z.array(z.object({ id: idSchema, name: z.string() })).default([]),
     teams: z.array(teamSchema).default([]),
@@ -205,7 +205,7 @@ export function splitInstanceConfig(text: string) {
 }
 
 /** Validate an organization's document against the install's runtime catalog. */
-export function orgConfigFrom(doc: unknown, organization: { id: string; name: string }, catalog: unknown): OrgConfig {
+export function orgConfigFrom(doc: unknown, organization: { id: string; name: string; language?: string }, catalog: unknown): OrgConfig {
   return orgConfigSchema.parse({ ...(doc as Record<string, unknown>), organization, runtimeCatalog: catalog });
 }
 

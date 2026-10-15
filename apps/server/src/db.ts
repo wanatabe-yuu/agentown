@@ -466,6 +466,8 @@ const MIGRATIONS: string[] = [
           'task', t.id || ':' || t.attempt, 'pending', jsonb_build_object('kind', 'task_reviewer', 'createdBy', t.created_by)
      FROM tasks t WHERE t.status = 'review'
    ON CONFLICT (source_type, source_id) DO NOTHING;`,
+  // 20: template language — what agents write in and which names the template's world shows.
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS language text NOT NULL DEFAULT 'en' CHECK (language IN ('en','vi'));`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

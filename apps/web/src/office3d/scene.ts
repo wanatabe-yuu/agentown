@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Agent, Department, WorkState } from "../types.ts";
 import { FLOOR_HEIGHT, type PlacedRoom, type Seat, type WorldLayout } from "./layout.ts";
+import { t } from "../i18n.ts";
 import { allowedRooms, inside, type Nav, reachable, route, type Spot, type Waypoint } from "./nav.ts";
 import { loadModels, texture } from "./assets.ts";
 import { chair, character, desk, lookObject, monitor } from "./procedural.ts";
@@ -211,7 +212,7 @@ export function buildScene(
     hatch.position.set(top[0], top[1] + 0.03, top[2]);
     disposables.push(hatch.geometry);
     floorGroup(floorOfY(top[1])).add(hatch);
-    const tag = label("object-label", l.kind === "elevator" ? "Elevator" : "Stairs");
+    const tag = label("object-label", l.kind === "elevator" ? t("Elevator") : t("Stairs"));
     tag.obj.position.set(bottom[0], bottom[1] + 1.8, bottom[2]);
     floorGroup(floorOfY(bottom[1])).add(tag.obj);
   }

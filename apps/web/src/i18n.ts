@@ -17,12 +17,28 @@ function initial(): Lang {
 
 export const lang: Lang = initial();
 
-export function setLang(next: Lang) {
+/** What the person picked: a language, or "auto" to follow the browser. */
+export const langChoice: Lang | "auto" = (() => {
   try {
-    localStorage.setItem(KEY, next);
+    const saved = localStorage.getItem(KEY);
+    if (saved === "vi" || saved === "en") return saved;
+  } catch {}
+  return "auto";
+})();
+
+export function setLang(next: Lang | "auto") {
+  try {
+    if (next === "auto") localStorage.removeItem(KEY);
+    else localStorage.setItem(KEY, next);
   } catch {}
   location.reload();
 }
+
+/** Languages an organization can work in (its template language). */
+export const LANGUAGES: Array<{ id: Lang; name: string }> = [
+  { id: "en", name: "English" },
+  { id: "vi", name: "Tiếng Việt" },
+];
 
 /** Translate; {name} placeholders are filled from vars. */
 export function t(s: string, vars?: Record<string, string | number>): string {
@@ -645,6 +661,9 @@ const VI: Record<string, string> = {
   "whole object": "cả đồ vật",
   "· runtime": "· runtime",
   "— none (agents do not sit here) —": "— không (agent không ngồi ở đây) —",
+  "per-department namespaces": "namespace theo phòng ban",
+  "Owner: {name}": "Owner: {name}",
+  " (you)": " (bạn)",
   // activity
   "{name} joined as {role}": "{name} gia nhập với vị trí {role}",
   "{from} → {to}: {title}": "{from} → {to}: {title}",
@@ -658,6 +677,20 @@ const VI: Record<string, string> = {
   "the default model": "model mặc định",
   "{name} moved to team {team}": "{name} chuyển sang team {team}",
   "{name} retired": "{name} đã nghỉ",
+  "{system} · {template}": "{system} · {template}",
+  "System language": "Ngôn ngữ hệ thống",
+  "Stairs": "Cầu thang",
+  "Elevator": "Thang máy",
+  "Template language": "Ngôn ngữ template",
+  "Menus and screens, for you in this browser.": "Ngôn ngữ của menu và màn hình, áp dụng cho bạn trên trình duyệt này.",
+  "Follow the browser ({lang})": "Theo trình duyệt ({lang})",
+  "The language {org} works in. Agents write reports, team messages and deliverables in it from their next task, chats default to it, and names from the template (departments, rooms, objects…) switch to it. Names you wrote yourself stay as they are.": "Ngôn ngữ mà {org} làm việc. Agent viết báo cáo, tin nhắn team và sản phẩm bằng ngôn ngữ này từ task tiếp theo, chat mặc định dùng nó, và các tên có sẵn từ template (phòng ban, phòng, đồ vật…) được chuyển theo. Tên bạn tự đặt được giữ nguyên.",
+  "Only the owner can change it.": "Chỉ owner mới đổi được.",
+  "Template language set to {lang}": "Đã đặt ngôn ngữ template: {lang}",
+  "Language": "Ngôn ngữ",
+  "Departments: {list}.": "Phòng ban: {list}.",
+  "{org} created; its agents start once the cluster provisioner has run": "Đã tạo {org}; agent sẽ chạy sau khi bộ cấp phát cluster hoàn tất",
+  "Names from the template and the agents' working language.": "Tên lấy từ template và ngôn ngữ làm việc của agent.",
   "{name} got a fresh runtime: {why}": "{name} được khởi động lại runtime: {why}",
   "new runtime image": "image runtime mới",
   "restart requested by {who}": "{who} yêu cầu khởi động lại",

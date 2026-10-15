@@ -10,7 +10,8 @@ import { OwnerChatDialog, type ChatTarget } from "./OwnerChat.tsx";
 import { ConversationsSection } from "./Conversations.tsx";
 import { NeedsYou } from "./Inbox.tsx";
 import { EVENT_TEXT } from "./activity.ts";
-import { lang, setLang, t } from "./i18n.ts";
+import { t } from "./i18n.ts";
+import { SettingsDialog } from "./Settings.tsx";
 import { UsersDialog } from "./Users.tsx";
 import { HttpError, api, setOrg } from "./api.ts";
 import type { Flight } from "./office3d/scene.ts";
@@ -128,6 +129,7 @@ function OrgApp({
   // The 3D office is the default everywhere (it falls back to a flat view without WebGL).
   const [view, setView] = useState<"office" | "table">("office");
   const [showAudit, setShowAudit] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [showOwnerChat, setShowOwnerChat] = useState(false);
   const [entityChat, setEntityChat] = useState<ChatTarget | null>(null);
@@ -272,7 +274,7 @@ function OrgApp({
             </>
           }
           items={[
-            { label: t("Language: English"), hint: t("Switch to Vietnamese"), onSelect: () => setLang(lang === "vi" ? "en" : "vi") },
+            { label: t("Settings"), hint: t("{system} · {template}", { system: t("System language"), template: t("Template language") }), onSelect: () => setShowSettings(true) },
             { label: t("Sign out"), onSelect: onSignOut, danger: true },
           ]}
         />
@@ -358,6 +360,7 @@ function OrgApp({
         />
       )}
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
+      {showSettings && <SettingsDialog org={snapshot.organization} owner={!!me.actor.owner} onClose={() => setShowSettings(false)} />}
       {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
       {entityChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} key={`${orgId}:${entityChat.type}:${entityChat.id}`} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} subject={entityChat} onClose={() => setEntityChat(null)} onKeys={() => { setEntityChat(null); setShowKeys(true); }} />}
       {showOwnerChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} onClose={() => setShowOwnerChat(false)} onKeys={() => { setShowOwnerChat(false); setShowKeys(true); }} />}

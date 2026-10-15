@@ -1,4 +1,5 @@
 import { worldIdentities } from "./world-identities.ts";
+import { type Language, translateNames } from "./locales.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { stringify } from "yaml";
 import { join } from "node:path";
@@ -114,8 +115,8 @@ export class Instance {
 
   /** The Service of one organization, rebuilt whenever its document changes. Archived orgs are not found. */
   async org(orgId: string, opts: { includeArchived?: boolean } = {}): Promise<Service> {
-    const { rows } = await this.db.query<{ name: string; config: unknown; config_revision: number; archived_at: Date | null; runtime_namespace: string | null }>(
-      "SELECT name, config, config_revision, archived_at, runtime_namespace FROM organizations WHERE id=$1",
+    const { rows } = await this.db.query<{ name: string; language: string; config: unknown; config_revision: number; archived_at: Date | null; runtime_namespace: string | null }>(
+      "SELECT name, language, config, config_revision, archived_at, runtime_namespace FROM organizations WHERE id=$1",
       [orgId],
     );
     const o = rows[0];
@@ -124,7 +125,7 @@ export class Instance {
     if (hit && hit.revision === o.config_revision && hit.name === o.name) return hit.service;
     let config;
     try {
-      config = orgConfigFrom(o.config, { id: orgId, name: o.name }, this.file.catalog);
+      config = orgConfigFrom(o.config, { id: orgId, name: o.name, language: o.language }, this.file.catalog);
     } catch (err) {
       // A document this server cannot read (edited elsewhere, newer format): fail this org's requests, nothing else.
       throw new ApiError(503, "org_config_invalid", `organization ${orgId} has a configuration this server cannot load: ${err instanceof z.ZodError ? z.prettifyError(err).slice(0, 500) : (err as Error).message}`);
@@ -392,7 +393,7 @@ export class Instance {
    * New organization from a template, in its own Kubernetes namespace. The owner
    * is an existing account or a new person, whose token is returned once.
    */
-  async createOrg(p: Principal, input: { id: string; name: string; templateId: string; owner: { userId: string } | { displayName: string } }) {
+  async createOrg(p: Principal, input: { id: string; name: string; templateId: string; language?: Language; owner: { userId: string } | { displayName: string } }) {
     this.requireAdmin(p);
     if (!ORG_ID.test(input.id)) throw badRequest("organization id: lowercase letters, digits and dashes, at most 40 characters");
     const template = await this.getTemplate(p, input.templateId).catch(() => {
@@ -403,8 +404,8 @@ export class Instance {
       if ((await c.query("SELECT 1 FROM organizations WHERE id=$1", [input.id])).rowCount) throw conflict("exists", "an organization with this id already exists");
       if ((await c.query("SELECT 1 FROM agent_runtimes WHERE namespace=$1 LIMIT 1", [namespace])).rowCount) throw conflict("namespace_taken", `namespace ${namespace} is in use`);
       await c.query(
-        "INSERT INTO organizations(id, name, config, template_id, created_by, runtime_namespace) VALUES ($1,$2,$3,$4,$5,$6)",
-        [input.id, input.name, JSON.stringify(worldIdentities(template.doc)), template.meta.id, `human:${p.id}`, namespace],
+        "INSERT INTO organizations(id, name, config, template_id, created_by, runtime_namespace, language) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        [input.id, input.name, JSON.stringify(worldIdentities(translateNames(template.doc, "en", input.language ?? "en"))), template.meta.id, `human:${p.id}`, namespace, input.language ?? "en"],
       );
       let ownerId: string;
       const newPerson = !("userId" in input.owner);
