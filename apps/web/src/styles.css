@@ -2105,3 +2105,7 @@ input.short {
   .feed .feed-row { min-height: 36px; padding-top: 4px; padding-bottom: 4px; }
 }
 .owner-chat-button { display: inline-flex; align-items: center; gap: 6px; }
+.implicit-teams { margin: 4px 0 12px; padding: 8px 10px; border: 1px dashed var(--border-strong); border-radius: 8px; }
+.team-msg-text .report-markdown { font-size: inherit; }
+.team-msg-text .report-markdown > :first-child { margin-top: 0; }
+.team-msg-text .report-markdown > :last-child { margin-bottom: 0; }

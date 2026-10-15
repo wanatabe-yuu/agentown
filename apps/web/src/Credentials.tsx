@@ -82,16 +82,16 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
   return (
     <Modal title={tr("API keys")} onClose={onClose} wide>
       <p className="muted small">
-        Saved API keys are hidden from owners and agents. Keys stay encrypted on the server; agent runtimes receive model access through the server, without receiving the key.
+        {tr("Saved API keys are hidden from owners and agents. Keys stay encrypted on the server; agent runtimes receive model access through the server, without receiving the key.")}
       </p>
       <div className="table-wrap">
         <table className="grid mobile-cards">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Key</th>
-              <th>Departments</th>
-              <th>Models</th>
+              <th>{tr("Name")}</th>
+              <th>{tr("Key")}</th>
+              <th>{tr("Departments")}</th>
+              <th>{tr("Models")}</th>
               <th />
             </tr>
           </thead>
@@ -102,25 +102,25 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
                   <strong>{c.name}</strong>
                   <div className="muted small">
                     {providers.find((p) => p.id === c.provider)?.label ?? c.provider}
-                    {c.provider === "custom" && c.baseUrl ? ` (${c.baseUrl})` : ""} · {c.revokedAt ? `revoked ${ago(c.revokedAt, now)}` : `added ${ago(c.createdAt, now)}`}
+                    {c.provider === "custom" && c.baseUrl ? ` (${c.baseUrl})` : ""} · {c.revokedAt ? tr("revoked {ago}", { ago: ago(c.revokedAt, now) }) : tr("added {ago}", { ago: ago(c.createdAt, now) })}
                     {c.provider === "custom" && <div>{c.protocol === "anthropic" ? "Anthropic / Claude" : "OpenAI-compatible"} · {c.authHeader.name}{c.authHeader.scheme === "bearer" ? " (Bearer)" : " (raw key)"}</div>}
                   </div>
                 </td>
-                <td data-label="Key">
-                  <code>{c.keyHint}</code>
+                <td data-label={tr("Key")}>
+                  <code>{tr(c.keyHint)}</code>
                   {c.workspaceId && <div className="muted small">{c.workspaceId}</div>}
                 </td>
-                <td data-label="Departments" className="small">{c.departments?.join(", ") ?? "all"}</td>
-                <td data-label="Models" className="small mobile-wide">{c.models.join(", ")}</td>
+                <td data-label={tr("Departments")} className="small">{c.departments?.join(", ") ?? "all"}</td>
+                <td data-label={tr("Models")} className="small mobile-wide">{c.models.join(", ")}</td>
                 <td>
                   {!c.revokedAt && (
                     <div className="btn-row">
-                      {c.provider === "custom" && <button type="button" disabled={busy} onClick={() => edit(c)}>Edit connection</button>}
+                      {c.provider === "custom" && <button type="button" disabled={busy} onClick={() => edit(c)}>{tr("Edit connection")}</button>}
                       <button type="button" onClick={() => refresh(c.id)}>
-                        Refresh models
+                        {tr("Refresh models")}
                       </button>
                       <button type="button" className="danger" onClick={() => revoke(c)}>
-                        Revoke
+                        {tr("Revoke")}
                       </button>
                     </div>
                   )}
@@ -130,7 +130,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
             {rows?.length === 0 && (
               <tr>
                 <td colSpan={5} className="muted">
-                  No keys yet.
+                  {tr("No keys yet.")}
                 </td>
               </tr>
             )}
@@ -139,13 +139,13 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
       </div>
       <form ref={form} className="form" onSubmit={add} style={{ marginTop: 16 }}>
         <h3>{editing ? `Edit connection · ${editing.name}` : "Add a key"}</h3>
-        {editing ? <p className="muted small">Uses the saved API key. Models are checked again before saving; the key stays encrypted and existing agent assignments are retained.</p> : <>
+        {editing ? <p className="muted small">{tr("Uses the saved API key. Models are checked again before saving; the key stays encrypted and existing agent assignments are retained.")}</p> : <>
         <label>
-          Name
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Engineering team key" required maxLength={60} />
+          {tr("Name")}
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("e.g. Engineering team key")} required maxLength={60} />
         </label>
         <label>
-          Provider
+          {tr("Provider")}
           <select value={provider} onChange={(e) => setProvider(e.target.value)}>
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
@@ -156,20 +156,20 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
         </label>
         </>}
         {provider === "custom" && (<>
-          <label>API protocol<select value={protocol} onChange={e => {
+          <label>{tr("API protocol")}<select value={protocol} onChange={e => {
             const next = e.target.value as "anthropic" | "openai"; setProtocol(next); setAuthMode(next === "anthropic" ? "x-api-key" : "bearer");
           }}><option value="openai">OpenAI-compatible · /chat/completions</option><option value="anthropic">Anthropic / Claude · /v1/messages</option></select></label>
           <label>
             {usesClaude ? "Base URL (gateway root or URL ending in /v1)" : "Base URL (the part before /chat/completions)"}
             <input value={baseUrl} readOnly={!!editing} onChange={(e) => setBaseUrl(e.target.value)} placeholder={usesClaude ? "https://gateway.example.com/v1" : "http://ollama.internal:11434/v1"} required maxLength={500} autoComplete="off" />
-            {editing && <small className="muted">This saved key is bound to its URL. Add a new key to use a different endpoint.</small>}
+            {editing && <small className="muted">{tr("This saved key is bound to its URL. Add a new key to use a different endpoint.")}</small>}
           </label>
-          <label>Authentication header<select value={authMode} onChange={e => setAuthMode(e.target.value)}>
-            <option value="bearer">Authorization: Bearer &lt;API key&gt;</option><option value="x-api-key">x-api-key: &lt;API key&gt;</option><option value="custom">Custom header name</option>
+          <label>{tr("Authentication header")}<select value={authMode} onChange={e => setAuthMode(e.target.value)}>
+            <option value="bearer">Authorization: Bearer &lt;API key&gt;</option><option value="x-api-key">x-api-key: &lt;API key&gt;</option><option value="custom">{tr("Custom header name")}</option>
           </select></label>
           {authMode === "custom" && <>
-            <label>Header name<input value={headerName} onChange={e => setHeaderName(e.target.value)} placeholder="e.g. x-gateway-key" required maxLength={64} pattern="[A-Za-z0-9][A-Za-z0-9-]*" autoComplete="off" /></label>
-            <label>Key format<select value={headerScheme} onChange={e => setHeaderScheme(e.target.value as "raw" | "bearer")}><option value="raw">API key directly</option><option value="bearer">Bearer + API key</option></select></label>
+            <label>{tr("Header name")}<input value={headerName} onChange={e => setHeaderName(e.target.value)} placeholder="e.g. x-gateway-key" required maxLength={64} pattern="[A-Za-z0-9][A-Za-z0-9-]*" autoComplete="off" /></label>
+            <label>{tr("Key format")}<select value={headerScheme} onChange={e => setHeaderScheme(e.target.value as "raw" | "bearer")}><option value="raw">{tr("API key directly")}</option><option value="bearer">{tr("Bearer + API key")}</option></select></label>
           </>}
           <p className="muted small">The selected header uses {editing ? "the saved API key" : "the API key below"}. Only that authentication header is sent.</p>
         </>)}
@@ -186,18 +186,17 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
         </label>}
         {usesClaude && (
           <label>
-            Workspace ID (only for a key created at the organization level, not inside a workspace)
-            <input value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder="wrkspc_… (optional)" maxLength={120} autoComplete="off" />
+            {tr("Workspace ID (only for a key created at the organization level, not inside a workspace)")}
+            <input value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder={tr("wrkspc_… (optional)")} maxLength={120} autoComplete="off" />
           </label>
         )}
         {!usesClaude && (
           <p className="muted small">
-            Agents call this provider's Chat Completions API with a bash tool. Pick a model with good tool use; on the Kubernetes driver, agents can only reach public
-            HTTPS endpoints (port 443).
+            {tr("Agents call this provider's Chat Completions API with a bash tool. Pick a model with good tool use; on the Kubernetes driver, agents can only reach public HTTPS endpoints (port 443).")}
           </p>
         )}
         {!editing && <fieldset className="seg">
-          <legend>Usable by departments (none = all)</legend>
+          <legend>{tr("Usable by departments (none = all)")}</legend>
           {(catalog?.departments ?? []).map((d) => (
             <label key={d.id}>
               <input
@@ -213,7 +212,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
           <button type="submit" className="primary" disabled={busy}>
             {busy ? "Checking key…" : editing ? "Save connection" : "Save key"}
           </button>
-          {editing && <button type="button" disabled={busy} onClick={() => { setEditing(null); setApiKey(""); setBaseUrl(""); setWorkspaceId(""); }}>Cancel edit</button>}
+          {editing && <button type="button" disabled={busy} onClick={() => { setEditing(null); setApiKey(""); setBaseUrl(""); setWorkspaceId(""); }}>{tr("Cancel edit")}</button>}
         </div>
       </form>
     </Modal>
@@ -276,11 +275,11 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
 
   return (
     <form className="form" onSubmit={save} onChangeCapture={() => setDirty(true)}>
-      {externalChange && <div className="review-box"><p>Settings changed elsewhere while you were editing. Your draft is preserved.</p><button type="button" onClick={() => loadSaved(detail)}>Load saved settings</button></div>}
+      {externalChange && <div className="review-box"><p>{tr("Settings changed elsewhere while you were editing. Your draft is preserved.")}</p><button type="button" onClick={() => loadSaved(detail)}>{tr("Load saved settings")}</button></div>}
       <p className="muted small">Saved configuration · revision {detail.configRevision}{dirty ? " · Unsaved changes" : ""}</p>
-      {harness === "script" && <p className="muted small">This agent runs the deterministic script harness: model settings are stored but not used.</p>}
+      {harness === "script" && <p className="muted small">{tr("This agent runs the deterministic script harness: model settings are stored but not used.")}</p>}
       <label>
-        API key
+        {tr("API key")}
         <select
           value={credentialId}
           onChange={(e) => {
@@ -288,7 +287,7 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
             setModel("");
           }}
         >
-          <option value="">— none —</option>
+          <option value="">{tr("— none —")}</option>
           {(creds ?? (detail.credential ? [detail.credential] : [])).map((c) => (
             <option key={c.id} value={c.id}>
               {c.name} ({c.provider}, {c.keyHint})
@@ -297,7 +296,7 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
         </select>
       </label>
       <label>
-        Model (offered by this key)
+        {tr("Model (offered by this key)")}
         <select value={model} disabled={!selected} onChange={(e) => setModel(e.target.value)}>
           <option value="">{!selected || selected.provider === "anthropic" ? "template default" : "— choose a model —"}</option>
           {(selected?.models ?? []).map((m) => (
@@ -306,22 +305,22 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
         </select>
       </label>
       <label>
-        Effort
+        {tr("Effort")}
         <select value={effort} onChange={(e) => setEffort(e.target.value)}>
-          <option value="">model default</option>
+          <option value="">{tr("model default")}</option>
           {EFFORTS.map((x) => (
             <option key={x}>{x}</option>
           ))}
         </select>
       </label>
-      <label>Context budget (tokens)<input type="number" min={8192} max={1000000} step={1024} value={contextLimit ?? ""} placeholder="Provider default" onChange={e => setContextLimit(e.target.value ? Number(e.target.value) : null)} /></label>
-      <p className="muted small">Effort controls reasoning. Context budget bounds estimated input plus reserved output and compacts task history automatically. It cannot increase the provider’s model window.</p>
+      <label>{tr("Context budget (tokens)")}<input type="number" min={8192} max={1000000} step={1024} value={contextLimit ?? ""} placeholder={tr("Provider default")} onChange={e => setContextLimit(e.target.value ? Number(e.target.value) : null)} /></label>
+      <p className="muted small">{tr("Effort controls reasoning. Context budget bounds estimated input plus reserved output and compacts task history automatically. It cannot increase the provider’s model window.")}</p>
       <label>
-        Max turns per task
+        {tr("Max turns per task")}
         <input type="number" min={1} max={200} value={maxTurns} onChange={(e) => setMaxTurns(Number(e.target.value))} />
       </label>
       <label>
-        Standing instructions (added to the agent's system prompt)
+        {tr("Standing instructions (added to the agent's system prompt)")}
         <textarea rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)} maxLength={8000} />
       </label>
       <div className="btn-row">

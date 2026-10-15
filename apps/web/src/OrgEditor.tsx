@@ -75,7 +75,7 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
   if (!doc) {
     return (
       <Modal title={tr("Organization")} onClose={onClose} wide>
-        <p className="muted">Loading…</p>
+        <p className="muted">{tr("Loading…")}</p>
       </Modal>
     );
   }
@@ -120,33 +120,13 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
           onRemove={(i) => edit((d) => d.departments.splice(i, 1))}
           render={(row, i) => [
             <IdInput key="id" value={row.id} locked={saved.has(row.id)} onChange={(v) => edit((d) => (d.departments[i].id = v))} />,
-            <input key="n" value={row.name} onChange={(e) => edit((d) => (d.departments[i].name = e.target.value))} aria-label="Department name" />,
-            <input key="c" type="color" value={row.color ?? "#8899aa"} onChange={(e) => edit((d) => (d.departments[i].color = e.target.value))} aria-label="Department color" />,
+            <input key="n" value={row.name} onChange={(e) => edit((d) => (d.departments[i].name = e.target.value))} aria-label={tr("Department name")} />,
+            <input key="c" type="color" value={row.color ?? "#8899aa"} onChange={(e) => edit((d) => (d.departments[i].color = e.target.value))} aria-label={tr("Department color")} />,
           ]}
           note="A department's id is fixed once saved (it names namespaces, scopes and seats). A department with agents cannot be removed."
         />
       )}
 
-      {tab === "teams" && (
-        <RowsTable
-          headers={["Id", "Name", "Department", "Runtime"]}
-          rows={doc.teams ?? []}
-          onAdd={() => edit((d) => (d.teams ??= []).push({ id: "", name: "", department: departments[0]?.id ?? "" }))}
-          onRemove={(i) => edit((d) => d.teams.splice(i, 1))}
-          render={(row, i) => [
-            <IdInput key="id" value={row.id} onChange={(v) => edit((d) => (d.teams[i].id = v))} />,
-            <input key="n" value={row.name} onChange={(e) => edit((d) => (d.teams[i].name = e.target.value))} aria-label="Team name" />,
-            <select key="d" value={row.department} onChange={(e) => edit((d) => (d.teams[i].department = e.target.value))} aria-label="Team department">
-              {departments.map((dep) => <option key={dep.id} value={dep.id}>{dep.name || dep.id}</option>)}
-            </select>,
-            <select key="p" value={row.runtimePreset ?? ""} onChange={(e) => edit((d) => { if (e.target.value) d.teams[i].runtimePreset = e.target.value; else delete d.teams[i].runtimePreset; })} aria-label="Team runtime preset">
-              <option value="">members' preset</option>
-              {(catalog?.presets ?? []).map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}
-            </select>,
-          ]}
-          note="Each team shares one runtime, sized by the base of its preset plus every member's declared share. A department without a team of its own id keeps a default team with the department's id; a team with people cannot be removed."
-        />
-      )}
       {tab === "teams" && (
         <ul className="implicit-teams">
           {departments
@@ -158,6 +138,26 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
             ))}
         </ul>
       )}
+      {tab === "teams" && (
+        <RowsTable
+          headers={["Id", "Name", "Department", "Runtime"]}
+          rows={doc.teams ?? []}
+          onAdd={() => edit((d) => (d.teams ??= []).push({ id: "", name: "", department: departments[0]?.id ?? "" }))}
+          onRemove={(i) => edit((d) => d.teams.splice(i, 1))}
+          render={(row, i) => [
+            <IdInput key="id" value={row.id} onChange={(v) => edit((d) => (d.teams[i].id = v))} />,
+            <input key="n" value={row.name} onChange={(e) => edit((d) => (d.teams[i].name = e.target.value))} aria-label={tr("Team name")} />,
+            <select key="d" value={row.department} onChange={(e) => edit((d) => (d.teams[i].department = e.target.value))} aria-label={tr("Team department")}>
+              {departments.map((dep) => <option key={dep.id} value={dep.id}>{dep.name || dep.id}</option>)}
+            </select>,
+            <select key="p" value={row.runtimePreset ?? ""} onChange={(e) => edit((d) => { if (e.target.value) d.teams[i].runtimePreset = e.target.value; else delete d.teams[i].runtimePreset; })} aria-label={tr("Team runtime preset")}>
+              <option value="">{tr("members' preset")}</option>
+              {(catalog?.presets ?? []).map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}
+            </select>,
+          ]}
+          note="Each team shares one runtime, sized by the base of its preset plus every member's declared share. A department without a team of its own id keeps a default team with the department's id; a team with people cannot be removed."
+        />
+      )}
 
       {tab === "projects" && (
         <RowsTable
@@ -167,7 +167,7 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
           onRemove={(i) => edit((d) => d.projects.splice(i, 1))}
           render={(row, i) => [
             <IdInput key="id" value={row.id} onChange={(v) => edit((d) => (d.projects[i].id = v))} />,
-            <input key="n" value={row.name} onChange={(e) => edit((d) => (d.projects[i].name = e.target.value))} aria-label="Project name" />,
+            <input key="n" value={row.name} onChange={(e) => edit((d) => (d.projects[i].name = e.target.value))} aria-label={tr("Project name")} />,
           ]}
           note="A project with open tasks cannot be removed."
         />
@@ -181,15 +181,15 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
           onRemove={(i) => edit((d) => d.agentTemplates.splice(i, 1))}
           render={(row, i) => [
             <IdInput key="id" value={row.id} onChange={(v) => edit((d) => (d.agentTemplates[i].id = v))} />,
-            <input key="r" value={row.jobRole} onChange={(e) => edit((d) => (d.agentTemplates[i].jobRole = e.target.value))} aria-label="Job title" />,
-            <select key="p" value={row.runtimePreset} onChange={(e) => edit((d) => (d.agentTemplates[i].runtimePreset = e.target.value))} aria-label="Runtime">
+            <input key="r" value={row.jobRole} onChange={(e) => edit((d) => (d.agentTemplates[i].jobRole = e.target.value))} aria-label={tr("Job title")} />,
+            <select key="p" value={row.runtimePreset} onChange={(e) => edit((d) => (d.agentTemplates[i].runtimePreset = e.target.value))} aria-label={tr("Runtime")}>
               {(catalog?.presets ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.id} ({p.harness})
                 </option>
               ))}
             </select>,
-            <select key="pp" value={row.policyProfile} onChange={(e) => edit((d) => (d.agentTemplates[i].policyProfile = e.target.value))} aria-label="Permission profile">
+            <select key="pp" value={row.policyProfile} onChange={(e) => edit((d) => (d.agentTemplates[i].policyProfile = e.target.value))} aria-label={tr("Permission profile")}>
               {Object.keys(profiles).map((p) => (
                 <option key={p}>{p}</option>
               ))}
@@ -241,7 +241,7 @@ function IdInput({ value, locked, onChange }: { value: string; locked?: boolean;
       className={`mono ${value && !ID.test(value) ? "invalid" : ""}`}
       placeholder="id"
       maxLength={40}
-      aria-label="Id"
+      aria-label={tr("Id")}
       title={locked ? "Fixed once saved" : "lowercase letters, digits, dashes"}
     />
   );
@@ -250,12 +250,12 @@ function IdInput({ value, locked, onChange }: { value: string; locked?: boolean;
 function RowsTable({ headers, rows, render, onAdd, onRemove, note }: { headers: string[]; rows: Doc[]; render: (row: Doc, i: number) => React.ReactNode[]; onAdd: () => void; onRemove: (i: number) => void; note: string }) {
   return (
     <section>
-      <p className="muted small">{note}</p>
+      <p className="muted small">{tr(note)}</p>
       <table className="grid mobile-cards">
         <thead>
           <tr>
             {headers.map((h) => (
-              <th key={h}>{h}</th>
+              <th key={h}>{tr(h)}</th>
             ))}
             <th />
           </tr>
@@ -268,7 +268,7 @@ function RowsTable({ headers, rows, render, onAdd, onRemove, note }: { headers: 
               ))}
               <td>
                 <button type="button" className="danger" onClick={() => onRemove(i)}>
-                  Remove
+                  {tr("Remove")}
                 </button>
               </td>
             </tr>
@@ -276,7 +276,7 @@ function RowsTable({ headers, rows, render, onAdd, onRemove, note }: { headers: 
         </tbody>
       </table>
       <button type="button" onClick={onAdd} style={{ marginTop: 8 }}>
-        Add
+        {tr("Add")}
       </button>
     </section>
   );
@@ -314,9 +314,9 @@ function NamedCapSets({
   const current = sets[open];
   return (
     <section>
-      <p className="muted small">{note}</p>
+      <p className="muted small">{tr(note)}</p>
       <div className="form-row">
-        <select value={open} onChange={(e) => setOpen(e.target.value)} aria-label="Set">
+        <select value={open} onChange={(e) => setOpen(e.target.value)} aria-label={tr("Set")}>
           {keys.map((k) => (
             <option key={k} value={k}>
               {named ? `${sets[k]!.name} (${k})` : k}
@@ -332,10 +332,10 @@ function NamedCapSets({
               setOpen(keys.find((k) => k !== open) ?? "");
             }}
           >
-            Remove
+            {tr("Remove")}
           </button>
         )}
-        <input value={fresh} onChange={(e) => setFresh(e.target.value.toLowerCase())} placeholder="new id" className="mono" aria-label="New id" />
+        <input value={fresh} onChange={(e) => setFresh(e.target.value.toLowerCase())} placeholder={tr("new id")} className="mono" aria-label={tr("New id")} />
         <button
           type="button"
           disabled={!ID.test(fresh) || keys.includes(fresh)}
@@ -345,14 +345,14 @@ function NamedCapSets({
             setFresh("");
           }}
         >
-          Add
+          {tr("Add")}
         </button>
       </div>
       {current && (
         <>
           {named && (
             <label>
-              Display name
+              {tr("Display name")}
               <input value={current.name} onChange={(e) => onChange(open, current.permissions, e.target.value)} />
             </label>
           )}
@@ -370,9 +370,9 @@ function CapRows({ caps, actions, scopes, lists, withDelegable, onChange }: { ca
     <table className="grid mobile-cards">
       <thead>
         <tr>
-          <th>Action</th>
-          <th>Scope</th>
-          {withDelegable && <th>Delegable</th>}
+          <th>{tr("Action")}</th>
+          <th>{tr("Scope")}</th>
+          {withDelegable && <th>{tr("Delegable")}</th>}
           <th />
         </tr>
       </thead>
@@ -383,7 +383,7 @@ function CapRows({ caps, actions, scopes, lists, withDelegable, onChange }: { ca
           const pick = kind === "departments" || kind === "agents" || kind === "projects" ? lists[kind] : null;
           return (
             <tr key={i}>
-              <td data-label="Action">
+              <td data-label={tr("Action")}>
                 <select
                   value={c.action}
                   onChange={(e) =>
@@ -393,7 +393,7 @@ function CapRows({ caps, actions, scopes, lists, withDelegable, onChange }: { ca
                       templates: e.target.value === "agent.spawn" ? (c.templates ?? []) : undefined,
                     })
                   }
-                  aria-label="Action"
+                  aria-label={tr("Action")}
                 >
                   {actions.map((a) => (
                     <option key={a}>{a}</option>
@@ -410,11 +410,11 @@ function CapRows({ caps, actions, scopes, lists, withDelegable, onChange }: { ca
                   </div>
                 )}
               </td>
-              <td data-label="Scope">
+              <td data-label={tr("Scope")}>
                 {ORG_ONLY.includes(c.action) ? (
-                  <span className="muted small">whole organization</span>
+                  <span className="muted small">{tr("whole organization")}</span>
                 ) : (
-                  <select value={kind} onChange={(e) => set(i, { scope: makeScope(e.target.value, []) })} aria-label="Scope">
+                  <select value={kind} onChange={(e) => set(i, { scope: makeScope(e.target.value, []) })} aria-label={tr("Scope")}>
                     {scopes.map((s) => (
                       <option key={s}>{s}</option>
                     ))}
@@ -431,13 +431,13 @@ function CapRows({ caps, actions, scopes, lists, withDelegable, onChange }: { ca
                 )}
               </td>
               {withDelegable && (
-                <td data-label="Delegable">
-                  <input type="checkbox" checked={!!c.delegable} onChange={(e) => set(i, { delegable: e.target.checked })} aria-label="Delegable" />
+                <td data-label={tr("Delegable")}>
+                  <input type="checkbox" checked={!!c.delegable} onChange={(e) => set(i, { delegable: e.target.checked })} aria-label={tr("Delegable")} />
                 </td>
               )}
               <td>
                 <button type="button" className="danger" onClick={() => onChange(caps.filter((_, j) => j !== i))}>
-                  Remove
+                  {tr("Remove")}
                 </button>
               </td>
             </tr>
@@ -448,7 +448,7 @@ function CapRows({ caps, actions, scopes, lists, withDelegable, onChange }: { ca
         <tr>
           <td colSpan={withDelegable ? 4 : 3}>
             <button type="button" onClick={() => onChange([...caps, { action: "org.view", scope: scopes.includes("team") ? "self" : "org" }])}>
-              Add permission
+              {tr("Add permission")}
             </button>
           </td>
         </tr>
@@ -498,35 +498,35 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
           void run(() => api("POST", `/api/orgs/${orgId}/templates`, { name, description }).then(() => setName("")), "Saved to your templates");
         }}
       >
-        <h3>Save this organization as a template</h3>
-        <p className="muted small">Departments, projects, jobs, permission profiles, role presets and today's agent tree. Never API keys, people or agents' instructions.</p>
-        {dirty && <p className="error small">You have unsaved changes; the template uses the saved version.</p>}
+        <h3>{tr("Save this organization as a template")}</h3>
+        <p className="muted small">{tr("Departments, projects, jobs, permission profiles, role presets and today's agent tree. Never API keys, people or agents' instructions.")}</p>
+        {dirty && <p className="error small">{tr("You have unsaved changes; the template uses the saved version.")}</p>}
         <div className="form-row">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Template name" required maxLength={80} aria-label="Template name" />
-          <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" maxLength={500} aria-label="Description" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("Template name")} required maxLength={80} aria-label={tr("Template name")} />
+          <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder={tr("Description")} maxLength={500} aria-label={tr("Description")} />
           <button type="submit" className="primary">
-            Save as template
+            {tr("Save as template")}
           </button>
         </div>
       </form>
 
-      <h3 style={{ marginTop: 16 }}>Templates</h3>
+      <h3 style={{ marginTop: 16 }}>{tr("Templates")}</h3>
       <table className="grid mobile-cards">
         <tbody>
           {rows.map((t) => (
             <tr key={t.id}>
               <td>
-                <strong>{t.name}</strong> {t.builtIn && <span className="tag">built-in</span>}
+                <strong>{t.name}</strong> {t.builtIn && <span className="tag">{tr("built-in")}</span>}
                 <div className="muted small">{t.description || t.departments.join(", ")}</div>
               </td>
               <td>
                 <div className="btn-row">
                   <button type="button" onClick={() => void download(t)}>
-                    Export YAML
+                    {tr("Export YAML")}
                   </button>
                   {!t.builtIn && (
                     <button type="button" className="danger" onClick={() => confirm(`Delete template ${t.name}?`) && void run(() => api("DELETE", `/api/templates/${t.id}`), "Deleted")}>
-                      Delete
+                      {tr("Delete")}
                     </button>
                   )}
                 </div>
@@ -536,7 +536,7 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
         </tbody>
       </table>
       <label style={{ marginTop: 12, display: "block" }}>
-        Import a template file (.yaml)
+        {tr("Import a template file (.yaml)")}
         <input
           type="file"
           accept=".yaml,.yml,text/yaml"
@@ -547,7 +547,7 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
           }}
         />
       </label>
-      <p className="muted small">The instance admin can create new organizations from any of these (Organizations).</p>
+      <p className="muted small">{tr("The instance admin can create new organizations from any of these (Organizations).")}</p>
     </section>
   );
 }

@@ -186,6 +186,7 @@ export interface TeamMessage {
   author: { kind: "human" | "agent"; id: string; name: string };
   text: string;
   system: boolean;
+  event?: AgentEvent;
 }
 
 export type FeedKind = "self" | "tool" | "proposal" | "event";
@@ -202,6 +203,7 @@ export interface FeedItem {
   taskId?: string | null;
   proposalId?: string;
   canDecide?: boolean;
+  event?: AgentEvent;
 }
 
 export interface AgentEvent {

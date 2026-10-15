@@ -73,21 +73,20 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
   return (
     <Modal title={tr("People")} onClose={onClose} wide>
       <p className="muted small">
-        A role is only a starting point: it copies a set of permissions onto the person. Add or remove single permissions below. People see and use only what their
-        permissions allow; the server checks every request.
+        {tr("A role is only a starting point: it copies a set of permissions onto the person. Add or remove single permissions below. People see and use only what their permissions allow; the server checks every request.")}
       </p>
 
       {issued && (
         <div className="review-box">
           <h3>Token for {issued.who}</h3>
-          <p className="muted small">Shown once. Send it to them privately; they paste it on the sign-in screen.</p>
+          <p className="muted small">{tr("Shown once. Send it to them privately; they paste it on the sign-in screen.")}</p>
           <div className="form-row">
-            <input readOnly value={issued.token} aria-label="New token" onFocus={(e) => e.target.select()} className="mono" />
+            <input readOnly value={issued.token} aria-label={tr("New token")} onFocus={(e) => e.target.select()} className="mono" />
             <button type="button" onClick={() => void navigator.clipboard.writeText(issued.token).then(() => notify("Copied", "info"))}>
-              Copy
+              {tr("Copy")}
             </button>
             <button type="button" className="ghost" onClick={() => setIssued(null)}>
-              Done
+              {tr("Done")}
             </button>
           </div>
         </div>
@@ -97,9 +96,9 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
         <table className="grid mobile-cards">
           <thead>
             <tr>
-              <th>Person</th>
-              <th>Role</th>
-              <th>Permissions</th>
+              <th>{tr("Person")}</th>
+              <th>{tr("Role")}</th>
+              <th>{tr("Permissions")}</th>
               <th />
             </tr>
           </thead>
@@ -110,24 +109,24 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
                 <tr key={u.id} className={u.disabledAt ? "muted" : ""}>
                   <td>
                     <strong>{u.displayName}</strong> {u.owner && <span className="tag">owner</span>}
-                    {u.disabledAt && <span className="tag">disabled</span>}
+                    {u.disabledAt && <span className="tag">{tr("disabled")}</span>}
                     <div className="muted small">
                       <code>{u.id}</code>
                     </div>
                   </td>
-                  <td data-label="Role" className="small">{u.owner ? "everything" : (roles.find((r) => r.id === u.roleId)?.name ?? "custom")}</td>
-                  <td data-label="Permissions" className="small">{u.owner ? "—" : u.permissions.length}</td>
+                  <td data-label={tr("Role")} className="small">{u.owner ? tr("everything") : (roles.find((r) => r.id === u.roleId)?.name ?? tr("custom"))}</td>
+                  <td data-label={tr("Permissions")} className="small">{u.owner ? "—" : u.permissions.length}</td>
                   <td>
                     {editable && (
                       <div className="btn-row">
                         <button type="button" onClick={() => setOpen(open === u.id ? null : u.id)}>
-                          {open === u.id ? "Close" : "Permissions"}
+                          {open === u.id ? tr("Close") : tr("Permissions")}
                         </button>
                         <button type="button" onClick={() => resetToken(u)}>
-                          New token
+                          {tr("New token")}
                         </button>
                         <button type="button" className={u.disabledAt ? "" : "danger"} onClick={() => void run(() => api("PATCH", `/api/users/${u.id}`, { disabled: !u.disabledAt }))}>
-                          {u.disabledAt ? "Enable" : "Disable"}
+                          {u.disabledAt ? tr("Enable") : tr("Disable")}
                         </button>
                       </div>
                     )}
@@ -151,20 +150,20 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
           void run(() => api("POST", "/api/users/members", { userId: existing.trim() }).then(() => setExisting("")));
         }}
       >
-        <h3>Add someone from another organization</h3>
-        <p className="muted small">They keep their account and sign-in; here they start with no permissions. Their user id is shown under their name in the other organization.</p>
+        <h3>{tr("Add someone from another organization")}</h3>
+        <p className="muted small">{tr("They keep their account and sign-in; here they start with no permissions. Their user id is shown under their name in the other organization.")}</p>
         <div className="form-row">
-          <input value={existing} onChange={(e) => setExisting(e.target.value)} placeholder="u-…" required className="mono" aria-label="User id" />
-          <button type="submit">Add</button>
+          <input value={existing} onChange={(e) => setExisting(e.target.value)} placeholder="u-…" required className="mono" aria-label={tr("User id")} />
+          <button type="submit">{tr("Add")}</button>
         </div>
       </form>
 
       <form className="form" onSubmit={invite} style={{ marginTop: 16 }}>
-        <h3>Invite someone</h3>
+        <h3>{tr("Invite someone")}</h3>
         <div className="form-row">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required maxLength={60} aria-label="Name" />
-          <select value={roleId} onChange={(e) => setRoleId(e.target.value)} aria-label="Starting role">
-            <option value="">no permissions yet</option>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("Name")} required maxLength={60} aria-label={tr("Name")} />
+          <select value={roleId} onChange={(e) => setRoleId(e.target.value)} aria-label={tr("Starting role")}>
+            <option value="">{tr("no permissions yet")}</option>
             {roles.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.name}
@@ -172,7 +171,7 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
             ))}
           </select>
           <button type="submit" className="primary">
-            Invite
+            {tr("Invite")}
           </button>
         </div>
       </form>
@@ -204,12 +203,12 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
 
   return (
     <section className="actions">
-      <h3>Permissions of {user.displayName}</h3>
+      <h3>{tr("Permissions of {name}", { name: user.displayName })}</h3>
       <table className="grid mobile-cards">
         <thead>
           <tr>
-            <th>Action</th>
-            <th>Scope</th>
+            <th>{tr("Action")}</th>
+            <th>{tr("Scope")}</th>
             <th />
           </tr>
         </thead>
@@ -220,10 +219,10 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
                 <code>{p.action}</code>
                 {p.constraints.templates && <div className="muted small">templates: {p.constraints.templates.join(", ")}</div>}
               </td>
-              <td data-label="Scope" className="small">{describeScope(p.scope)}</td>
+              <td data-label={tr("Scope")} className="small">{describeScope(p.scope)}</td>
               <td>
                 <button type="button" className="danger" onClick={() => void run(() => api("DELETE", `/api/users/${user.id}/grants/${p.id}`))}>
-                  Remove
+                  {tr("Remove")}
                 </button>
               </td>
             </tr>
@@ -231,7 +230,7 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
           {user.permissions.length === 0 && (
             <tr>
               <td colSpan={3} className="muted">
-                No permissions: this person sees nothing.
+                {tr("No permissions: this person sees nothing.")}
               </td>
             </tr>
           )}
@@ -240,7 +239,7 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
 
       <form className="form" onSubmit={add}>
         <div className="form-row">
-          <select value={action} onChange={(e) => setAction(e.target.value)} aria-label="Action">
+          <select value={action} onChange={(e) => setAction(e.target.value)} aria-label={tr("Action")}>
             {ACTIONS.map((a) => (
               <option key={a}>{a}</option>
             ))}
@@ -252,16 +251,16 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
                 setKind(e.target.value as ScopeKind);
                 setIds([]);
               }}
-              aria-label="Scope"
+              aria-label={tr("Scope")}
             >
-              <option value="org">whole organization</option>
-              <option value="departments">departments…</option>
-              <option value="agents">agents…</option>
-              <option value="projects">projects…</option>
+              <option value="org">{tr("whole organization")}</option>
+              <option value="departments">{tr("departments…")}</option>
+              <option value="agents">{tr("agents…")}</option>
+              <option value="projects">{tr("projects…")}</option>
             </select>
           )}
           <button type="submit" disabled={!orgOnly && kind !== "org" && !ids.length}>
-            Add permission
+            {tr("Add permission")}
           </button>
         </div>
         {!orgOnly && kind !== "org" && (
@@ -275,7 +274,7 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
         )}
         {action === "agent.spawn" && (
           <div className="checks">
-            <span className="muted small">May hire from:</span>
+            <span className="muted small">{tr("May hire from:")}</span>
             {(catalog?.templates ?? []).map((t) => (
               <label key={t.id}>
                 <input type="checkbox" checked={templates.includes(t.id)} onChange={() => toggle(templates, setTemplates, t.id)} /> {t.id}
@@ -286,7 +285,7 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
       </form>
 
       <div className="form-row">
-        <select value={roleId} onChange={(e) => setRoleId(e.target.value)} aria-label="Role preset">
+        <select value={roleId} onChange={(e) => setRoleId(e.target.value)} aria-label={tr("Role preset")}>
           {roles.map((r) => (
             <option key={r.id} value={r.id}>
               {r.name}
@@ -302,7 +301,7 @@ function UserPermissions({ user, roles, catalog, snapshot, run }: { user: User; 
             }
           }}
         >
-          Apply preset (replaces all)
+          {tr("Apply preset (replaces all)")}
         </button>
       </div>
     </section>

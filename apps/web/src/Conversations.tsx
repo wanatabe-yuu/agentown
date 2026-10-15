@@ -4,6 +4,8 @@ import type { ChatTarget } from "./OwnerChat.tsx";
 import type { FeedItem, FeedKind, Snapshot, TeamMessage } from "./types.ts";
 import { Modal, StatusPill, ago } from "./ui.tsx";
 import { t } from "./i18n.ts";
+import { EVENT_TEXT, plain } from "./activity.ts";
+import { ReportText } from "./Markdown.tsx";
 
 type Filter = "you" | "team" | "other";
 
@@ -175,7 +177,9 @@ function TeamChatDialog({ teamId, snapshot, now, onClose }: { teamId: string; sn
         {messages?.map((m) => (
           <div key={m.id} className={`team-msg${m.system ? " system" : ""}${m.author.kind === "human" ? " human" : ""}`}>
             <span className="team-msg-author">{m.author.name}</span>
-            <span className="team-msg-text">{m.text}</span>
+            <span className="team-msg-text">
+              {m.system ? (m.event && EVENT_TEXT[m.event.type] ? EVENT_TEXT[m.event.type]!(m.event, () => m.author.name).replace(`${m.author.name} `, "") : plain(m.text)) : <ReportText text={m.text} />}
+            </span>
             <span className="muted small">{ago(m.at, now)}</span>
           </div>
         ))}
@@ -245,10 +249,12 @@ function FeedDialog({ kind, snapshot, now, onClose, onOpenTask }: { kind: FeedKi
         {items?.map((i) => (
           <li key={i.id} className={i.canDecide ? "decidable" : ""}>
             <button type="button" className={`feed-row kind-${i.kind}`} disabled={!i.taskId} onClick={() => i.taskId && onOpenTask(i.taskId)}>
-              <span className="muted small">{ago(i.at, now)}</span> <b>{name(i.agentId)}</b>
-              {i.kind !== "self" && <span className="tag">{i.title}</span>}
+              <span className="muted small">{ago(i.at, now)}</span> <b>{name(i.agentId)}</b>{" "}
+              {i.kind === "proposal" || i.kind === "tool" ? <span className="tag">{i.title}</span> : null}
               {i.status && <StatusPill state={i.status} />}
-              <span className={i.kind === "tool" ? "mono" : ""}>{i.text}</span>
+              {" "}<span className={i.kind === "tool" ? "mono" : ""}>
+                {i.event && EVENT_TEXT[i.event.type] ? EVENT_TEXT[i.event.type]!(i.event, name).replace(`${name(i.agentId)} `, "") : i.kind === "self" || i.kind === "event" ? plain(i.text) : i.text}
+              </span>
             </button>
             {i.canDecide && i.proposalId && (
               <div className="btn-row decide-row">

@@ -8,6 +8,7 @@ import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
 import { OwnerChatDialog, type ChatTarget } from "./OwnerChat.tsx";
 import { ConversationsSection } from "./Conversations.tsx";
 import { NeedsYou } from "./Inbox.tsx";
+import { EVENT_TEXT } from "./activity.ts";
 import { lang, setLang, t } from "./i18n.ts";
 import { UsersDialog } from "./Users.tsx";
 import { HttpError, api, setOrg } from "./api.ts";
@@ -18,28 +19,6 @@ const Office3D = lazy(() => import("./office3d/Office3D.tsx"));
 import { STRUCTURAL, useOffice } from "./store.ts";
 import type { Account, AgentEvent, Catalog, Me } from "./types.ts";
 import { Menu, type MenuItem, Modal, StatusPill, ago } from "./ui.tsx";
-
-/** One line of plain text from a Markdown report. */
-const plain = (md: string) => md.replace(/```[\s\S]*?```/g, " ").replace(/[*_`#>|]+/g, "").replace(/\s+/g, " ").trim().slice(0, 160);
-
-/** What the Activity list says about an event; events not listed here are too low-level to show. */
-const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null) => string) => string> = {
-  "agent.spawned": (e, n) => t("{name} joined as {role}", { name: n(e.agentId), role: e.payload.jobRole }),
-  "task.created": (e, n) => t("{from} → {to}: {title}", { from: e.payload.createdBy?.startsWith("agent:") ? n(e.payload.createdBy.slice(6)) : t("A person"), to: n(e.agentId), title: e.payload.title }),
-  "task.status": (e) => t("{title}: {from} → {to}", { title: e.payload.title, from: t(String(e.payload.from).replace("_", " ")), to: t(String(e.payload.to).replace("_", " ")) }),
-  "run.started": (e, n) => t("{name} started {title}", { name: n(e.agentId), title: e.payload.title }),
-  "run.finished": (e, n) => t("{name} finished: {outcome}", { name: n(e.agentId), outcome: t(e.payload.outcome) }) + (e.payload.summary ? ` — ${plain(String(e.payload.summary))}` : ""),
-  "run.lost": (e, n) => t("{name} lost a run: {why}", { name: n(e.agentId), why: e.payload.why }),
-  "artifact.created": (e, n) => t("{name} delivered {file}", { name: n(e.agentId), file: e.payload.name }),
-  "agent.configured": (e, n) => t("{name} now uses {model}", { name: n(e.agentId), model: e.payload.model ?? t("the default model") }),
-  "agent.team": (e, n) => t("{name} moved to team {team}", { name: n(e.agentId), team: e.payload.teamId }),
-  "agent.retired": (e, n) => t("{name} retired", { name: n(e.agentId) }),
-  "grant.created": (e, n) => t("{name} received {action}", { name: n(e.agentId), action: e.payload.action }),
-  "grant.revoked": (e, n) => t("{name} lost {action}", { name: n(e.agentId), action: e.payload.action }),
-  "credential.created": (e) => t("API key \"{name}\" added", { name: e.payload.name }),
-  "credential.revoked": () => t("An API key was revoked"),
-  "user.created": (e) => t("{name} was invited", { name: e.payload.displayName }),
-};
 
 // Tokens used to live in localStorage; the session is an HttpOnly cookie now.
 try {
@@ -476,12 +455,12 @@ function AuditDialog({ onClose, now }: { onClose: () => void; now: number }) {
         <table className="grid mobile-cards">
           <thead>
             <tr>
-              <th>When</th>
-              <th>Actor</th>
-              <th>Action</th>
-              <th>Target</th>
-              <th>Decision</th>
-              <th>Reason</th>
+              <th>{t("When")}</th>
+              <th>{t("Actor")}</th>
+              <th>{t("Action")}</th>
+              <th>{t("Target")}</th>
+              <th>{t("Decision")}</th>
+              <th>{t("Reason")}</th>
             </tr>
           </thead>
           <tbody>
@@ -495,7 +474,7 @@ function AuditDialog({ onClose, now }: { onClose: () => void; now: number }) {
                   <code>{r.action}</code>
                 </td>
                 <td data-label="Target">{r.target}</td>
-                <td data-label="Decision">{r.allowed ? <span className="pill pill-good">allowed</span> : <span className="pill pill-bad">denied</span>}</td>
+                <td data-label="Decision">{r.allowed ? <span className="pill pill-good">{t("allowed")}</span> : <span className="pill pill-bad">{t("denied")}</span>}</td>
                 <td data-label="Reason" className="small mobile-wide">{r.reason}</td>
               </tr>
             ))}

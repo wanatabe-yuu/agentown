@@ -63,21 +63,21 @@ export function AssetsDialog({ onClose, notify }: { onClose: () => void; notify:
   return (
     <Modal title={tr("Art assets")} onClose={onClose} wide>
       <p className="muted small">
-        Models must be self-contained binary glTF (<code>.glb</code>, up to 20 MB, no Draco compression); textures PNG, JPEG or WebP (up to 4 MB). Use them in the world editor: a
-        kind's look, or a room's floor and walls. {mb(usage.used)} of {mb(usage.quota)} used.
+        {tr("Models: binary glTF (.glb, up to 20 MB, no Draco compression). Textures: PNG, JPEG or WebP (up to 4 MB). Use them in the world editor for an object's look or a room's floor and walls.")}{" "}
+        {tr("{used} of {quota} used.", { used: mb(usage.used), quota: mb(usage.quota) })}
       </p>
       <label className="upload">
         <input type="file" multiple accept=".glb,image/png,image/jpeg,image/webp" disabled={busy} onChange={(e) => void upload(e.target.files).then(() => (e.target.value = ""))} />
-        {busy ? "Uploading…" : "Upload models or textures"}
+        {busy ? tr("Uploading…") : tr("Upload models or textures")}
       </label>
       <table className="grid mobile-cards" style={{ marginTop: 12 }}>
         <thead>
           <tr>
             <th />
-            <th>Name</th>
-            <th>Kind</th>
-            <th>Size</th>
-            <th>Id</th>
+            <th>{tr("Name")}</th>
+            <th>{tr("Kind")}</th>
+            <th>{tr("Size")}</th>
+            <th>{tr("Id")}</th>
             <th />
           </tr>
         </thead>
@@ -85,10 +85,10 @@ export function AssetsDialog({ onClose, notify }: { onClose: () => void; notify:
           {assets.map((a) => (
             <tr key={a.id}>
               <td>{a.kind === "texture" ? <img src={orgPath(`/api/assets/${a.id}`)} alt="" width={40} height={40} style={{ objectFit: "cover", borderRadius: 4 }} /> : "◆"}</td>
-              <td data-label="Name">{a.name}</td>
-              <td data-label="Kind" className="small">{a.kind}</td>
-              <td data-label="Size" className="small">{mb(a.size)}</td>
-              <td data-label="Id" className="mobile-wide">
+              <td data-label={tr("Name")}>{a.name}</td>
+              <td data-label={tr("Kind")} className="small">{a.kind}</td>
+              <td data-label={tr("Size")} className="small">{mb(a.size)}</td>
+              <td data-label={tr("Id")} className="mobile-wide">
                 <code className="small">{a.id}</code>
               </td>
               <td>
@@ -102,7 +102,7 @@ export function AssetsDialog({ onClose, notify }: { onClose: () => void; notify:
                       .catch((e) => notify(e.message, "error"))
                   }
                 >
-                  Delete
+                  {tr("Delete")}
                 </button>
               </td>
             </tr>
@@ -110,7 +110,7 @@ export function AssetsDialog({ onClose, notify }: { onClose: () => void; notify:
           {assets.length === 0 && (
             <tr>
               <td colSpan={6} className="muted">
-                No art yet: everything is drawn from built-in shapes.
+                {tr("No art yet: everything is drawn from built-in shapes.")}
               </td>
             </tr>
           )}

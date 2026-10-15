@@ -90,20 +90,20 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
   return (
     <Modal title={tr("Organizations")} onClose={onClose} wide>
       <p className="muted small">
-        Each organization has its own departments, agents, people, keys and audit log, and runs in its own namespace. Members of one never see another.
+        {tr("Each organization has its own departments, agents, people, keys and audit log, and runs in its own namespace. Members of one never see another.")}
       </p>
 
       {issued && (
         <div className="review-box">
           <h3>Owner token for {issued.org}</h3>
-          <p className="muted small">Shown once. Send it to the new owner privately.</p>
+          <p className="muted small">{tr("Shown once. Send it to the new owner privately.")}</p>
           <div className="form-row">
-            <input readOnly value={issued.token} aria-label="Owner token" className="mono" onFocus={(e) => e.target.select()} />
+            <input readOnly value={issued.token} aria-label={tr("Owner token")} className="mono" onFocus={(e) => e.target.select()} />
             <button type="button" onClick={() => void navigator.clipboard.writeText(issued.token).then(() => notify("Copied", "info"))}>
-              Copy
+              {tr("Copy")}
             </button>
             <button type="button" className="ghost" onClick={() => setIssued(null)}>
-              Done
+              {tr("Done")}
             </button>
           </div>
         </div>
@@ -113,11 +113,11 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
         <table className="grid mobile-cards">
           <thead>
             <tr>
-              <th>Organization</th>
-              <th>Template</th>
-              <th>Owner</th>
-              <th>Agents</th>
-              <th>People</th>
+              <th>{tr("Organization")}</th>
+              <th>{tr("Template")}</th>
+              <th>{tr("Owner")}</th>
+              <th>{tr("Agents")}</th>
+              <th>{tr("People")}</th>
               <th />
             </tr>
           </thead>
@@ -125,25 +125,25 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
             {(orgs ?? []).map((o) => (
               <tr key={o.id} className={o.archivedAt ? "muted" : ""}>
                 <td>
-                  <strong>{o.name}</strong> {o.archivedAt && <span className="tag">archived</span>}
+                  <strong>{o.name}</strong> {o.archivedAt && <span className="tag">{tr("archived")}</span>}
                   <div className="muted small">
                     <code>{o.id}</code> · {o.runtimeNamespace ?? "per-department namespaces"}
                   </div>
                 </td>
-                <td data-label="Template" className="small">{o.templateId ?? "—"}</td>
-                <td data-label="Owner" className="small">{o.owner?.displayName ?? "—"}</td>
-                <td data-label="Agents" className="small">{o.agents}</td>
-                <td data-label="People" className="small">{o.members}</td>
+                <td data-label={tr("Template")} className="small">{o.templateId ?? "—"}</td>
+                <td data-label={tr("Owner")} className="small">{o.owner?.displayName ?? "—"}</td>
+                <td data-label={tr("Agents")} className="small">{o.agents}</td>
+                <td data-label={tr("People")} className="small">{o.members}</td>
                 <td>
                   <div className="btn-row">
                     {member.has(o.id) && !o.archivedAt && (
                       <button type="button" onClick={() => onOpen(o.id)}>
-                        Open
+                        {tr("Open")}
                       </button>
                     )}
                     {o.archivedAt ? (
                       <button type="button" onClick={() => void run(() => api("PATCH", `/api/admin/orgs/${o.id}`, { archived: false }))}>
-                        Restore
+                        {tr("Restore")}
                       </button>
                     ) : (
                       <button
@@ -155,7 +155,7 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
                           }
                         }}
                       >
-                        Archive
+                        {tr("Archive")}
                       </button>
                     )}
                   </div>
@@ -167,9 +167,9 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
       </div>
 
       <form className="form" onSubmit={create} style={{ marginTop: 16 }}>
-        <h3>New organization</h3>
+        <h3>{tr("New organization")}</h3>
         <label>
-          Template
+          {tr("Template")}
           <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
             {templates.map((t) => (
               <option key={t.id} value={t.id}>
@@ -190,10 +190,10 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
               setName(e.target.value);
               if (!idTouched) setId(slug(e.target.value));
             }}
-            placeholder="Name"
+            placeholder={tr("Name")}
             required
             maxLength={80}
-            aria-label="Name"
+            aria-label={tr("Name")}
           />
           <input
             value={id}
@@ -201,27 +201,27 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
               setId(e.target.value);
               setIdTouched(true);
             }}
-            placeholder="id (url, namespace)"
+            placeholder={tr("id (url, namespace)")}
             required
             pattern="[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?"
             maxLength={40}
-            aria-label="Organization id"
+            aria-label={tr("Organization id")}
             className="mono"
           />
         </div>
         <div className="form-row">
-          <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner">
+          <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label={tr("Owner")}>
             {accounts.map((u) => (
               <option key={u.id} value={u.id}>
                 Owner: {u.displayName}
                 {u.id === account.user?.id ? " (you)" : ""}
               </option>
             ))}
-            <option value="">Owner: a new person…</option>
+            <option value="">{tr("Owner: a new person…")}</option>
           </select>
-          {!owner && <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} placeholder="New owner's name" required maxLength={60} aria-label="New owner's name" />}
+          {!owner && <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} placeholder={tr("New owner's name")} required maxLength={60} aria-label={tr("New owner's name")} />}
           <button type="submit" className="primary">
-            Create
+            {tr("Create")}
           </button>
         </div>
       </form>

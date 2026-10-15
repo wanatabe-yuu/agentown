@@ -25,6 +25,8 @@ export interface FeedItem {
   taskId?: string | null;
   proposalId?: string;
   canDecide?: boolean;
+  /** For events: the raw event, so clients can phrase it in their language. */
+  event?: { seq: number; at: string; agentId: string | null; taskId: string | null; runId: null; type: string; payload: Record<string, unknown> };
 }
 
 const EVENT_TYPES = ["task.created", "task.assigned", "task.status", "run.started", "run.finished", "run.lost", "agent.spawned", "agent.retired", "agent.team", "agent.resources", "runtime.generation", "artifact.created"];
@@ -76,6 +78,8 @@ export async function listTeamMessages(svc: Service, actor: Actor, teamId: strin
       author: { kind: "agent" as const, id: e.agent_id as string, name: names.get(`agent:${e.agent_id}`) ?? e.agent_id },
       text: describeEvent(e.type, e.payload),
       system: true,
+      // Clients phrase it in their own language.
+      event: { seq: Number(e.seq), at: e.at.toISOString(), agentId: e.agent_id, taskId: e.task_id, runId: null, type: e.type, payload: e.payload },
     })),
   ].sort((a, b) => a.at.localeCompare(b.at));
   return { teamId, memberIds: ids, messages };
@@ -178,6 +182,7 @@ export async function feed(svc: Service, actor: Actor, opts: { kind?: FeedKind; 
       items.push({
         id: `e${e.seq}`, at: e.at.toISOString(), kind: "event", agentId: e.agent_id, teamId: teamOf.get(e.agent_id) ?? null,
         title: e.type, text: describeEvent(e.type, e.payload), taskId: e.task_id,
+        event: { seq: Number(e.seq), at: e.at.toISOString(), agentId: e.agent_id, taskId: e.task_id, runId: null, type: e.type, payload: e.payload },
       });
     }
   }

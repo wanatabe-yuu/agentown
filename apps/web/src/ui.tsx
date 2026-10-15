@@ -6,9 +6,9 @@ export function ago(iso: string | null, now = Date.now()): string {
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
   if (s < 5) return t("just now");
   if (s < 60) return t("{n}s ago", { n: s });
-  if (s < 3600) return t("{n}m ago", { n: Math.round(s / 60) });
-  if (s < 172800) return t("{n}h ago", { n: Math.round(s / 3600) });
-  return t("{n}d ago", { n: Math.round(s / 86400) });
+  if (s < 3600) return t("{n}m ago", { n: Math.floor(s / 60) });
+  if (s < 172800) return t("{n}h ago", { n: Math.floor(s / 3600) });
+  return t("{n}d ago", { n: Math.floor(s / 86400) });
 }
 
 const TONE: Record<string, string> = {

@@ -1,4 +1,5 @@
 import { t } from "./i18n.ts";
+import { t as tr } from "./i18n.ts";
 import { useEffect, useState } from "react";
 import { api, fetchBlob, HttpError, orgPath } from "./api.ts";
 import type { Catalog, Me, Snapshot, TaskDetail, TaskProgress } from "./types.ts";
@@ -68,40 +69,40 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
   const children = snapshot.tasks.filter((t) => t.parentTaskId === taskId);
 
   if (artifact) return <Modal key="artifact" title={artifact.name} onClose={() => setArtifact(null)} wide>
-    <button type="button" onClick={() => setArtifact(null)}>← Back to task</button>
-    <p className="muted small">File preview · UTF-8</p>
+    <button type="button" onClick={() => setArtifact(null)}>{tr("← Back to task")}</button>
+    <p className="muted small">{tr("File preview · UTF-8")}</p>
     {/\.md$/i.test(artifact.name) ? <ReportText text={artifact.text} /> : <pre className="artifact-text-preview">{artifact.text}</pre>}
   </Modal>;
   return (
     <Modal key="task" title={task?.title ?? "Task"} onClose={onClose} wide>
       {refreshError && <p className="error" role="status">Couldn't refresh task: {refreshError}</p>}
       {!task ? (
-        <p className="muted">Loading…</p>
+        <p className="muted">{tr("Loading…")}</p>
       ) : (
         <div className="task-detail">
           <TaskActivity task={task} progress={progress} now={now} agents={snapshot.agents} />
           <details className="task-original-request">
-            <summary>Original request</summary>
+            <summary>{tr("Original request")}</summary>
             <div className="task-request-text">{task.description || "No prompt provided."}</div>
-            {task.acceptanceCriteria && <><h4>Acceptance criteria</h4><div className="task-request-text">{task.acceptanceCriteria}</div></>}
+            {task.acceptanceCriteria && <><h4>{tr("Acceptance criteria")}</h4><div className="task-request-text">{task.acceptanceCriteria}</div></>}
           </details>
           <div className="kv">
-            <div>Status</div>
+            <div>{tr("Status")}</div>
             <div>
               <StatusPill state={task.status} /> {task.statusReason && <span className="muted">{task.statusReason}</span>}
             </div>
-            <div>Assignee</div>
+            <div>{tr("Assignee")}</div>
             <div>{name(task.assigneeAgentId)}</div>
-            <div>Created by</div>
+            <div>{tr("Created by")}</div>
             <div>{task.createdBy.startsWith("agent:") ? name(task.createdBy.slice(6)) : task.createdBy}</div>
-            <div>Spec</div>
+            <div>{tr("Spec")}</div>
             <div>
               <code>{task.spec.kind === "playbook" ? `playbook ${task.spec.playbook}` : task.spec.kind}</code>
               {task.spec.args && <span className="muted small"> {Object.entries(task.spec.args).map(([k, v]) => `${k}=${v}`).join(" ")}</span>}
             </div>
             {task.parentTaskId && (
               <>
-                <div>Parent</div>
+                <div>{tr("Parent")}</div>
                 <div>
                   <button type="button" className="link" onClick={() => onOpenTask(task.parentTaskId!)}>
                     {snapshot.tasks.find((t) => t.id === task.parentTaskId)?.title ?? task.parentTaskId}
@@ -113,14 +114,14 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
 
           {task.can.review && (
             <section className="review-box">
-              <h3>Waiting for your review</h3>
-              <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" rows={2} />
+              <h3>{tr("Waiting for your review")}</h3>
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder={tr("Note (optional)")} rows={2} />
               <div className="btn-row">
                 <button type="button" className="primary" onClick={() => act("Approve", `/api/tasks/${taskId}/review`, { decision: "approve", note })}>
-                  Approve
+                  {tr("Approve")}
                 </button>
                 <button type="button" onClick={() => act("Request changes", `/api/tasks/${taskId}/review`, { decision: "reject", note })}>
-                  Request changes
+                  {tr("Request changes")}
                 </button>
               </div>
             </section>
@@ -128,7 +129,7 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
 
           {children.length > 0 && (
             <section>
-              <h3>Subtasks</h3>
+              <h3>{tr("Subtasks")}</h3>
               <ul className="task-list">
                 {children.map((c) => (
                   <li key={c.id}>
@@ -144,32 +145,32 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
           )}
 
           <section>
-            <h3>Runs</h3>
+            <h3>{tr("Runs")}</h3>
             {task.runs.length === 0 ? (
-              <p className="muted small">Not started.</p>
+              <p className="muted small">{tr("Not started.")}</p>
             ) : (
               <table className="grid task-runs">
                 <thead>
                   <tr>
-                    <th>Attempt</th>
-                    <th>Runtime</th>
-                    <th>Status</th>
-                    <th>Started</th>
-                    <th>Summary</th>
+                    <th>{tr("Attempt")}</th>
+                    <th>{tr("Runtime")}</th>
+                    <th>{tr("Status")}</th>
+                    <th>{tr("Started")}</th>
+                    <th>{tr("Summary")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {task.runs.map((r) => (
                     <tr key={r.id}>
-                      <td data-label="Attempt">#{r.attempt}</td>
-                      <td data-label="Runtime">g{r.runtime_generation}</td>
-                      <td data-label="Status">
+                      <td data-label={tr("Attempt")}>#{r.attempt}</td>
+                      <td data-label={tr("Runtime")}>g{r.runtime_generation}</td>
+                      <td data-label={tr("Status")}>
                         <StatusPill state={r.status} />
                       </td>
-                      <td data-label="Started" className="muted small">{ago(r.started_at, now)}</td>
-                      <td data-label="Summary" className="small">
-                        {r.summary && <details className="run-report"><summary>Agent report</summary><ReportText text={r.summary} /></details>}
-                        {r.usage && <details className="run-usage"><summary>Usage details</summary><pre>{JSON.stringify(r.usage, null, 2)}</pre></details>}
+                      <td data-label={tr("Started")} className="muted small">{ago(r.started_at, now)}</td>
+                      <td data-label={tr("Summary")} className="small">
+                        {r.summary && <details className="run-report"><summary>{tr("Agent report")}</summary><ReportText text={r.summary} /></details>}
+                        {r.usage && <details className="run-usage"><summary>{tr("Usage details")}</summary><pre>{JSON.stringify(r.usage, null, 2)}</pre></details>}
                       </td>
                     </tr>
                   ))}
@@ -179,9 +180,9 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
           </section>
 
           <section>
-            <h3>Artifacts</h3>
+            <h3>{tr("Artifacts")}</h3>
             {task.artifacts.length === 0 ? (
-              <p className="muted small">None.</p>
+              <p className="muted small">{tr("None.")}</p>
             ) : (
               <ul className="artifacts">
                 {task.artifacts.map((a) => (
@@ -201,12 +202,12 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
           <div className="btn-row">
             {task.can.retry && (
               <button type="button" onClick={() => act("Retry", `/api/tasks/${taskId}/retry`)}>
-                Retry
+                {tr("Retry")}
               </button>
             )}
             {task.can.cancel && (
               <button type="button" className="danger" onClick={() => act("Cancel", `/api/tasks/${taskId}/cancel`, { reason: "cancelled from UI" })}>
-                Cancel task
+                {tr("Cancel task")}
               </button>
             )}
           </div>
@@ -232,17 +233,17 @@ function TaskActivity({ task, progress, now, agents }: { task: TaskDetail; progr
   const events = progress?.events.slice(-16).reverse() ?? [];
   const result = task.summary || task.statusReason;
   const preview = result?.replace(/[*#`_|>]+/g, "").replace(/\s+/g, " ").trim().slice(0, 160);
-  return <section className={`task-progress task-progress-${task.status}`} aria-label="Task progress">
-    <div className="task-progress-heading"><h3>{title}</h3>{active && <span className="task-live-indicator">Live</span>}</div>
-    <ol className="task-progress-stages" aria-label="Task stages">{steps.map((step, n) => <li key={step} className={n < stage || task.status === "done" ? "complete" : n === stage ? "current" : ""} aria-current={n === stage ? "step" : undefined}><span aria-hidden>{n < stage || task.status === "done" ? "✓" : n + 1}</span>{step}</li>)}</ol>
+  return <section className={`task-progress task-progress-${task.status}`} aria-label={tr("Task progress")}>
+    <div className="task-progress-heading"><h3>{title}</h3>{active && <span className="task-live-indicator">{tr("Live")}</span>}</div>
+    <ol className="task-progress-stages" aria-label={tr("Task stages")}>{steps.map((step, n) => <li key={step} className={n < stage || task.status === "done" ? "complete" : n === stage ? "current" : ""} aria-current={n === stage ? "step" : undefined}><span aria-hidden>{n < stage || task.status === "done" ? "✓" : n + 1}</span>{step}</li>)}</ol>
     <p className="muted small">Attempt {task.attempt} / {task.maxAttempts ?? 5}{run ? ` · ${run.finished_at ? "Ran for" : "Elapsed"} ${elapsed}` : ""}{progress?.current?.heartbeatAt && active ? ` · Last contact ${ago(progress.current.heartbeatAt, now)}` : ""}</p>
-    {active && heartbeatStale && <p className="muted small">No recent heartbeat. Completed activity is preserved; waiting for the runtime to reconnect.</p>}
+    {active && heartbeatStale && <p className="muted small">{tr("No recent heartbeat. Completed activity is preserved; waiting for the runtime to reconnect.")}</p>}
     {active && progress?.current?.detail && !heartbeatStale && <p className="task-current-action">{progress.current.detail}</p>}
     <ConfigurationResult task={task} agents={agents} />
-    {result && (result.length > 240 ? <details className="task-progress-result"><summary><strong>Agent report · View full summary</strong><span className="task-result-preview">{preview}…</span></summary><ReportText text={result} /></details> : <div className="task-progress-result"><strong>Agent report</strong><ReportText text={result} /></div>)}
-    {result && <p className="muted small">The report records what the agent said at that time. Saved configuration changes and current settings are shown separately below.</p>}
+    {result && (result.length > 240 ? <details className="task-progress-result"><summary><strong>Agent report · View full summary</strong><span className="task-result-preview">{preview}…</span></summary><ReportText text={result} /></details> : <div className="task-progress-result"><strong>{tr("Agent report")}</strong><ReportText text={result} /></div>)}
+    {result && <p className="muted small">{tr("The report records what the agent said at that time. Saved configuration changes and current settings are shown separately below.")}</p>}
     {!!task.artifacts.length && <p className="small">{task.artifacts.length} {task.artifacts.length === 1 ? "file" : "files"} available below.</p>}
-    {events.length > 0 && <details className="task-progress-timeline" open><summary>Activity</summary><ol>{events.map(e => <li key={e.seq}><time dateTime={e.at} title={new Date(e.at).toLocaleString()}>{new Date(e.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><div><span>{e.message}</span>{e.detail && <p>{e.detail}</p>}</div></li>)}</ol></details>}
+    {events.length > 0 && <details className="task-progress-timeline" open><summary>{tr("Activity")}</summary><ol>{events.map(e => <li key={e.seq}><time dateTime={e.at} title={new Date(e.at).toLocaleString()}>{new Date(e.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><div><span>{e.message}</span>{e.detail && <p>{e.detail}</p>}</div></li>)}</ol></details>}
     {progress?.canReadLogs && <details className="task-output"><summary>Execution log · attempt {run?.attempt}</summary><pre>{progress.logs.length ? progress.logs.map(l => `[${new Date(l.at).toLocaleTimeString()}] ${l.stream}: ${l.line}`).join("\n") : "No output yet."}</pre></details>}
   </section>;
 }
@@ -252,14 +253,14 @@ const settingValue = (key: string, value: unknown) => value == null ? "Provider 
 function ConfigurationResult({ task, agents }: { task: TaskDetail; agents: Snapshot["agents"] }) {
   const changes = task.configurationChanges ?? [];
   return <div className="task-configuration">
-    {changes.some(c => c.changedSince) && <p className="config-history-notice">Some settings changed again after this task. Its historical report does not describe the current configuration.</p>}
+    {changes.some(c => c.changedSince) && <p className="config-history-notice">{tr("Some settings changed again after this task. Its historical report does not describe the current configuration.")}</p>}
     <details className="config-receipts"><summary>Saved configuration changes · {changes.length} server records</summary>
-      {!changes.length && <p className="muted small">No configuration write is recorded for this task. An agent report alone does not verify a change.</p>}
+      {!changes.length && <p className="muted small">{tr("No configuration write is recorded for this task. An agent report alone does not verify a change.")}</p>}
       {changes.map(c => <article key={c.id}><strong>{c.name} · {c.changed === false ? "Already matched" : c.changed ? "Saved change" : "Historical record"}</strong><p className="muted small">{new Date(c.at).toLocaleString()}{c.revision ? ` · revision ${c.revision}` : ""} · {c.linked ? "Linked task receipt" : "Recorded while this agent was running the task"}</p>
         {Object.entries(c.saved).filter(([key]) => key in settingLabels).map(([key, saved]) => <div className="config-receipt-field" key={key}><span className="muted">{settingLabels[key]}</span><span>{c.before && key in c.before ? `${settingValue(key, c.before[key])} → ` : ""}{settingValue(key, saved)}</span>{c.current[key] !== saved && <small>Current: {settingValue(key, c.current[key])} · changed later</small>}</div>)}
       </article>)}
     </details>
-    <details className="config-current-world"><summary>Current world configuration</summary><p className="muted small">Live saved settings. Context budget does not increase a provider's model window.</p><div className="report-table-scroll"><table><thead><tr><th>Agent</th><th>Model</th><th>Effort</th><th>Context budget</th></tr></thead><tbody>{agents.filter(a => a.lifecycleState !== "retired").map(a => <tr key={a.id}><th>{a.displayName}</th><td>{a.config.model ?? "Template default"}</td><td>{a.config.effort ?? "Provider default"}</td><td>{a.config.contextLimit?.toLocaleString() ?? "Provider default"}</td></tr>)}</tbody></table></div></details>
+    <details className="config-current-world"><summary>{tr("Current world configuration")}</summary><p className="muted small">{tr("Live saved settings. Context budget does not increase a provider's model window.")}</p><div className="report-table-scroll"><table><thead><tr><th>{tr("Agent")}</th><th>{tr("Model")}</th><th>{tr("Effort")}</th><th>{tr("Context budget")}</th></tr></thead><tbody>{agents.filter(a => a.lifecycleState !== "retired").map(a => <tr key={a.id}><th>{a.displayName}</th><td>{a.config.model ?? "Template default"}</td><td>{a.config.effort ?? "Provider default"}</td><td>{a.config.contextLimit?.toLocaleString() ?? "Provider default"}</td></tr>)}</tbody></table></div></details>
   </div>;
 }
 
