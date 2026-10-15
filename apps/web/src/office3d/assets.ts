@@ -58,6 +58,8 @@ export function loadModels(root: THREE.Object3D, mixers: THREE.AnimationMixer[],
         m.rotation.y = (((slot.userData.assetRotationY as number) ?? 0) * Math.PI) / 180;
         for (const c of [...slot.children]) if (c instanceof THREE.Mesh) slot.remove(c);
         slot.add(m);
+        // Counted on the root, so a viewer can frame the real model once it arrives.
+        root.userData.modelsLoaded = ((root.userData.modelsLoaded as number | undefined) ?? 0) + 1;
         if (gltf.animations[0]) {
           const mixer = new THREE.AnimationMixer(m);
           mixer.clipAction(gltf.animations[0]).play();
