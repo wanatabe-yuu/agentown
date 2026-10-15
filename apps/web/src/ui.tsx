@@ -1,12 +1,14 @@
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { t } from "./i18n.ts";
 
 export function ago(iso: string | null, now = Date.now()): string {
-  if (!iso) return "never";
+  if (!iso) return t("never");
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
-  if (s < 5) return "just now";
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  return `${Math.round(s / 3600)}h ago`;
+  if (s < 5) return t("just now");
+  if (s < 60) return t("{n}s ago", { n: s });
+  if (s < 3600) return t("{n}m ago", { n: Math.round(s / 60) });
+  if (s < 172800) return t("{n}h ago", { n: Math.round(s / 3600) });
+  return t("{n}d ago", { n: Math.round(s / 86400) });
 }
 
 const TONE: Record<string, string> = {
@@ -32,10 +34,17 @@ const TONE: Record<string, string> = {
   cancelled: "muted",
   succeeded: "good",
   lost: "warn",
+  applied: "good",
+  approved: "good",
+  rejected: "muted",
+  applying: "info",
+  withdrawn: "muted",
+  expired: "muted",
+  uncertain: "warn",
 };
 
 export function StatusPill({ state }: { state: string }) {
-  return <span className={`pill pill-${TONE[state] ?? "neutral"}`}>{state.replace("_", " ")}</span>;
+  return <span className={`pill pill-${TONE[state] ?? "neutral"}`}>{t(state.replace("_", " "))}</span>;
 }
 
 export function describeScope(scope: { kind: string; ids?: string[] }): string {

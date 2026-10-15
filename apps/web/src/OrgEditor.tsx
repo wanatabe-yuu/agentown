@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { HttpError, api } from "./api.ts";
 import type { Catalog, Snapshot } from "./types.ts";
 import { Modal } from "./ui.tsx";
+import { t as tr } from "./i18n.ts";
 
 type Notify = (msg: string, kind?: "error" | "info") => void;
 /** The organization's document in its authoring format (the same shape as a template file). */
@@ -9,6 +10,7 @@ type Doc = Record<string, any>;
 /** A capability as written in the document: scope is a shorthand string or { departments | agents | projects: [...] }. */
 type Cap = { action: string; scope: string | Record<string, string[]>; templates?: string[]; delegable?: boolean };
 type Tab = "departments" | "teams" | "projects" | "jobs" | "profiles" | "roles" | "templates";
+const TAB_LABEL: Record<Tab, string> = { departments: "Departments", teams: "Teams", projects: "Projects", jobs: "Agent jobs", profiles: "Agent permissions", roles: "Role presets", templates: "Templates" };
 
 // Mirrors ACTIONS in packages/core (code.* needs a repo list and is left to the YAML file).
 const AGENT_ACTIONS = ["org.view", "task.view", "task.create", "task.assign", "task.review", "agent.spawn", "agent.update", "agent.retire", "agent.configure", "runtime.control", "runtime.logs", "runtime.exec", "permission.delegate"];
@@ -72,7 +74,7 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
 
   if (!doc) {
     return (
-      <Modal title="Organization" onClose={onClose} wide>
+      <Modal title={tr("Organization")} onClose={onClose} wide>
         <p className="muted">Loading…</p>
       </Modal>
     );
@@ -90,23 +92,23 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
   };
 
   return (
-    <Modal title={`Organization: ${snapshot.organization.name}`} onClose={() => (!dirty || confirm("Discard unsaved changes?")) && onClose()} wide>
+    <Modal title={tr("Organization: {name}", { name: snapshot.organization.name })} onClose={() => (!dirty || confirm("Discard unsaved changes?")) && onClose()} wide>
       <nav className="tabs" role="tablist">
         {(["departments", "teams", "projects", "jobs", "profiles", "roles", "templates"] as Tab[]).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-            {t === "jobs" ? "agent jobs" : t === "profiles" ? "agent permissions" : t === "roles" ? "role presets" : t}
+            {tr(TAB_LABEL[t])}
           </button>
         ))}
       </nav>
       {tab !== "templates" && (
         <div className="btn-row" style={{ margin: "10px 0" }}>
           <button type="button" className="primary" disabled={!dirty || busy} onClick={() => void save()}>
-            Save changes
+            {tr("Save changes")}
           </button>
           <button type="button" disabled={!dirty || busy} onClick={() => void load()}>
-            Discard
+            {tr("Discard")}
           </button>
-          <span className="muted small">Edits apply to new agents and new role assignments; permissions already handed out stay as they are.</span>
+          <span className="muted small">{tr("Edits apply to new agents and new role assignments; permissions already handed out stay as they are.")}</span>
         </div>
       )}
 
@@ -144,6 +146,17 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
           ]}
           note="Each team shares one runtime, sized by the base of its preset plus every member's declared share. A department without a team of its own id keeps a default team with the department's id; a team with people cannot be removed."
         />
+      )}
+      {tab === "teams" && (
+        <ul className="implicit-teams">
+          {departments
+            .filter((d) => !(doc.teams ?? []).some((x: Doc) => x.id === d.id))
+            .map((d) => (
+              <li key={d.id} className="muted small">
+                <b>{d.name || d.id}</b> · {tr("Default team of {dept} (automatic)", { dept: d.name || d.id })} · {snapshot.teams.find((x) => x.id === d.id)?.memberIds.length ?? 0} 👤
+              </li>
+            ))}
+        </ul>
       )}
 
       {tab === "projects" && (

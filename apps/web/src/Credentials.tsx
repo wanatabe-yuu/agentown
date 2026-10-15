@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import type { AgentDetail, Catalog, Credential, Effort } from "./types.ts";
 import { Modal, ago } from "./ui.tsx";
@@ -79,7 +80,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
   };
 
   return (
-    <Modal title="API keys" onClose={onClose} wide>
+    <Modal title={tr("API keys")} onClose={onClose} wide>
       <p className="muted small">
         Saved API keys are hidden from owners and agents. Keys stay encrypted on the server; agent runtimes receive model access through the server, without receiving the key.
       </p>

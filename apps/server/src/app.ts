@@ -722,7 +722,9 @@ export async function buildApp(opts: AppOptions) {
       });
       socket.on("close", () => close("client disconnected"));
       try {
-        exec = await driver!.exec(target.namespace, target.pod, ["/bin/sh", "-l"], {
+        // A team runtime holds several members: open the shell in this member's own home (agent ids are DNS labels).
+        const home = `/workspace/members/${target.agentId}`;
+        exec = await driver!.exec(target.namespace, target.pod, ["/bin/sh", "-c", `cd ${home} 2>/dev/null && export HOME=${home}/home; exec /bin/sh -l`], {
           stdin,
           stdout,
           onExit: (s) => close(`shell exited${s.message ? `: ${s.message}` : ""}`),

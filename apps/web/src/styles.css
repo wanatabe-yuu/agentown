@@ -502,7 +502,7 @@ select {
   background: transparent;
   border-radius: 6px 6px 0 0;
   padding: 8px 7px;
-  text-transform: capitalize;
+  text-transform: none;
   color: var(--muted);
 }
 .tabs button.active {
@@ -1118,7 +1118,7 @@ input.short {
   border-radius: 0;
   background: transparent;
   color: var(--muted);
-  text-transform: capitalize;
+  text-transform: none;
 }
 .tabs button:hover:not(:disabled) {
   background: transparent;
@@ -2032,3 +2032,76 @@ input.short {
 .other-feed .decide-row {
   margin: 2px 0 8px;
 }
+
+/* ---- UI pass: inbox, panels, forms, mobile (overrides above) */
+.btn-icon { display: none; }
+.needs-you h3, .conversations h3, .feed-section h3 { margin-bottom: 6px; }
+.inbox { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.inbox li { border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; padding: 8px 10px; background: var(--surface-2); }
+.inbox-main { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; border: 0; background: none; padding: 0; color: var(--text); text-align: left; min-height: 0; }
+.inbox-main:disabled { cursor: default; opacity: 1; }
+.inbox-main b { font-weight: 600; overflow-wrap: anywhere; }
+.inbox-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--warn); }
+.inbox-actions { display: flex; gap: 6px; margin-top: 8px; }
+.inbox-actions button { min-height: 30px; padding: 0 12px; }
+.warn-text { color: var(--warn); margin-top: 2px; }
+.team-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.team-line select { min-width: 0; }
+.form-row.compact { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-top: 6px; }
+.form-row.compact label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+.form-row.compact input { width: 88px; }
+.hire .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; margin: 8px 0; }
+.hire .form-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); min-width: 0; }
+.hire .form-grid select, .hire .form-grid input { width: 100%; min-width: 0; }
+.hire .form-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tech-details { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 10px; }
+.tech-details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.tech-details dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 10px 0 0; font-size: 12px; }
+.tech-details dt { color: var(--muted); }
+.tech-details dd { margin: 0; overflow-wrap: anywhere; }
+.task-row.stacked { flex-direction: column; align-items: stretch; gap: 4px; }
+.task-row.stacked .task-head { display: flex; align-items: center; gap: 8px; }
+.task-row.stacked .task-summary { color: var(--muted); font-size: 12px; max-height: 4.6em; overflow: hidden; position: relative; text-align: left; }
+.task-row.stacked .task-summary .report-markdown { font-size: 12px; }
+.task-row.stacked .task-summary .report-markdown > :first-child { margin-top: 0; }
+.implicit-teams { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.tabs { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button { flex-shrink: 0; white-space: nowrap; }
+.chat-message-text .report-markdown { font-size: inherit; }
+.chat-message-text .report-markdown > :first-child { margin-top: 0; }
+.chat-message-text .report-markdown > :last-child { margin-bottom: 0; }
+.agents td[title] { cursor: pointer; }
+
+@media (max-width: 700px) {
+  .topbar { grid-template-columns: minmax(0, 1fr) auto auto; padding-bottom: 6px; }
+  .conn .conn-label { display: none; }
+  .conn { padding: 6px; }
+  .topbar > .stats { display: none; }
+  .has-owner-chat .topbar > .task-actions,
+  .topbar > .task-actions { grid-column: 1 / -1; grid-row: 2; display: flex; gap: 6px; justify-content: flex-end; }
+  .topbar > .seg-toggle { grid-column: 1; grid-row: 2; z-index: 1; }
+  .topbar > .task-actions { padding-left: 150px; }
+  .task-actions .new-task { padding: 0 12px; }
+  .owner-chat-button .btn-text { display: none; }
+  .owner-chat-button { width: 44px; padding: 0; justify-content: center; }
+  .has-owner-chat .topbar > .menu:not(:last-child),
+  .topbar > .menu:not(:last-child) { grid-column: 2; grid-row: 1; justify-self: end; }
+  .topbar > .menu:not(:last-child) .btn-text { display: none; }
+  .topbar > .menu:not(:last-child) .btn-icon { display: inline; font-size: 18px; }
+  .topbar > .menu:not(:last-child) .menu-trigger { width: 44px; padding: 0; }
+  .topbar > .menu:last-child { grid-column: 3; grid-row: 1; }
+  .topbar > .conn { grid-column: 1; grid-row: 1; justify-self: end; margin-right: 4px; }
+  .brand { grid-column: 1; grid-row: 1; padding-right: 40px; }
+  .has-owner-chat .stage, .stage { height: max(320px, calc(100dvh - 118px)); }
+  .world-nav .edit-world { display: none; }
+  .world-nav { right: 60px; flex-wrap: nowrap; }
+  .world-nav select { min-width: 96px; }
+  .hire .form-grid { grid-template-columns: 1fr; }
+  .inbox-actions button { min-height: 40px; flex: 1; }
+}
+.feed .feed-row { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 700px) {
+  .feed .feed-row { min-height: 36px; padding-top: 4px; padding-bottom: 4px; }
+}
+.owner-chat-button { display: inline-flex; align-items: center; gap: 6px; }

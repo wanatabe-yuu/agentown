@@ -159,6 +159,8 @@ export interface Snapshot {
   me: { kind: string; id: string };
   departments: Department[];
   teams: Team[];
+  /** Latest notable events, newest first. */
+  recent?: AgentEvent[];
   projects: Array<{ id: string; name: string }>;
   /** Floors, rooms and objects from the organization's template; null = one room per department. */
   world: World | null;
@@ -226,4 +228,16 @@ export interface ProviderInfo {
   baseUrl: string | null;
   keyRequired: boolean;
   keyPlaceholder: string;
+}
+
+export interface Proposal {
+  id: string;
+  kind: "capability_call" | "config_change" | "task_result" | "world_change" | "permission_change" | "runtime_change" | "team_change";
+  title: string;
+  proposer: string;
+  subject: { type: string; id: string } | null;
+  payload: Record<string, any>;
+  status: string;
+  createdAt: string;
+  canDecide: boolean;
 }

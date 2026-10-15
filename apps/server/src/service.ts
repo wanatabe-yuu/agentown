@@ -2132,13 +2132,14 @@ export class Service {
     // Event sequence numbers are global; the cursor is the newest one this org has.
     const { rows } = await this.db.query<{ seq: string | null }>("SELECT max(seq) AS seq FROM agent_events WHERE org_id=$1", [this.orgId]);
     const cursor = Number(rows[0]?.seq ?? 0);
-    const [agents, tasks, teams] = await Promise.all([this.listAgents(actor), this.listTasks(actor), this.listTeams(actor)]);
+    const [agents, tasks, teams, recent] = await Promise.all([this.listAgents(actor), this.listTasks(actor), this.listTeams(actor), this.recentActivity(actor)]);
     return {
       cursor,
       organization: this.config.organization,
       me: actor,
       departments: this.config.departments,
       teams,
+      recent,
       projects: this.config.projects,
       world: this.config.world ?? null,
       agents,
@@ -2153,6 +2154,17 @@ export class Service {
     const policy = await this.loadPolicy();
     // Organization-level events (structure changed) concern every member; agent events need org.view.
     return (e) => (e.type.startsWith("org.") && !e.agentId) || (!!e.agentId && authorize(actor, "org.view", { agentId: e.agentId }, policy).allowed);
+  }
+
+  /** The latest notable events the caller may see (newest first), so the activity list is not empty on load. */
+  async recentActivity(actor: Actor, limit = 40): Promise<AgentEventRow[]> {
+    const { rows } = await this.db.query<{ seq: string }>(
+      `SELECT max(seq) - 2000 AS seq FROM agent_events WHERE org_id=$1`,
+      [this.orgId],
+    );
+    const notable = /^(agent\.(spawned|configured|team|retired)|task\.(created|status)|run\.(started|finished|lost)|artifact\.created|grant\.|credential\.(created|revoked)|user\.created)/;
+    const events = (await this.eventsAfter(actor, Math.max(0, Number(rows[0]?.seq ?? 0)), 2000)).filter((e) => notable.test(e.type));
+    return events.slice(-limit).reverse();
   }
 
   async eventsAfter(actor: Actor, cursor: number, limit = 1000): Promise<AgentEventRow[]> {

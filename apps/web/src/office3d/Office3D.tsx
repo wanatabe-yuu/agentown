@@ -1,3 +1,4 @@
+import { t } from "../i18n.ts";
 import type { World } from "@agentown/core/world";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
@@ -105,7 +106,8 @@ export default function Office3D(props: Props) {
     const to = new THREE.Vector3((b.minX + b.maxX) / 2, b.y, (b.minZ + b.maxZ) / 2);
     const span = (b.maxX - b.minX + (b.maxZ - b.minZ)) * 0.72 + 3;
     const aspect = el.clientWidth / Math.max(1, el.clientHeight);
-    const zoom = Math.max(0.15, Math.min(6, (2 * VIEW) / (span * 0.62 + 2), (2 * VIEW * aspect) / span));
+    // The isometric view shows a floor plan narrower than its span: fill the width on portrait screens.
+    const zoom = Math.max(0.15, Math.min(6, (2 * VIEW) / (span * 0.62 + 2), (2 * VIEW * aspect) / (span * 0.9)));
     e.tween = { from: e.controls.target.clone(), to, z0: e.camera.zoom, z1: zoom, start: performance.now() };
   };
   const visibleRooms = () => (floor === "all" ? layout.rooms : layout.rooms.filter((r) => r.floorIndex === floor));
@@ -441,7 +443,7 @@ export default function Office3D(props: Props) {
         {layout.floors.length > 1 && (
           <div className="seg-toggle" role="group" aria-label="Floor">
             <button type="button" className={floor === "all" ? "active" : ""} onClick={() => (setFloor("all"), focus(layout.rooms))}>
-              All
+              {t("All")}
             </button>
             {layout.floors.map((f) => (
               <button
@@ -460,8 +462,8 @@ export default function Office3D(props: Props) {
           </div>
         )}
         {props.canDesign && !editing && (
-          <button type="button" onClick={() => void startEditing()}>
-            Edit world
+          <button type="button" className="edit-world" onClick={() => void startEditing()}>
+            {t("Edit world")}
           </button>
         )}
         <select
@@ -470,9 +472,9 @@ export default function Office3D(props: Props) {
             setFocusRoom(ev.target.value);
             if (!ev.target.value) focus(visibleRooms());
           }}
-          aria-label="Focus a room"
+          aria-label={t("Focus a room")}
         >
-          <option value="">{layout.floors.length > 1 ? "Rooms…" : "All rooms"}</option>
+          <option value="">{layout.floors.length > 1 ? t("Rooms…") : t("All rooms")}</option>
           {layout.floors.map((f) => (
             <optgroup key={f.id} label={f.name}>
               {layout.rooms

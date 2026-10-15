@@ -1,3 +1,5 @@
+import { ReportText } from "./Markdown.tsx";
+import { t } from "./i18n.ts";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { api, HttpError } from "./api.ts";
 import { Menu, Modal } from "./ui.tsx";
@@ -13,14 +15,11 @@ export interface ChatTarget { type: "agent" | "object"; id: string; name: string
 interface Profile { name: string; role: string; template: string; instructions: string; authority: string }
 interface Index { profile?: Profile | null; chats: Chat[]; credentials: Credential[]; defaults: Config | null }
 const number = (n = 0) => n.toLocaleString();
-const labels: Record<string, string> = { inspect: "Read world", patch_world: "Edit world", replace_world: "Replace world", patch_config: "Edit organization", create_task: "Create task", task_action: "Update task", spawn_agent: "Hire agent", update_agent: "Update agent", configure_agent: "Configure agent", prepare_self_runtime: "Set up task runtime", agent_action: "Control agent", retire_agent: "Retire agent", update_person: "Update member", grant_person: "Grant permission", revoke_permission: "Revoke permission", delegate_permission: "Delegate permission", credential_action: "Update API key", delete_asset: "Delete art" };
+export const labels: Record<string, string> = { inspect: "Read world", patch_world: "Edit world", replace_world: "Replace world", patch_config: "Edit organization", create_task: "Create task", task_action: "Update task", spawn_agent: "Hire agent", update_agent: "Update agent", configure_agent: "Configure agent", prepare_self_runtime: "Set up task runtime", agent_action: "Control agent", retire_agent: "Retire agent", update_person: "Update member", grant_person: "Grant permission", revoke_permission: "Revoke permission", delegate_permission: "Delegate permission", credential_action: "Update API key", delete_asset: "Delete art" };
 
-/** Small, safe chat formatting. Text stays escaped; model HTML and remote media never render. */
+/** Chat formatting: GitHub Markdown (tables, lists, code); model HTML and remote media never render. */
 function ChatText({ text }: { text: string }) {
-  return <div className="chat-message-text">{text.split(/(```[\s\S]*?```|`[^`\n]+`|\*\*[^*\n]+\*\*)/g).map((part, n) =>
-    part.startsWith("```") && part.endsWith("```") && part.length >= 6 ? <pre className="chat-code" key={n}><code>{part.slice(3, -3).replace(/^[a-zA-Z0-9_-]*\n/, "")}</code></pre> :
-    part.startsWith("`") && part.endsWith("`") && part.length > 1 ? <code key={n}>{part.slice(1, -1)}</code> :
-    part.startsWith("**") && part.endsWith("**") && part.length > 4 ? <strong key={n}>{part.slice(2, -2)}</strong> : part)}</div>;
+  return <div className="chat-message-text"><ReportText text={text} /></div>;
 }
 
 const actionStates: Record<string, string> = { applied: "Done", failed: "Couldn't complete", pending: "Needs confirmation", uncertain: "Check before retrying", rejected: "Skipped", applying: "Working", approved: "Approved" };
@@ -37,11 +36,11 @@ function ActionCard({ action: a, busy, decide, agents, tasks, credentials }: { c
     a.name === "task_action" ? `${String(args.action ?? "Update")} · ${task ?? args.id ?? "task"}` :
     a.name === "inspect" ? `Checked ${args.kind ?? "world"}` : agent ?? (args.note || "");
   return <div className={`chat-action ${a.status}`}>
-    <div className="chat-action-heading"><strong>{labels[a.name] ?? a.name}</strong><span className="chat-action-state">{actionStates[a.status] ?? a.status}</span></div>
+    <div className="chat-action-heading"><strong>{t(labels[a.name] ?? a.name)}</strong><span className="chat-action-state">{t(actionStates[a.status] ?? a.status)}</span></div>
     {description && <p className="chat-action-description">{description}</p>}
     {result.error && <p className="chat-action-error">{String(result.error)}</p>}
-    {a.status === "pending" && <div className="chat-approval"><button type="button" className="primary" disabled={busy} onClick={() => decide(a.id, true)}>Confirm</button><button type="button" disabled={busy} onClick={() => decide(a.id, false)}>Skip</button></div>}
-    <details className="chat-action-details"><summary>Details</summary>
+    {a.status === "pending" && <div className="chat-approval"><button type="button" className="primary" disabled={busy} onClick={() => decide(a.id, true)}>{t("Confirm")}</button><button type="button" disabled={busy} onClick={() => decide(a.id, false)}>{t("Skip")}</button></div>}
+    <details className="chat-action-details"><summary>{t("Details")}</summary>
       <pre>{JSON.stringify(a.args, null, 2)}</pre>
       {a.result != null && <pre className="chat-result">{JSON.stringify(a.result, null, 2)}</pre>}
     </details>
@@ -209,16 +208,16 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
   const contextBudget = Math.min(config?.contextLimit ?? 64000, view?.chat.modelInfo?.contextWindow ?? Infinity);
   const context = view?.chat.contextTokens ?? 0;
   const usage = view?.chat.usage;
-  const assistantName = index?.profile?.name ?? subject?.name ?? "Owner assistant";
+  const assistantName = index?.profile?.name ?? subject?.name ?? t("Owner assistant");
   const actionable = view?.actions.filter(a => a.status === "pending") ?? [];
-  return <Modal title={subject ? `Chat · ${assistantName}` : `Owner chat · ${orgName}`} onClose={onClose} wide className="owner-chat-modal" style={{ "--chat-viewport-height": viewportHeight ? `${viewportHeight}px` : "100dvh" } as CSSProperties}>
+  return <Modal title={subject ? `Chat · ${assistantName}` : t("Owner chat · {org}", { org: orgName })} onClose={onClose} wide className="owner-chat-modal" style={{ "--chat-viewport-height": viewportHeight ? `${viewportHeight}px` : "100dvh" } as CSSProperties}>
     <div className="owner-chat-shell">
       <div className="owner-chat-toolbar">
         <select aria-label="Conversation" value={id ?? ""} disabled={busy} onChange={e => choose(e.target.value || null)}>
           <option value="">{archived ? "Select archived chat" : "New conversation"}</option>
           {index?.chats.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
         </select>
-        <button type="button" onClick={newChat} disabled={busy} title="Start a separate conversation with the current settings">＋ New</button>
+        <button type="button" onClick={newChat} disabled={busy} title={t("Start a separate conversation with the current settings")}>＋ {t("New")}</button>
         <Menu trigger="•••" label="Chat options" items={[
           { label: settings ? "Back to chat" : "Settings", onSelect: () => setSettings(x => !x) },
           ...(!busy ? [{ label: archived ? "Active conversations" : "Archived conversations", onSelect: switchArchive }] : []),
@@ -268,7 +267,7 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
         </>}
       </div>}
       <details className="owner-chat-context">
-        <summary><span>Context {compactNumber(context)} / {compactNumber(contextBudget)}</span><span className="muted">{view?.chat.countMode === "api" ? "" : "≈ "}Auto compact <span aria-hidden>⌄</span></span></summary>
+        <summary><span>{t("Context")} {compactNumber(context)} / {compactNumber(contextBudget)}</span><span className="muted">{view?.chat.countMode === "api" ? "" : "≈ "}{t("Auto compact")} <span aria-hidden>⌄</span></span></summary>
         <progress max={contextBudget} value={Math.min(context, contextBudget)} aria-label="Context usage" />
         <div className="chat-usage muted">Input {number(usage?.inputTokens)} · Output {number(usage?.outputTokens)} · Cached {number(usage?.cachedTokens)}{usage?.compactions ? ` · ${usage.compactions} compacts` : ""}
           {id && <button type="button" disabled={active || busy || readOnly || !messages.length} onClick={compact}>Compact now</button>}
@@ -291,19 +290,19 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
           <summary>{row.items.length} {row.items.length === 1 ? "step" : "steps"}{row.items.some(a => a.status === "failed") ? ` · ${row.items.filter(a => a.status === "failed").length} couldn't complete` : " completed"}</summary>
           <div>{row.items.map(a => <ActionCard key={a.id} action={a} busy={busy} decide={decide} agents={agents} tasks={tasks} credentials={index?.credentials ?? []} />)}</div>
         </details> : <article key={row.item.id} className={`chat-message chat-${row.item.role}`}>
-          <div className="chat-message-label">{row.item.role === "user" ? "You" : row.item.role === "notice" ? "Update" : assistantName}{row.item.partial && <span className="muted"> · partial response</span>}</div>
+          <div className="chat-message-label">{row.item.role === "user" ? t("You") : row.item.role === "notice" ? t("Update") : assistantName}{row.item.partial && <span className="muted"> · {t("partial response")}</span>}</div>
           <ChatText text={row.item.text} />
         </article>)}
-        {view?.run?.partialText && <article className="chat-message chat-assistant"><div className="chat-message-label">{assistantName} · writing</div><ChatText text={view.run.partialText} /></article>}
+        {view?.run?.partialText && <article className="chat-message chat-assistant"><div className="chat-message-label">{assistantName} · {t("writing")}</div><ChatText text={view.run.partialText} /></article>}
         {active && <div className="chat-working" role="status">{actionable.length ? "Waiting for your confirmation above" : `Working · step ${view?.run?.rounds ?? 0} of ${config?.maxTurns ?? 5}`}</div>}
         {view?.run?.error && <div className="chat-error" role="status">{view.run.error}</div>}
       </div>
       {error && <div className="chat-error" role="alert">{error}</div>}
       <form className="owner-chat-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
-        <textarea ref={composer} aria-label={`Message ${assistantName}`} placeholder={readOnly ? "Restore this chat to continue…" : config ? subject ? `Ask ${assistantName} or discuss an idea…` : "Ask or give an instruction for this world…" : "Add an API key to start…"} value={draft} rows={2} maxLength={50000} disabled={!config || readOnly} onChange={e => setDraft(e.target.value)}
+        <textarea ref={composer} aria-label={`Message ${assistantName}`} placeholder={readOnly ? "Restore this chat to continue…" : config ? subject ? `Ask ${assistantName} or discuss an idea…` : t("Ask or give an instruction for this world…") : "Add an API key to start…"} value={draft} rows={2} maxLength={50000} disabled={!config || readOnly} onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && window.matchMedia("(min-width: 701px)").matches) { e.preventDefault(); if (!busy && !active) void send(); } }} />
         <div className="chat-send-row"><small className="muted">{config ? modelLabel(config.model) : "Choose a model"}{config?.effort ? ` · ${config.effort}` : ""}</small>
-          {active ? <button type="button" disabled={busy} onClick={() => execute(async () => { await api("POST", `${base}/${id}/stop`); await refresh(id!); })}>Stop</button> : <button type="submit" className="primary" disabled={busy || readOnly || !draft.trim() || !config}>{busy ? "Sending…" : "Send ↑"}</button>}
+          {active ? <button type="button" disabled={busy} onClick={() => execute(async () => { await api("POST", `${base}/${id}/stop`); await refresh(id!); })}>{t("Stop")}</button> : <button type="submit" className="primary" disabled={busy || readOnly || !draft.trim() || !config}>{busy ? t("Sending…") : `${t("Send")} ↑`}</button>}
         </div>
       </form>
     </div>

@@ -50,6 +50,7 @@ export function useOffice(signedIn: boolean, onEvent?: (e: AgentEvent) => void) 
           const snap = await api<Snapshot>("GET", "/api/office/snapshot");
           skew.current = Date.now() - new Date(snap.serverTime).getTime();
           setSnapshot(snap);
+          setFeed((f) => (f.length ? f : snap.recent ?? []));
           setStatus("live");
           first = false;
           await streamEvents(

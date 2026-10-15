@@ -7,6 +7,8 @@ import { OrgEditor } from "./OrgEditor.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
 import { OwnerChatDialog, type ChatTarget } from "./OwnerChat.tsx";
 import { ConversationsSection } from "./Conversations.tsx";
+import { NeedsYou } from "./Inbox.tsx";
+import { lang, setLang, t } from "./i18n.ts";
 import { UsersDialog } from "./Users.tsx";
 import { HttpError, api, setOrg } from "./api.ts";
 import type { Flight } from "./office3d/scene.ts";
@@ -17,26 +19,26 @@ import { STRUCTURAL, useOffice } from "./store.ts";
 import type { Account, AgentEvent, Catalog, Me } from "./types.ts";
 import { Menu, type MenuItem, Modal, StatusPill, ago } from "./ui.tsx";
 
+/** One line of plain text from a Markdown report. */
+const plain = (md: string) => md.replace(/```[\s\S]*?```/g, " ").replace(/[*_`#>|]+/g, "").replace(/\s+/g, " ").trim().slice(0, 160);
+
+/** What the Activity list says about an event; events not listed here are too low-level to show. */
 const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null) => string) => string> = {
-  "agent.spawned": (e, n) => `${n(e.agentId)} joined as ${e.payload.jobRole}${e.payload.reportsTo ? ` under ${n(e.payload.reportsTo)}` : ""}`,
-  "agent.active": (e, n) => `${n(e.agentId)}'s runtime is ready`,
-  "task.created": (e, n) => `${e.payload.createdBy?.startsWith("agent:") ? n(e.payload.createdBy.slice(6)) : "A person"} → ${n(e.agentId)}: ${e.payload.title}`,
-  "task.status": (e, n) => `${e.payload.title} · ${e.payload.from} → ${e.payload.to}${e.agentId ? ` (${n(e.agentId)})` : ""}`,
-  "run.started": (e, n) => `${n(e.agentId)} started ${e.payload.title} (attempt ${e.payload.attempt}, g${e.payload.generation})`,
-  "run.finished": (e, n) => `${n(e.agentId)} finished: ${e.payload.outcome}${e.payload.summary ? ` — ${e.payload.summary}` : ""}`,
-  "run.lost": (e, n) => `${n(e.agentId)} lost a run: ${e.payload.why}`,
-  "artifact.created": (e, n) => `${n(e.agentId)} delivered ${e.payload.name}`,
-  "runtime.state": (e, n) => `${n(e.agentId)} runtime: ${e.payload.state}${e.payload.detail ? ` (${e.payload.detail})` : ""}`,
-  "runtime.generation": (e, n) => `${n(e.agentId)} runtime replaced → g${e.payload.generation}`,
-  "work.state": (e, n) => `${n(e.agentId)} is ${e.payload.state}${e.payload.detail ? `: ${e.payload.detail}` : ""}`,
-  "terminal.opened": (e, n) => `terminal opened on ${n(e.agentId)} by ${e.payload.actor}`,
-  "terminal.closed": (e, n) => `terminal on ${n(e.agentId)} closed: ${e.payload.reason}`,
-  "grant.created": (e, n) => `${n(e.agentId)} received ${e.payload.action}`,
-  "grant.revoked": (e, n) => `${n(e.agentId)} lost ${e.payload.action}`,
-  "agent.configured": (e, n) => `${n(e.agentId)} now uses ${e.payload.model ?? "the default model"}${e.payload.effort ? ` (${e.payload.effort})` : ""}`,
-  "credential.created": (e) => `API key "${e.payload.name}" added (${e.payload.models} models)`,
-  "credential.revoked": () => `an API key was revoked`,
-  "user.created": (e) => `${e.payload.displayName} was invited`,
+  "agent.spawned": (e, n) => t("{name} joined as {role}", { name: n(e.agentId), role: e.payload.jobRole }),
+  "task.created": (e, n) => t("{from} → {to}: {title}", { from: e.payload.createdBy?.startsWith("agent:") ? n(e.payload.createdBy.slice(6)) : t("A person"), to: n(e.agentId), title: e.payload.title }),
+  "task.status": (e) => t("{title}: {from} → {to}", { title: e.payload.title, from: t(String(e.payload.from).replace("_", " ")), to: t(String(e.payload.to).replace("_", " ")) }),
+  "run.started": (e, n) => t("{name} started {title}", { name: n(e.agentId), title: e.payload.title }),
+  "run.finished": (e, n) => t("{name} finished: {outcome}", { name: n(e.agentId), outcome: t(e.payload.outcome) }) + (e.payload.summary ? ` — ${plain(String(e.payload.summary))}` : ""),
+  "run.lost": (e, n) => t("{name} lost a run: {why}", { name: n(e.agentId), why: e.payload.why }),
+  "artifact.created": (e, n) => t("{name} delivered {file}", { name: n(e.agentId), file: e.payload.name }),
+  "agent.configured": (e, n) => t("{name} now uses {model}", { name: n(e.agentId), model: e.payload.model ?? t("the default model") }),
+  "agent.team": (e, n) => t("{name} moved to team {team}", { name: n(e.agentId), team: e.payload.teamId }),
+  "agent.retired": (e, n) => t("{name} retired", { name: n(e.agentId) }),
+  "grant.created": (e, n) => t("{name} received {action}", { name: n(e.agentId), action: e.payload.action }),
+  "grant.revoked": (e, n) => t("{name} lost {action}", { name: n(e.agentId), action: e.payload.action }),
+  "credential.created": (e) => t("API key \"{name}\" added", { name: e.payload.name }),
+  "credential.revoked": () => t("An API key was revoked"),
+  "user.created": (e) => t("{name} was invited", { name: e.payload.displayName }),
 };
 
 // Tokens used to live in localStorage; the session is an HttpOnly cookie now.
@@ -189,26 +191,27 @@ function OrgApp({
     if (status === "unauthorized") onLost();
   }, [status]);
 
-  // "Needs you": work this person asked for that is now waiting for review.
-  const mine = me ? `human:${me.actor.id}` : "";
-  const reviewTasks = useMemo(() => (snapshot?.tasks ?? []).filter((t) => t.status === "review" && t.createdBy === mine), [snapshot?.tasks, mine]);
-  const needsOwner = useMemo(() => new Set(reviewTasks.flatMap((t) => (t.assigneeAgentId ? [t.assigneeAgentId] : []))), [reviewTasks]);
+  // "Needs you": agents whose proposals wait for this person (a "?" over their head).
+  const [needsOwner, setNeedsOwner] = useState<Set<string>>(new Set());
+  const inboxKey = useMemo(() => feed.filter((e) => /^(task\.status|proposal|run\.finished)/.test(e.type)).length, [feed]);
 
-  if (!me) return <div className="center muted">Loading…</div>;
-  if (!snapshot) return <div className="center muted">Connecting to the office…</div>;
+  if (!me) return <div className="center muted">{t("Loading…")}</div>;
+  if (!snapshot) return <div className="center muted">{t("Connecting to the office…")}</div>;
 
   // Everything an owner or admin manages lives in one menu, so the bar stays calm.
   const manageItems: MenuItem[] = [
-    ...(me.actor.owner ? [{ label: "Organization", hint: "departments, jobs, permissions, templates", onSelect: () => setShowOrg(true) }] : []),
-    ...(me.can["user.manage"] ? [{ label: "People", hint: "invite, roles, permissions", onSelect: () => setShowUsers(true) }] : []),
-    ...(me.can["credential.manage"] ? [{ label: "API keys", hint: "LLM providers for agents", onSelect: () => setShowKeys(true) }] : []),
-    ...(me.can["org.design"] ? [{ label: "Art", hint: "3D models and textures", onSelect: () => setShowAssets(true) }] : []),
-    ...(me.can["audit.view"] ? [{ label: "Audit log", hint: "who did what, allowed or denied", onSelect: () => setShowAudit(true) }] : []),
-    ...(account.user?.admin ? [{ label: "All organizations", hint: "instance admin", onSelect: () => setShowAdmin(true) }] : []),
+    ...(me.actor.owner ? [{ label: t("Organization"), hint: t("departments, teams, jobs, permissions"), onSelect: () => setShowOrg(true) }] : []),
+    ...(me.can["user.manage"] ? [{ label: t("People"), hint: t("invite, roles, permissions"), onSelect: () => setShowUsers(true) }] : []),
+    ...(me.can["credential.manage"] ? [{ label: t("API keys"), hint: t("model providers for agents"), onSelect: () => setShowKeys(true) }] : []),
+    ...(me.can["org.design"] ? [{ label: t("Art"), hint: t("3D models and textures"), onSelect: () => setShowAssets(true) }] : []),
+    ...(me.can["audit.view"] ? [{ label: t("Audit log"), hint: t("who did what, allowed or denied"), onSelect: () => setShowAudit(true) }] : []),
+    ...(account.user?.admin ? [{ label: t("All organizations"), hint: t("instance admin"), onSelect: () => setShowAdmin(true) }] : []),
   ];
   const name = (id: string | null) => snapshot.agents.find((a) => a.id === id)?.displayName ?? id ?? "—";
   const active = snapshot.agents.filter((a) => a.lifecycleState !== "retired");
   const working = active.filter((a) => ["thinking", "executing", "waiting"].includes(effectiveWork(a))).length;
+
+  const openAgentChat = (id: string) => setEntityChat({ type: "agent", id, name: snapshot.agents.find((a) => a.id === id)!.displayName });
 
   return (
     <div className={`app${me.actor.owner ? " has-owner-chat" : ""}`}>
@@ -218,7 +221,7 @@ function OrgApp({
             ▦
           </span>
           {account.orgs.length > 1 ? (
-            <select className="org-switch" value={orgId} onChange={(e) => onSwitch(e.target.value)} aria-label="Organization">
+            <select className="org-switch" value={orgId} onChange={(e) => onSwitch(e.target.value)} aria-label={t("Organization")}>
               {account.orgs.map((o) => (
                 <option key={o.id} value={o.id}>
                   {o.name}
@@ -229,31 +232,47 @@ function OrgApp({
             <span className="org-name">{snapshot.organization.name}</span>
           )}
         </div>
-        <div className={`conn conn-${status}`} title={`event cursor ${snapshot.cursor}`}>
+        <div className={`conn conn-${status}`} title={status === "live" ? t("{n} agents · {w} working", { n: active.length, w: working }) : undefined}>
           <span className="dot" aria-hidden />
-          {status === "live" ? "Live" : status === "reconnecting" ? "Reconnecting…" : "Connecting…"}
+          <span className="conn-label">{status === "live" ? t("Live") : status === "reconnecting" ? t("Reconnecting…") : t("Connecting…")}</span>
         </div>
-        <div className="stats">
-          <b>{active.length}</b> agents · <b>{working}</b> working
-        </div>
+        <div className="stats">{t("{n} agents · {w} working", { n: active.length, w: working })}</div>
         <div className="spacer" />
         <div className="seg-toggle" role="group" aria-label="View">
           <button type="button" className={view === "office" ? "active" : ""} onClick={() => setView("office")}>
-            Office
+            {t("Office")}
           </button>
           <button type="button" className={view === "table" ? "active" : ""} onClick={() => setView("table")}>
-            Table
+            {t("Table")}
           </button>
         </div>
         <div className="task-actions">
-        {me.taskTargets.length > 0 && (
-          <button type="button" className="primary new-task" onClick={() => setNewTaskFor(null)}>
-            + New task
-          </button>
-        )}
-        {me.actor.owner && <button type="button" className="owner-chat-button" onClick={() => setShowOwnerChat(true)}>✦ Owner chat</button>}
+          {me.taskTargets.length > 0 && (
+            <button type="button" className="primary new-task" onClick={() => setNewTaskFor(selected && me.taskTargets.includes(selected) ? selected : null)}>
+              {t("+ New task")}
+            </button>
+          )}
+          {me.actor.owner && (
+            <button type="button" className="owner-chat-button" onClick={() => setShowOwnerChat(true)} aria-label={t("✦ Owner chat")}>
+              <span aria-hidden>✦</span>
+              <span className="btn-text">{t("✦ Owner chat").replace(/^✦ /, "")}</span>
+            </button>
+          )}
         </div>
-        {manageItems.length > 0 && <Menu label="Manage" trigger={<>Manage ▾</>} items={manageItems} />}
+        {manageItems.length > 0 && (
+          <Menu
+            label={t("Manage")}
+            trigger={
+              <>
+                <span className="btn-icon" aria-hidden>
+                  ☰
+                </span>
+                <span className="btn-text">{t("Manage")} ▾</span>
+              </>
+            }
+            items={manageItems}
+          />
+        )}
         <Menu
           label="Account"
           trigger={
@@ -268,18 +287,21 @@ function OrgApp({
             <>
               <b>{me.user?.displayName ?? me.actor.id}</b>
               <small>
-                {[me.actor.owner ? "Owner" : "Member", account.user?.admin ? "Instance admin" : null].filter(Boolean).join(" · ")} of {snapshot.organization.name}
+                {[me.actor.owner ? t("Owner") : t("Member"), account.user?.admin ? t("Instance admin") : null].filter(Boolean).join(" · ")} {t("of {org}", { org: snapshot.organization.name })}
               </small>
             </>
           }
-          items={[{ label: "Sign out", onSelect: onSignOut, danger: true }]}
+          items={[
+            { label: t("Language: English"), hint: t("Switch to Vietnamese"), onSelect: () => setLang(lang === "vi" ? "en" : "vi") },
+            { label: t("Sign out"), onSelect: onSignOut, danger: true },
+          ]}
         />
       </header>
 
       <main className={`main${selected && !worldEditing ? " panel-open" : ""}`}>
         <section className={`stage view-${view}`}>
           {view === "office" ? (
-            <Suspense fallback={<div className="center muted">Loading the office…</div>}>
+            <Suspense fallback={<div className="center muted">{t("Loading the office…")}</div>}>
               <Office3D
                 snapshot={snapshot}
                 workOf={effectiveWork}
@@ -298,15 +320,14 @@ function OrgApp({
               />
             </Suspense>
           ) : (
-            <AgentTable snapshot={snapshot} workOf={effectiveWork} now={now} onSelect={setSelected} selected={selected} onObjectChat={me.actor.owner ? setEntityChat : undefined} onChat={me.actor.owner ? id => setEntityChat({ type: "agent", id, name: snapshot.agents.find(a => a.id === id)!.displayName }) : undefined} />
+            <AgentTable snapshot={snapshot} workOf={effectiveWork} now={now} onSelect={setSelected} selected={selected} onChat={me.actor.owner ? openAgentChat : undefined} />
           )}
-          {view === "office" && me.actor.owner && <WorldObjectChats snapshot={snapshot} onChat={setEntityChat} />}
-          <Legend />
+          {view === "office" && <Legend />}
         </section>
 
         {worldEditing ? null : selected ? (
           <AgentPanel
-            onChat={me.actor.owner ? () => setEntityChat({ type: "agent", id: selected, name: snapshot.agents.find(a => a.id === selected)!.displayName }) : undefined}
+            onChat={me.actor.owner ? () => openAgentChat(selected) : undefined}
             agentId={selected}
             snapshot={snapshot}
             catalog={catalog}
@@ -319,27 +340,10 @@ function OrgApp({
           />
         ) : (
           <aside className="panel side">
-            <section>
-              <h3>Needs you {reviewTasks.length > 0 && <span className="count">{reviewTasks.length}</span>}</h3>
-              {reviewTasks.length === 0 ? (
-                <p className="muted small">Nothing waiting for your review.</p>
-              ) : (
-                <ul className="task-list">
-                  {reviewTasks.map((t) => (
-                    <li key={t.id}>
-                      <button type="button" className="task-row" onClick={() => setOpenTask(t.id)}>
-                        <StatusPill state="review" />
-                        <span className="task-title">{t.title}</span>
-                        <span className="muted small">{name(t.assigneeAgentId)}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+            <NeedsYou snapshot={snapshot} now={now} refreshKey={inboxKey} onOpenTask={setOpenTask} onAgents={setNeedsOwner} />
             <ConversationsSection snapshot={snapshot} now={now} onOpenTask={setOpenTask} onChat={me.actor.owner ? setEntityChat : undefined} />
             <section className="feed-section">
-              <h3>Activity</h3>
+              <h3>{t("Activity")}</h3>
               <ul className="feed">
                 {feed
                   .filter((e) => EVENT_TEXT[e.type])
@@ -351,7 +355,7 @@ function OrgApp({
                       </button>
                     </li>
                   ))}
-                {feed.length === 0 && <li className="muted small">Live events will appear here. Click a person to open their desk.</li>}
+                {!feed.some((e) => EVENT_TEXT[e.type]) && <li className="muted small">{t("Nothing has happened yet. Click a person to open their desk.")}</li>}
               </ul>
             </section>
           </aside>
@@ -403,64 +407,57 @@ function OrgApp({
   );
 }
 
-function AgentTable({ snapshot, workOf, now, onSelect, selected, onChat, onObjectChat }: { onObjectChat?: (target: ChatTarget) => void; onChat?: (id: string) => void; snapshot: NonNullable<ReturnType<typeof useOffice>["snapshot"]>; workOf: ReturnType<typeof useOffice>["effectiveWork"]; now: number; onSelect: (id: string) => void; selected: string | null }) {
+function AgentTable({ snapshot, workOf, now, onSelect, selected, onChat }: { onChat?: (id: string) => void; snapshot: NonNullable<ReturnType<typeof useOffice>["snapshot"]>; workOf: ReturnType<typeof useOffice>["effectiveWork"]; now: number; onSelect: (id: string) => void; selected: string | null }) {
   const name = (id: string | null) => snapshot.agents.find((a) => a.id === id)?.displayName ?? "—";
+  const teamName = (id: string) => snapshot.teams.find((x) => x.id === id)?.name ?? id;
+  // Grouped by team, the way the work is organized.
+  const rows = snapshot.agents
+    .filter((a) => a.lifecycleState !== "retired")
+    .sort((a, b) => teamName(a.teamId).localeCompare(teamName(b.teamId)) || a.displayName.localeCompare(b.displayName));
   return (
     <div className="table-wrap">
       <table className="grid agents">
         <thead>
           <tr>
-            <th>Agent</th>
-            <th>Role</th>
-            <th>Department</th>
-            <th>Team</th>
-            <th>Reports to</th>
-            <th>Work</th>
-            <th>Runtime</th>
-            <th>Heartbeat</th>
+            <th>{t("Agent")}</th>
+            <th>{t("Role")}</th>
+            <th>{t("Team")}</th>
+            <th>{t("Reports to")}</th>
+            <th>{t("Work")}</th>
+            <th>{t("Heartbeat")}</th>
           </tr>
         </thead>
         <tbody>
-          {snapshot.agents
-            .filter((a) => a.lifecycleState !== "retired")
-            .map((a) => (
+          {rows.map((a) => {
+            const dept = snapshot.departments.find((d) => d.id === a.departmentId)?.name;
+            const team = teamName(a.teamId);
+            return (
               <tr key={a.id} className={selected === a.id ? "selected" : ""} onClick={() => onSelect(a.id)} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onSelect(a.id)}>
-                <td>
-                  <strong>{a.displayName}</strong>{onChat && <button type="button" className="agent-chat-shortcut" aria-label={`Chat with ${a.displayName}`} onClick={e => { e.stopPropagation(); onChat(a.id); }} onKeyDown={e => e.stopPropagation()}>Chat</button>} <code className="muted small agent-id">{a.id}</code>
+                <td title={a.id}>
+                  <strong>{a.displayName}</strong>
+                  {onChat && (
+                    <button type="button" className="agent-chat-shortcut" aria-label={t("Chat with {name}", { name: a.displayName })} onClick={(e) => { e.stopPropagation(); onChat(a.id); }} onKeyDown={(e) => e.stopPropagation()}>
+                      {t("Chat")}
+                    </button>
+                  )}
                 </td>
-                <td>{a.jobRole}</td>
-                <td>{snapshot.departments.find((d) => d.id === a.departmentId)?.name}</td>
-                <td data-label="Team">{snapshot.teams.find((t) => t.id === a.teamId)?.name ?? a.teamId} <span className="muted small">{a.resources.cpu}m · {a.resources.memory}Mi</span></td>
-                <td>{name(a.reportsToAgentId)}</td>
-                <td data-label="Work">
+                <td data-label={t("Role")}>{a.jobRole}</td>
+                <td data-label={t("Team")}>
+                  {team}
+                  {dept && dept !== team && <span className="muted small"> · {dept}</span>}
+                </td>
+                <td data-label={t("Reports to")}>{name(a.reportsToAgentId)}</td>
+                <td data-label={t("Work")}>
                   <StatusPill state={workOf(a)} /> <span className="muted small">{a.work.detail}</span>
                 </td>
-                <td data-label="Runtime">
-                  <StatusPill state={a.runtime?.state ?? "none"} /> <span className="muted small">g{a.runtime?.generation}</span>
-                </td>
-                <td className="muted small">{ago(a.lastHeartbeatAt, now)}</td>
+                <td className="muted small" data-label={t("Heartbeat")}>{ago(a.lastHeartbeatAt, now)}</td>
               </tr>
-            ))}
+            );
+          })}
         </tbody>
       </table>
-      {onObjectChat && <WorldObjectChats snapshot={snapshot} onChat={onObjectChat} />}
     </div>
   );
-}
-
-function WorldObjectChats({ snapshot, onChat }: { snapshot: NonNullable<ReturnType<typeof useOffice>["snapshot"]>; onChat: (target: ChatTarget) => void }) {
-  if (!snapshot.world?.objects.length) return null;
-  return <section className="world-object-chats" aria-label="Object conversations">
-            <details><summary>Chat with objects & animals <span className="count">{snapshot.world.objects.length}</span></summary>
-              <div className="world-object-chat-list">{snapshot.world.objects.map((o, i) => {
-                const kind = snapshot.world!.kinds[o.kind]!;
-                const room = snapshot.world!.floors.flatMap(f => f.rooms).find(r => r.id === o.room);
-                return <button type="button" key={o.id ?? i} disabled={!o.id} onClick={() => onChat({ type: "object", id: o.id!, name: o.label || kind.name })}>
-                  <strong>{o.label || kind.name}</strong><span className="muted small">{o.title || kind.title || kind.category} · {room?.name}</span><span>Chat →</span>
-                </button>;
-              })}</div>
-            </details>
-          </section>;
 }
 
 function AuditDialog({ onClose, now }: { onClose: () => void; now: number }) {
@@ -471,9 +468,9 @@ function AuditDialog({ onClose, now }: { onClose: () => void; now: number }) {
   }, []);
   const shown = (rows ?? []).filter((r) => !onlyDenied || !r.allowed);
   return (
-    <Modal title="Audit log" onClose={onClose} wide>
+    <Modal title={t("Audit log")} onClose={onClose} wide>
       <label className="small">
-        <input type="checkbox" checked={onlyDenied} onChange={(e) => setOnlyDenied(e.target.checked)} /> Denials only
+        <input type="checkbox" checked={onlyDenied} onChange={(e) => setOnlyDenied(e.target.checked)} /> {t("Denials only")}
       </label>
       <div className="table-wrap">
         <table className="grid mobile-cards">
@@ -513,19 +510,19 @@ function Legend() {
   return (
     <div className="legend" aria-label="Legend">
       <span>
-        <i className="sw sw-good" /> runtime up
+        <i className="sw sw-good" /> {t("runtime up")}
       </span>
       <span>
-        <i className="sw sw-warn" /> starting
+        <i className="sw sw-warn" /> {t("starting")}
       </span>
       <span>
-        <i className="sw sw-bad" /> failed
+        <i className="sw sw-bad" /> {t("failed")}
       </span>
-      <span>… thinking</span>
-      <span>⌛ waiting</span>
-      <span>! blocked</span>
-      <span>? needs you</span>
-      <span>empty chair = offline</span>
+      <span>{t("… thinking")}</span>
+      <span>{t("⌛ waiting")}</span>
+      <span>{t("! blocked")}</span>
+      <span>{t("? needs you")}</span>
+      <span>{t("empty chair = offline")}</span>
     </div>
   );
 }

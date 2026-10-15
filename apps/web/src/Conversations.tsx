@@ -3,20 +3,21 @@ import { api } from "./api.ts";
 import type { ChatTarget } from "./OwnerChat.tsx";
 import type { FeedItem, FeedKind, Snapshot, TeamMessage } from "./types.ts";
 import { Modal, StatusPill, ago } from "./ui.tsx";
+import { t } from "./i18n.ts";
 
 type Filter = "you" | "team" | "other";
 
 const FILTERS: Array<{ id: Filter; label: string; hint: string }> = [
-  { id: "you", label: "Bạn", hint: "Trò chuyện giữa bạn và từng người, đồ vật" },
-  { id: "team", label: "Team", hint: "Trò chuyện trong mỗi team" },
-  { id: "other", label: "Khác", hint: "Tự hỏi, đề xuất, tool và các hoạt động khác" },
+  { id: "you", label: "You", hint: "Your conversations with each person and object" },
+  { id: "team", label: "Team", hint: "Conversations inside each team" },
+  { id: "other", label: "Other", hint: "Self-talk, proposals, tools and everything else" },
 ];
 
 const OTHER: Array<{ kind: FeedKind; label: string; hint: string }> = [
-  { kind: "self", label: "Tự hỏi", hint: "Agent tự suy nghĩ khi làm việc" },
-  { kind: "proposal", label: "Đề xuất", hint: "Chờ duyệt, review, thay đổi cấu hình" },
-  { kind: "tool", label: "Tool", hint: "Lệnh và hành động agent đã gọi" },
-  { kind: "event", label: "Sự kiện", hint: "Giao việc, hoàn thành, runtime" },
+  { kind: "self", label: "Thinking", hint: "Agents reasoning while they work" },
+  { kind: "proposal", label: "Proposals", hint: "Waiting for approval, reviews, configuration changes" },
+  { kind: "tool", label: "Tools", hint: "Commands and actions agents ran" },
+  { kind: "event", label: "Events", hint: "Assignments, results, runtimes" },
 ];
 
 const FILTER_KEY = "agentown.conversations.filter";
@@ -45,16 +46,16 @@ export function ConversationsSection({ snapshot, onChat, onOpenTask, now }: { sn
   return (
     <section className="conversations">
       <div className="conv-head">
-        <h3>Hội thoại</h3>
-        <select value={filter} onChange={(e) => choose(e.target.value as Filter)} aria-label="Lọc hội thoại">
+        <h3>{t("Conversations")}</h3>
+        <select value={filter} onChange={(e) => choose(e.target.value as Filter)} aria-label={t("Filter conversations")}>
           {FILTERS.map((f) => (
             <option key={f.id} value={f.id}>
-              {f.label}
+              {t(f.label)}
             </option>
           ))}
         </select>
       </div>
-      <p className="muted small">{FILTERS.find((f) => f.id === filter)!.hint}</p>
+      <p className="muted small">{t(FILTERS.find((f) => f.id === filter)!.hint)}</p>
       <ul className="conv-list">
         {filter === "you" &&
           (onChat ? (
@@ -79,7 +80,7 @@ export function ConversationsSection({ snapshot, onChat, onOpenTask, now }: { sn
                       <span className="conv-avatar object" aria-hidden>◆</span>
                       <span className="conv-main">
                         <b>{o.label || kind?.name}</b>
-                        <span className="muted small">{o.title || kind?.title || kind?.category || "object"}</span>
+                        <span className="muted small">{o.title || kind?.title || kind?.category || t("object")}</span>
                       </span>
                     </button>
                   </li>
@@ -87,20 +88,20 @@ export function ConversationsSection({ snapshot, onChat, onOpenTask, now }: { sn
               })}
             </>
           ) : (
-            <li className="muted small">Chỉ owner mới trò chuyện riêng với người và đồ vật.</li>
+            <li className="muted small">{t("Only the owner can chat privately with people and objects.")}</li>
           ))}
         {filter === "team" &&
-          teams.map((t) => (
-            <li key={t.id}>
-              <button type="button" className="conv-row" onClick={() => setTeam(t.id)}>
+          teams.map((tm) => (
+            <li key={tm.id}>
+              <button type="button" className="conv-row" onClick={() => setTeam(tm.id)}>
                 <span className="conv-avatar team" aria-hidden>#</span>
                 <span className="conv-main">
-                  <b>{t.name}</b>
+                  <b>{tm.name}</b>
                   <span className="muted small">
-                    {snapshot.departments.find((d) => d.id === t.departmentId)?.name} · {t.memberIds.length} người
+                    {snapshot.departments.find((d) => d.id === tm.departmentId)?.name} · {t("{n} people", { n: tm.memberIds.length })}
                   </span>
                 </span>
-                {t.runtime && <StatusPill state={t.runtime.state} />}
+                {tm.runtime && <StatusPill state={tm.runtime.state} />}
               </button>
             </li>
           ))}
@@ -108,10 +109,10 @@ export function ConversationsSection({ snapshot, onChat, onOpenTask, now }: { sn
           OTHER.map((o) => (
             <li key={o.kind}>
               <button type="button" className="conv-row" onClick={() => setOther(o.kind)}>
-                <span className={`conv-avatar kind-${o.kind}`} aria-hidden>{o.label.slice(0, 1)}</span>
+                <span className={`conv-avatar kind-${o.kind}`} aria-hidden>{t(o.label).slice(0, 1)}</span>
                 <span className="conv-main">
-                  <b>{o.label}</b>
-                  <span className="muted small">{o.hint}</span>
+                  <b>{t(o.label)}</b>
+                  <span className="muted small">{t(o.hint)}</span>
                 </span>
               </button>
             </li>
@@ -139,8 +140,8 @@ function TeamChatDialog({ teamId, snapshot, now, onClose }: { teamId: string; sn
       .catch((e) => setError((e as Error).message));
   useEffect(() => {
     void load();
-    const t = setInterval(load, 3000);
-    return () => clearInterval(t);
+    const timer = setInterval(load, 3000);
+    return () => clearInterval(timer);
   }, [teamId]);
   // Not an expression body: scrollIntoView returns a Promise in newer browsers, which React would call as a cleanup.
   useEffect(() => {
@@ -164,13 +165,13 @@ function TeamChatDialog({ teamId, snapshot, now, onClose }: { teamId: string; sn
   return (
     <Modal title={`Team · ${team?.name ?? teamId}`} onClose={onClose} wide className="team-chat">
       <p className="muted small">
-        {members.map((m) => m.displayName).join(", ") || "Chưa có ai"}
+        {members.map((m) => m.displayName).join(", ") || t("No one yet")}
         {team?.runtime && <> · runtime <StatusPill state={team.runtime.state} /> g{team.runtime.generation}{team.runtime.resources ? ` · ${team.runtime.resources.cpu}m / ${team.runtime.resources.memory}Mi` : ""}</>}
       </p>
       {error && <p className="error small">{error}</p>}
       <div className="team-messages" aria-live="polite">
-        {messages === null && <p className="muted">Đang tải…</p>}
-        {messages?.length === 0 && <p className="muted">Chưa có tin nhắn. Thành viên team nhắn ở đây bằng <code>agentown team say</code>.</p>}
+        {messages === null && <p className="muted">{t("Loading…")}</p>}
+        {messages?.length === 0 && <p className="muted">{t("No messages yet. Team members post here with `agentown team say`.")}</p>}
         {messages?.map((m) => (
           <div key={m.id} className={`team-msg${m.system ? " system" : ""}${m.author.kind === "human" ? " human" : ""}`}>
             <span className="team-msg-author">{m.author.name}</span>
@@ -181,9 +182,9 @@ function TeamChatDialog({ teamId, snapshot, now, onClose }: { teamId: string; sn
         <div ref={end} />
       </div>
       <form className="team-composer" onSubmit={send}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Nhắn cho team…" maxLength={4000} aria-label="Tin nhắn cho team" />
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={t("Message the team…")} maxLength={4000} aria-label={t("Message to the team")} />
         <button type="submit" className="primary" disabled={sending || !text.trim()}>
-          Gửi
+          {t("Send")}
         </button>
       </form>
     </Modal>
@@ -204,14 +205,14 @@ function FeedDialog({ kind, snapshot, now, onClose, onOpenTask }: { kind: FeedKi
         .then((r) => live && (setItems(r.items), setError(null)))
         .catch((e) => live && setError((e as Error).message));
     void load();
-    const t = setInterval(load, 5000);
+    const timer = setInterval(load, 5000);
     return () => {
       live = false;
-      clearInterval(t);
+      clearInterval(timer);
     };
   }, [kind, team, tick]);
   const decide = async (id: string, verdict: "approve" | "reject") => {
-    const note = verdict === "reject" ? prompt("Lý do từ chối (tuỳ chọn)") ?? "" : "";
+    const note = verdict === "reject" ? prompt(t("Reason for rejecting (optional)")) ?? "" : "";
     setBusy(id);
     try {
       await api("POST", `/api/proposals/${id}/decide`, { verdict, note });
@@ -222,14 +223,14 @@ function FeedDialog({ kind, snapshot, now, onClose, onOpenTask }: { kind: FeedKi
       setBusy(null);
     }
   };
-  const name = (id: string | null) => snapshot.agents.find((a) => a.id === id)?.displayName ?? (id ? id : "Bạn");
+  const name = (id: string | null) => snapshot.agents.find((a) => a.id === id)?.displayName ?? (id ? id : t("You"));
   return (
-    <Modal title={`Khác · ${label.label}`} onClose={onClose} wide className="feed-dialog">
+    <Modal title={`${t("Other")} · ${t(label.label)}`} onClose={onClose} wide className="feed-dialog">
       <div className="form-row">
-        <span className="muted small">{label.hint}</span>
+        <span className="muted small">{t(label.hint)}</span>
         <span className="spacer" />
         <select value={team} onChange={(e) => setTeam(e.target.value)} aria-label="Team">
-          <option value="">Mọi team</option>
+          <option value="">{t("All teams")}</option>
           {snapshot.teams.filter((t) => t.memberIds.length).map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
@@ -238,8 +239,8 @@ function FeedDialog({ kind, snapshot, now, onClose, onOpenTask }: { kind: FeedKi
         </select>
       </div>
       {error && <p className="error small">{error}</p>}
-      {items === null && <p className="muted">Đang tải…</p>}
-      {items?.length === 0 && <p className="muted">Chưa có gì.</p>}
+      {items === null && <p className="muted">{t("Loading…")}</p>}
+      {items?.length === 0 && <p className="muted">{t("Nothing yet.")}</p>}
       <ul className="feed other-feed">
         {items?.map((i) => (
           <li key={i.id} className={i.canDecide ? "decidable" : ""}>
@@ -252,10 +253,10 @@ function FeedDialog({ kind, snapshot, now, onClose, onOpenTask }: { kind: FeedKi
             {i.canDecide && i.proposalId && (
               <div className="btn-row decide-row">
                 <button type="button" className="primary" disabled={busy === i.proposalId} onClick={() => void decide(i.proposalId!, "approve")}>
-                  Duyệt
+                  {t("Approve")}
                 </button>
                 <button type="button" disabled={busy === i.proposalId} onClick={() => void decide(i.proposalId!, "reject")}>
-                  Từ chối
+                  {t("Reject")}
                 </button>
               </div>
             )}

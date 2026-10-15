@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { t as tr } from "./i18n.ts";
 import { api, orgPath } from "./api.ts";
 import { Modal } from "./ui.tsx";
 
@@ -60,7 +61,7 @@ export function AssetsDialog({ onClose, notify }: { onClose: () => void; notify:
     await reload();
   };
   return (
-    <Modal title="Art assets" onClose={onClose} wide>
+    <Modal title={tr("Art assets")} onClose={onClose} wide>
       <p className="muted small">
         Models must be self-contained binary glTF (<code>.glb</code>, up to 20 MB, no Draco compression); textures PNG, JPEG or WebP (up to 4 MB). Use them in the world editor: a
         kind's look, or a room's floor and walls. {mb(usage.used)} of {mb(usage.quota)} used.

@@ -2,6 +2,8 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { api } from "./api.ts";
 import { requestId } from "./requestId.ts";
 import { AgentConfigForm } from "./Credentials.tsx";
+import { ReportText } from "./Markdown.tsx";
+import { t } from "./i18n.ts";
 import type { Agent, AgentDetail, Catalog, Credential, Snapshot, Team, WorkState } from "./types.ts";
 import { ago, describeScope, StatusPill } from "./ui.tsx";
 
@@ -9,6 +11,7 @@ import { ago, describeScope, StatusPill } from "./ui.tsx";
 const Terminal = lazy(() => import("./Terminal.tsx").then((m) => ({ default: m.Terminal })));
 
 type Tab = "overview" | "tasks" | "logs" | "config" | "permissions" | "terminal";
+const TAB_LABEL: Record<Tab, string> = { overview: "Overview", tasks: "Tasks", logs: "Logs", config: "Config", permissions: "Permissions", terminal: "Terminal" };
 
 interface Props {
   agentId: string;
@@ -22,6 +25,9 @@ interface Props {
   onNewTask: (assignee: string) => void;
   notify: (msg: string, kind?: "error" | "info") => void;
 }
+
+const cpuText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(m % 1000 ? 1 : 0)} CPU` : `${m}m`);
+const memText = (mi: number) => (mi >= 1024 ? `${(mi / 1024).toFixed(mi % 1024 ? 1 : 0)} GiB` : `${mi} MiB`);
 
 export function AgentPanel(p: Props) {
   const agent = p.snapshot.agents.find((a) => a.id === p.agentId);
@@ -45,24 +51,31 @@ export function AgentPanel(p: Props) {
   const manager = p.snapshot.agents.find((a) => a.id === agent.reportsToAgentId);
   const reports = p.snapshot.agents.filter((a) => a.reportsToAgentId === agent.id && a.lifecycleState !== "retired");
   const dept = p.snapshot.departments.find((d) => d.id === agent.departmentId);
+  const team = p.snapshot.teams.find((x) => x.id === agent.teamId);
   const can = detail?.id === agent.id ? detail.can : {};
   // Only what this person may do is shown; the server re-checks every request anyway.
   const visibleTabs = (["overview", "tasks", "logs", "config", "permissions", "terminal"] as Tab[]).filter(
-    (t) => (t !== "logs" || can["runtime.logs"]) && (t !== "config" || can["agent.configure"]) && (t !== "terminal" || can["runtime.exec"]),
+    (x) => (x !== "logs" || can["runtime.logs"]) && (x !== "config" || can["agent.configure"]) && (x !== "terminal" || can["runtime.exec"]),
   );
   const shownTab = visibleTabs.includes(tab) ? tab : "overview";
+  // One plain sentence about anything unusual; the details stay in "Technical details".
+  const notes = [
+    agent.lifecycleState === "retired" && t("retired"),
+    !agent.acceptingWork && t("paused: not taking new work"),
+    agent.desiredRuntime === "stopped" && t("runtime stopped"),
+  ].filter(Boolean) as string[];
 
   const act = async (label: string, method: string, path: string, body?: unknown) => {
     try {
       await api(method, path, body);
-      p.notify(`${label}: requested`, "info");
+      p.notify(t("{label}: requested", { label }), "info");
     } catch (e) {
       p.notify(`${label}: ${(e as Error).message}`, "error");
     }
   };
 
   return (
-    <aside className="panel" aria-label={`${agent.displayName} details`}>
+    <aside className="panel" aria-label={agent.displayName}>
       <header className="panel-head">
         <div className="avatar" style={{ background: dept?.color }} aria-hidden>
           {agent.displayName.slice(0, 1)}
@@ -70,19 +83,26 @@ export function AgentPanel(p: Props) {
         <div className="panel-title">
           <h2>{agent.displayName}</h2>
           <div className="muted">
-            {agent.jobRole} · {dept?.name} · <code>{agent.id}</code>
+            {agent.jobRole} · {team?.name ?? dept?.name}
           </div>
         </div>
-        <button type="button" className="icon-btn" onClick={p.onClose} aria-label="Close panel">
+        <button type="button" className="icon-btn" onClick={p.onClose} aria-label={t("Close panel")}>
           ×
         </button>
       </header>
 
-      {p.onChat && <div className="agent-chat-entry"><button type="button" className="primary" onClick={p.onChat}>Chat with {agent.displayName}</button><span className="muted small">Questions, analysis & tasks</span></div>}
+      {p.onChat && (
+        <div className="agent-chat-entry">
+          <button type="button" className="primary" onClick={p.onChat}>
+            {t("Chat with {name}", { name: agent.displayName })}
+          </button>
+          <span className="muted small">{t("Questions, analysis & tasks")}</span>
+        </div>
+      )}
       <nav className="tabs" role="tablist">
-        {visibleTabs.map((t) => (
-          <button key={t} role="tab" aria-selected={shownTab === t} className={shownTab === t ? "active" : ""} onClick={() => setTab(t)}>
-            {t}
+        {visibleTabs.map((x) => (
+          <button key={x} role="tab" aria-selected={shownTab === x} className={shownTab === x ? "active" : ""} onClick={() => setTab(x)}>
+            {t(TAB_LABEL[x])}
           </button>
         ))}
       </nav>
@@ -91,69 +111,58 @@ export function AgentPanel(p: Props) {
         {shownTab === "overview" && (
           <>
             <section className="kv">
-              <div>Work</div>
+              <div>{t("Status")}</div>
               <div>
                 <StatusPill state={work} /> {agent.work.detail && <span className="muted">{agent.work.detail}</span>}
-                <div className="muted small">reported {ago(agent.work.updatedAt, p.now)} · heartbeat {ago(agent.lastHeartbeatAt, p.now)}</div>
+                <div className="muted small">{t("heartbeat {ago}", { ago: ago(agent.lastHeartbeatAt, p.now) })}</div>
+                {notes.length > 0 && <div className="warn-text small">{notes.join(" · ")}</div>}
               </div>
-              <div>Runtime</div>
-              <div>
-                <StatusPill state={agent.runtime?.state ?? "none"} /> <span className="muted">g{agent.runtime?.generation} · {agent.runtime?.presetId}</span>
-                {agent.runtime?.detail && <div className="muted small">{agent.runtime.detail}</div>}
-                <div className="muted small">
-                  {agent.runtime?.workloadRef ?? "no workload"} · observed {ago(agent.runtime?.observedAt ?? null, p.now)}
-                </div>
-              </div>
-              <div>Team</div>
+              <div>{t("Team")}</div>
               <div>
                 <TeamRow agent={agent} snapshot={p.snapshot} canMove={!!can["agent.update"]} canResize={!!can["runtime.control"]} notify={p.notify} />
               </div>
-              <div>Lifecycle</div>
+              <div>{t("Model")}</div>
               <div>
-                {agent.lifecycleState} · intake {agent.acceptingWork ? "open" : "paused"} · desired {agent.desiredRuntime}
+                {agent.config.model ?? <span className="muted">{t("default of its runtime")}</span>}
+                <div className="muted small">{detail?.credential ? t("key {name}", { name: detail.credential.name }) : t("no API key")}</div>
               </div>
-              <div>Model</div>
-              <div>
-                {agent.config.model ?? <span className="muted">template default</span>}
-                {detail?.credential && <span className="muted small"> · key {detail.credential.name} ({detail.credential.keyHint})</span>}
-              </div>
-              <div>Reports to</div>
-              <div>{manager ? `${manager.displayName} (${manager.jobRole})` : "— (top of org)"}</div>
-              <div>Direct reports</div>
-              <div>{reports.length ? reports.map((r) => r.displayName).join(", ") : "none"}</div>
+              <div>{t("Reports to")}</div>
+              <div>{manager ? `${manager.displayName} · ${manager.jobRole}` : <span className="muted">{t("top of the organization")}</span>}</div>
+              <div>{t("Direct reports")}</div>
+              <div>{reports.length ? reports.map((r) => r.displayName).join(", ") : <span className="muted">{t("no one")}</span>}</div>
             </section>
 
             {(can["task.create"] || can["runtime.control"]) && (
               <section className="actions">
-                <h3>Actions</h3>
+                <h3>{t("Actions")}</h3>
                 <div className="btn-row">
                   {can["task.create"] && (
-                    <button type="button" onClick={() => p.onNewTask(agent.id)}>
-                      Assign task
+                    <button type="button" className="primary" onClick={() => p.onNewTask(agent.id)}>
+                      {t("Assign task")}
                     </button>
                   )}
                   {can["runtime.control"] && (
                     <>
                       {agent.acceptingWork ? (
-                        <button type="button" onClick={() => act("Pause intake", "POST", `/api/agents/${agent.id}/pause`)}>
-                          Pause intake
+                        <button type="button" onClick={() => act(t("Pause intake"), "POST", `/api/agents/${agent.id}/pause`)}>
+                          {t("Pause intake")}
                         </button>
                       ) : (
-                        <button type="button" onClick={() => act("Resume intake", "POST", `/api/agents/${agent.id}/resume`)}>
-                          Resume intake
+                        <button type="button" onClick={() => act(t("Resume intake"), "POST", `/api/agents/${agent.id}/resume`)}>
+                          {t("Resume intake")}
                         </button>
                       )}
                       {agent.desiredRuntime === "running" ? (
-                        <button type="button" onClick={() => act("Stop runtime", "POST", `/api/agents/${agent.id}/runtime/stop`)}>
-                          Stop runtime
+                        <button type="button" onClick={() => act(t("Stop"), "POST", `/api/agents/${agent.id}/runtime/stop`)}>
+                          {t("Stop")}
                         </button>
                       ) : (
-                        <button type="button" onClick={() => act("Start runtime", "POST", `/api/agents/${agent.id}/runtime/start`)}>
-                          Start runtime
+                        <button type="button" onClick={() => act(t("Start"), "POST", `/api/agents/${agent.id}/runtime/start`)}>
+                          {t("Start")}
                         </button>
                       )}
-                      <button type="button" onClick={() => act("Replace runtime", "POST", `/api/agents/${agent.id}/runtime/restart`)}>
-                        Replace runtime
+                      <button type="button" onClick={() => act(t("Restart"), "POST", `/api/agents/${agent.id}/runtime/restart`)}>
+                        {t("Restart")}
                       </button>
                     </>
                   )}
@@ -164,6 +173,30 @@ export function AgentPanel(p: Props) {
             {detail?.id === agent.id && detail.spawnTemplates.length > 0 && p.catalog && (
               <SpawnForm manager={agent} catalog={p.catalog} teams={p.snapshot.teams} templates={detail.spawnTemplates} notify={p.notify} />
             )}
+
+            <details className="tech-details">
+              <summary>{t("Technical details")}</summary>
+              <dl>
+                <dt>ID</dt>
+                <dd>
+                  <code>{agent.id}</code>
+                </dd>
+                <dt>Runtime</dt>
+                <dd>
+                  <StatusPill state={agent.runtime?.state ?? "none"} /> g{agent.runtime?.generation} · {agent.runtime?.presetId}
+                  {agent.runtime?.detail && <div className="muted small">{agent.runtime.detail}</div>}
+                  <div className="muted small">
+                    {agent.runtime?.workloadRef ?? "—"} · {ago(agent.runtime?.observedAt ?? null, p.now)}
+                  </div>
+                </dd>
+                <dt>Lifecycle</dt>
+                <dd>
+                  {agent.lifecycleState} · intake {agent.acceptingWork ? "open" : "paused"} · desired {agent.desiredRuntime}
+                </dd>
+                <dt>Template</dt>
+                <dd>{agent.templateId}</dd>
+              </dl>
+            </details>
           </>
         )}
 
@@ -180,15 +213,13 @@ export function AgentPanel(p: Props) {
         )}
         {shownTab === "permissions" && detail && (
           <section>
-            <p className="muted small">
-              Effective rights come only from these grants, evaluated against the current reporting line. The job title grants nothing.
-            </p>
+            <p className="muted small">{t("Effective rights come only from these grants, evaluated against the current reporting line. The job title grants nothing.")}</p>
             <table className="grid mobile-cards">
               <thead>
                 <tr>
-                  <th>Action</th>
-                  <th>Scope</th>
-                  <th>Issuer</th>
+                  <th>{t("Action")}</th>
+                  <th>{t("Scope")}</th>
+                  <th>{t("Issuer")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -198,11 +229,13 @@ export function AgentPanel(p: Props) {
                       <code>{g.action}</code>
                       {g.delegable && <span className="tag">delegable</span>}
                     </td>
-                    <td data-label="Scope">
+                    <td data-label={t("Scope")}>
                       {describeScope(g.scope)}
                       {g.constraints.templates && <div className="muted small">templates: {g.constraints.templates.join(", ")}</div>}
                     </td>
-                    <td data-label="Issuer" className="muted small">{g.issuer}</td>
+                    <td data-label={t("Issuer")} className="muted small">
+                      {g.issuer}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -210,7 +243,7 @@ export function AgentPanel(p: Props) {
           </section>
         )}
         {shownTab === "terminal" && (
-          <Suspense fallback={<p className="muted">Loading terminal…</p>}>
+          <Suspense fallback={<p className="muted">{t("Loading terminal…")}</p>}>
             <Terminal agentId={agent.id} />
           </Suspense>
         )}
@@ -221,50 +254,79 @@ export function AgentPanel(p: Props) {
 
 /** The member's team, its shared runtime, and the share of it this member declared. */
 function TeamRow({ agent, snapshot, canMove, canResize, notify }: { agent: Agent; snapshot: Snapshot; canMove: boolean; canResize: boolean; notify: Props["notify"] }) {
-  const team = snapshot.teams.find((t) => t.id === agent.teamId);
+  const team = snapshot.teams.find((x) => x.id === agent.teamId);
   const [editing, setEditing] = useState(false);
   const [cpu, setCpu] = useState(`${agent.resources.cpu}m`);
   const [memory, setMemory] = useState(`${agent.resources.memory}Mi`);
-  const choices = snapshot.teams.filter((t) => t.departmentId === agent.departmentId);
+  const choices = snapshot.teams.filter((x) => x.departmentId === agent.departmentId);
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       await api("PUT", `/api/agents/${agent.id}/resources`, { cpu, memory });
-      notify(`${agent.displayName}: ${cpu} / ${memory}; the team runtime resizes when it is idle`, "info");
+      notify(t("{name}: {cpu} / {memory}; the team runtime resizes when it is idle", { name: agent.displayName, cpu, memory }), "info");
       setEditing(false);
     } catch (err) {
-      notify(`Resources: ${(err as Error).message}`, "error");
+      notify(`${t("CPU")}/${t("Memory")}: ${(err as Error).message}`, "error");
     }
   };
   const move = async (teamId: string) => {
     try {
       await api("PUT", `/api/agents/${agent.id}/team`, { teamId });
-      notify(`${agent.displayName} moved to ${snapshot.teams.find((t) => t.id === teamId)?.name}`, "info");
+      notify(t("{name} moved to {team}", { name: agent.displayName, team: snapshot.teams.find((x) => x.id === teamId)?.name ?? teamId }), "info");
     } catch (err) {
-      notify(`Move: ${(err as Error).message}`, "error");
+      notify(`${t("Team")}: ${(err as Error).message}`, "error");
     }
   };
   return (
     <>
-      {canMove && choices.length > 1 ? (
-        <select value={agent.teamId} onChange={(e) => void move(e.target.value)} aria-label="Team">
-          {choices.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
-      ) : (
-        <b>{team?.name ?? agent.teamId}</b>
-      )}{" "}
-      {team?.runtime && <span className="muted small">runtime <StatusPill state={team.runtime.state} /> g{team.runtime.generation}{team.runtime.resources ? ` · ${team.runtime.resources.cpu}m / ${team.runtime.resources.memory}Mi for ${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}` : ""}</span>}
+      <div className="team-line">
+        {canMove && choices.length > 1 ? (
+          <select value={agent.teamId} onChange={(e) => void move(e.target.value)} aria-label={t("Team")}>
+            {choices.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <b>{team?.name ?? agent.teamId}</b>
+        )}
+        {team?.runtime && <StatusPill state={team.runtime.state} />}
+      </div>
+      {team?.runtime?.resources && (
+        <div className="muted small">
+          {t("Team runtime: {cpu} / {memory} for {n} members", { cpu: cpuText(team.runtime.resources.cpu), memory: memText(team.runtime.resources.memory), n: team.memberIds.length })}
+        </div>
+      )}
       {team?.runtime?.detail && <div className="muted small">{team.runtime.detail}</div>}
       <div className="muted small">
-        Share: {agent.resources.cpu}m CPU · {agent.resources.memory}Mi{agent.resources.declared ? "" : " (default)"}
-        {canResize && !editing && <> · <button type="button" className="link" onClick={() => setEditing(true)}>change</button></>}
+        {t("Share of the team runtime")}: {t("{cpu} CPU · {memory} memory", { cpu: cpuText(agent.resources.cpu), memory: memText(agent.resources.memory) })}
+        {!agent.resources.declared && ` ${t("(default)")}`}
+        {canResize && !editing && (
+          <>
+            {" · "}
+            <button type="button" className="link" onClick={() => setEditing(true)}>
+              {t("change")}
+            </button>
+          </>
+        )}
       </div>
       {editing && (
-        <form className="form-row" onSubmit={save}>
-          <input value={cpu} onChange={(e) => setCpu(e.target.value)} aria-label="CPU (e.g. 250m)" size={7} />
-          <input value={memory} onChange={(e) => setMemory(e.target.value)} aria-label="Memory (e.g. 256Mi)" size={7} />
-          <button type="submit">Save</button>
-          <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+        <form className="form-row compact" onSubmit={save}>
+          <label>
+            {t("CPU")}
+            <input value={cpu} onChange={(e) => setCpu(e.target.value)} size={7} placeholder="100m" />
+          </label>
+          <label>
+            {t("Memory")}
+            <input value={memory} onChange={(e) => setMemory(e.target.value)} size={7} placeholder="192Mi" />
+          </label>
+          <button type="submit" className="primary">
+            {t("Save")}
+          </button>
+          <button type="button" onClick={() => setEditing(false)}>
+            {t("Cancel")}
+          </button>
         </form>
       )}
     </>
@@ -272,19 +334,19 @@ function TeamRow({ agent, snapshot, canMove, canResize, notify }: { agent: Agent
 }
 
 function SpawnForm({ manager, catalog: full, teams, templates: allowed, notify }: { manager: Agent; catalog: Catalog; teams: Team[]; templates: string[]; notify: Props["notify"] }) {
-  const catalog = { ...full, templates: full.templates.filter((t) => allowed.includes(t.id)) };
-  const [template, setTemplate] = useState(catalog.templates.find((t) => t.jobRole === "engineer")?.id ?? catalog.templates[0]!.id);
+  const catalog = { ...full, templates: full.templates.filter((x) => allowed.includes(x.id)) };
+  const [template, setTemplate] = useState(catalog.templates.find((x) => x.jobRole === "engineer")?.id ?? catalog.templates[0]!.id);
   const [name, setName] = useState("");
-  const choices = teams.filter((t) => t.departmentId === manager.departmentId);
+  const choices = teams.filter((x) => x.departmentId === manager.departmentId);
   const [teamId, setTeamId] = useState(manager.teamId);
-  const memberDefault = full.presets.find((p) => p.id === full.templates.find((t) => t.id === template)?.runtimePreset)?.member;
-  const [cpu, setCpu] = useState(memberDefault?.cpu ?? "100m");
-  const [memory, setMemory] = useState(memberDefault?.memory ?? "192Mi");
+  const tpl = catalog.templates.find((x) => x.id === template);
+  const preset = catalog.presets.find((x) => x.id === tpl?.runtimePreset);
+  const [cpu, setCpu] = useState(preset?.member?.cpu ?? "100m");
+  const [memory, setMemory] = useState(preset?.member?.memory ?? "192Mi");
   const [creds, setCreds] = useState<Credential[]>([]);
   const [credentialId, setCredentialId] = useState("");
   const [model, setModel] = useState("");
-  const tpl = catalog.templates.find((t) => t.id === template);
-  const usesModel = catalog.presets.find((p) => p.id === tpl?.runtimePreset)?.harness !== "script";
+  const usesModel = preset?.harness !== "script";
   useEffect(() => {
     if (!usesModel) return;
     api<{ credentials: Credential[] }>("GET", "/api/credentials")
@@ -296,75 +358,107 @@ function SpawnForm({ manager, catalog: full, teams, templates: allowed, notify }
     try {
       const r = await api("POST", "/api/agents", {
         templateId: template,
-        displayName: name || "New hire",
+        displayName: name || t("New hire"),
         reportsToAgentId: manager.id,
         teamId,
         resources: { cpu, memory },
         idempotencyKey: `ui-${requestId()}`,
         ...(usesModel && credentialId ? { config: { credentialId, model: model || null } } : {}),
       });
-      notify(`Hiring ${r.agent.displayName} (${r.agent.id}); runtime is provisioning`, "info");
+      notify(t("Hiring {name}…", { name: r.agent.displayName }), "info");
       setName("");
     } catch (err) {
-      notify(`Spawn: ${(err as Error).message}`, "error");
+      notify(`${t("Hire")}: ${(err as Error).message}`, "error");
     }
   };
   return (
-    <form className="actions" onSubmit={submit}>
-      <h3>Hire under {manager.displayName}</h3>
-      <p className="muted small">Only approved templates; the server checks your agent.spawn grant for this manager and template.</p>
-      <div className="form-row">
-        <select value={template} onChange={(e) => setTemplate(e.target.value)} aria-label="Template">
-          {catalog.templates.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.id} ({t.jobRole}, {t.runtimePreset})
-            </option>
-          ))}
-        </select>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" maxLength={40} aria-label="Display name" />
-        <button type="submit">Spawn</button>
-      </div>
-      <div className="form-row">
-        <select value={teamId} onChange={(e) => setTeamId(e.target.value)} aria-label="Team">
-          {choices.map((t) => <option key={t.id} value={t.id}>team: {t.name}</option>)}
-        </select>
-        <input value={cpu} onChange={(e) => setCpu(e.target.value)} required aria-label="CPU this member adds (e.g. 100m)" title="CPU this member adds to its team runtime" size={7} />
-        <input value={memory} onChange={(e) => setMemory(e.target.value)} required aria-label="Memory this member adds (e.g. 192Mi)" title="Memory this member adds to its team runtime" size={7} />
-      </div>
-      <p className="muted small">The new member joins the team's shared runtime right away; the runtime grows by this share when the team is next idle.</p>
-      {usesModel && (
-        <div className="form-row">
-          <select value={credentialId} onChange={(e) => { setCredentialId(e.target.value); setModel(""); }} aria-label="API key">
-            <option value="">API key: none yet</option>
-            {creds.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.keyHint})
+    <form className="actions hire" onSubmit={submit}>
+      <h3>{t("Hire under {name}", { name: manager.displayName })}</h3>
+      <div className="form-grid">
+        <label>
+          {t("Job")}
+          <select value={template} onChange={(e) => setTemplate(e.target.value)}>
+            {catalog.templates.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.jobRole}
               </option>
             ))}
           </select>
-          <select value={model} onChange={(e) => setModel(e.target.value)} disabled={!credentialId} aria-label="Model">
-            <option value="">model: template default</option>
-            {(creds.find((c) => c.id === credentialId)?.models ?? []).map((m) => (
-              <option key={m}>{m}</option>
+        </label>
+        <label>
+          {t("Name")}
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("New hire")} maxLength={40} />
+        </label>
+        <label>
+          {t("Team")}
+          <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+            {choices.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
+              </option>
             ))}
           </select>
+        </label>
+        <div className="form-pair">
+          <label>
+            {t("CPU")}
+            <input value={cpu} onChange={(e) => setCpu(e.target.value)} required placeholder="100m" />
+          </label>
+          <label>
+            {t("Memory")}
+            <input value={memory} onChange={(e) => setMemory(e.target.value)} required placeholder="192Mi" />
+          </label>
         </div>
-      )}
+        {usesModel && (
+          <>
+            <label>
+              {t("API keys")}
+              <select value={credentialId} onChange={(e) => { setCredentialId(e.target.value); setModel(""); }}>
+                <option value="">{t("API key: none yet")}</option>
+                {creds.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t("Model")}
+              <select value={model} onChange={(e) => setModel(e.target.value)} disabled={!credentialId}>
+                <option value="">{t("model: job default")}</option>
+                {(creds.find((c) => c.id === credentialId)?.models ?? []).map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
+      </div>
+      <p className="muted small">{t("The new person starts in the team's shared runtime right away; the runtime grows by this share when the team is next idle.")}</p>
+      <button type="submit" className="primary">
+        {t("Hire")}
+      </button>
     </form>
   );
 }
 
 function AgentTasks({ agent, snapshot, onOpenTask }: { agent: Agent; snapshot: Snapshot; onOpenTask: (id: string) => void }) {
-  const tasks = useMemo(() => snapshot.tasks.filter((t) => t.assigneeAgentId === agent.id), [snapshot.tasks, agent.id]);
-  if (!tasks.length) return <p className="muted">No tasks assigned.</p>;
+  const tasks = useMemo(() => snapshot.tasks.filter((x) => x.assigneeAgentId === agent.id), [snapshot.tasks, agent.id]);
+  if (!tasks.length) return <p className="muted">{t("No tasks assigned.")}</p>;
   return (
     <ul className="task-list">
-      {tasks.map((t) => (
-        <li key={t.id}>
-          <button type="button" className="task-row" onClick={() => onOpenTask(t.id)}>
-            <StatusPill state={t.status} />
-            <span className="task-title">{t.title}</span>
-            <span className="muted small">{t.summary ?? t.statusReason ?? ""}</span>
+      {tasks.map((x) => (
+        <li key={x.id}>
+          <button type="button" className="task-row stacked" onClick={() => onOpenTask(x.id)}>
+            <span className="task-head">
+              <StatusPill state={x.status} />
+              <span className="task-title">{x.title}</span>
+            </span>
+            {(x.summary ?? x.statusReason) && (
+              <span className="task-summary">
+                <ReportText text={x.summary ?? x.statusReason ?? ""} />
+              </span>
+            )}
           </button>
         </li>
       ))}
@@ -402,7 +496,7 @@ function Logs({ agentId }: { agentId: string }) {
   if (error && !lines.length) return <p className="error">{error}</p>;
   return (
     <pre className="logs" aria-live="polite">
-      {lines.length === 0 && <span className="muted">No work logs yet.</span>}
+      {lines.length === 0 && <span className="muted">{t("No work logs yet.")}</span>}
       {lines.map((l) => (
         <div key={l.seq} className={`log-${l.stream}`}>
           <span className="muted">{new Date(l.at).toLocaleTimeString()} </span>

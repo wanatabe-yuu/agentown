@@ -1,3 +1,4 @@
+import { t } from "./i18n.ts";
 import { useEffect, useState } from "react";
 import { api, fetchBlob, HttpError, orgPath } from "./api.ts";
 import type { Catalog, Me, Snapshot, TaskDetail, TaskProgress } from "./types.ts";
@@ -268,13 +269,16 @@ export function NewTaskDialog({ snapshot, me, catalog, assignee, onClose, notify
   // Not a permission: work is a prompt, so it needs a model. Agents without one only walk around the office.
   const why = (a: (typeof active)[number]) =>
     catalog?.presets.find((p) => p.id === a.runtime?.presetId)?.harness === "script" ? "no LLM runtime" : !a.config.credentialId ? "no API key" : null;
-  const [to, setTo] = useState(assignee ?? active.find((a) => !why(a))?.id ?? "");
+  // No silent default: the person picks who does the work (unless they opened this from someone's desk).
+  const [to, setTo] = useState(assignee ?? "");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [criteria, setCriteria] = useState("");
   const [project, setProject] = useState("");
   const target = active.find((a) => a.id === to);
-  const blocked = target ? why(target) : "no assignee";
+  const blocked = target ? why(target) : t("Choose who does it");
+  const teamName = (id: string) => snapshot.teams.find((x) => x.id === id)?.name ?? id;
+  const byTeam = [...new Set(active.map((a) => a.teamId))].sort((a, b) => teamName(a).localeCompare(teamName(b)));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -287,44 +291,53 @@ export function NewTaskDialog({ snapshot, me, catalog, assignee, onClose, notify
         projectId: project || null,
         spec: { kind: "prompt" },
       });
-      notify(`Task ${r.task.id} → ${to}`, "info");
+      notify(`${r.task.title} → ${target?.displayName ?? to}`, "info");
       onCreated(r.task.id);
     } catch (err) {
-      notify(`Create task: ${(err as Error).message}`, "error");
+      notify(`${t("Create task")}: ${(err as Error).message}`, "error");
     }
   };
 
   return (
-    <Modal title="New task" onClose={onClose}>
+    <Modal title={t("New task")} onClose={onClose}>
       <form className="form" onSubmit={submit}>
         <label>
-          Assignee
-          <select value={to} onChange={(e) => setTo(e.target.value)}>
-            {active.map((a) => (
-              <option key={a.id} value={a.id} disabled={!!why(a)}>
-                {a.displayName} — {a.jobRole}
-                {why(a) ? ` · ${why(a)}` : ""}
-              </option>
+          {t("Assignee")}
+          <select value={to} onChange={(e) => setTo(e.target.value)} required>
+            <option value="" disabled>
+              {t("Choose who does it")}
+            </option>
+            {byTeam.map((team) => (
+              <optgroup key={team} label={teamName(team)}>
+                {active
+                  .filter((a) => a.teamId === team)
+                  .map((a) => (
+                    <option key={a.id} value={a.id} disabled={!!why(a)}>
+                      {a.displayName} — {a.jobRole}
+                      {why(a) ? ` · ${t(why(a)!)}` : ""}
+                    </option>
+                  ))}
+              </optgroup>
             ))}
           </select>
         </label>
-        {target && blocked && <p className="error small">{target.displayName} has {blocked}: give it an API key in its Config tab.</p>}
+        {target && blocked && <p className="error small">{t("{name} has {problem}: give it an API key in its Config tab.", { name: target.displayName, problem: t(blocked) })}</p>}
         <label>
-          Title
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What should be done?" maxLength={200} required />
+          {t("Title")}
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("What should be done?")} maxLength={200} required />
         </label>
         <label>
-          Prompt
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={5} placeholder="Describe the work in plain words." required />
+          {t("Prompt")}
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={5} placeholder={t("Describe the work in plain words.")} required />
         </label>
         <label>
-          Acceptance criteria
-          <textarea value={criteria} onChange={(e) => setCriteria(e.target.value)} rows={2} placeholder="How you will judge it is done (optional)" />
+          {t("Acceptance criteria")}
+          <textarea value={criteria} onChange={(e) => setCriteria(e.target.value)} rows={2} placeholder={t("How you will judge it is done (optional)")} />
         </label>
         <label>
-          Project
+          {t("Project")}
           <select value={project} onChange={(e) => setProject(e.target.value)}>
-            <option value="">— none —</option>
+            <option value="">{t("— none —")}</option>
             {snapshot.projects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -334,7 +347,7 @@ export function NewTaskDialog({ snapshot, me, catalog, assignee, onClose, notify
         </label>
         <div className="btn-row">
           <button type="submit" className="primary" disabled={!!blocked}>
-            Create task
+            {t("Create task")}
           </button>
         </div>
       </form>

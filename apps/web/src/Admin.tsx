@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import type { Account } from "./types.ts";
 import { Modal } from "./ui.tsx";
@@ -87,7 +88,7 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
   const member = new Set(account.orgs.map((o) => o.id));
 
   return (
-    <Modal title="Organizations" onClose={onClose} wide>
+    <Modal title={tr("Organizations")} onClose={onClose} wide>
       <p className="muted small">
         Each organization has its own departments, agents, people, keys and audit log, and runs in its own namespace. Members of one never see another.
       </p>

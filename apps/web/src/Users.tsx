@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import type { Catalog, Me, Role, Scope, Snapshot, User } from "./types.ts";
 import { Modal, describeScope } from "./ui.tsx";
@@ -70,7 +71,7 @@ export function UsersDialog({ me, catalog, snapshot, onClose, notify }: { me: Me
   };
 
   return (
-    <Modal title="Users" onClose={onClose} wide>
+    <Modal title={tr("People")} onClose={onClose} wide>
       <p className="muted small">
         A role is only a starting point: it copies a set of permissions onto the person. Add or remove single permissions below. People see and use only what their
         permissions allow; the server checks every request.
