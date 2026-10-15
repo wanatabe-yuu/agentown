@@ -586,6 +586,7 @@ const VI: Record<string, string> = {
   "Doors": "Cửa",
   "Duplicate": "Nhân bản",
   "Enter the office": "Vào văn phòng",
+  "A 3D office where your agents work.": "Văn phòng 3D nơi các agent của bạn làm việc.",
   "Fit to screen": "Vừa màn hình",
   "Floor name": "Tên tầng",
   "Floor": "Tầng",

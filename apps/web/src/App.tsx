@@ -566,7 +566,7 @@ function Login({ onToken, error }: { onToken: (t: string) => void; error: string
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => ref.current?.focus(), []);
   return (
-    <div className="center">
+    <div className="center login-page">
       <form
         className="login"
         onSubmit={(e) => {
@@ -574,15 +574,26 @@ function Login({ onToken, error }: { onToken: (t: string) => void; error: string
           if (value.trim()) onToken(value.trim());
         }}
       >
-        <h1>Agentown</h1>
-        <p className="muted">
-          {tr("Paste your access token.")} {tr("The owner runs")} <code>agentownctl token</code> {tr("on the server")} ({tr("or reads")} <code>.agentown/owner-token</code> {tr("when running from source")}); {tr("everyone else gets one from the owner under Members.")}
-        </p>
-        <input ref={ref} type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="aho_…" aria-label={tr("Access token")} />
+        <div className="login-head">
+          <span className="logo login-logo" aria-hidden>
+            ▦
+          </span>
+          <div>
+            <h1>Agentown</h1>
+            <p className="muted small">{tr("A 3D office where your agents work.")}</p>
+          </div>
+        </div>
+        <label className="login-field">
+          <span>{tr("Access token")}</span>
+          <input ref={ref} type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="aho_…" />
+        </label>
         {error && <p className="error">{error}</p>}
         <button type="submit" className="primary">
           {tr("Enter the office")}
         </button>
+        <p className="muted small login-help">
+          {tr("The owner runs")} <code>agentownctl token</code> {tr("on the server")} ({tr("or reads")} <code>.agentown/owner-token</code> {tr("when running from source")}); {tr("everyone else gets one from the owner under Members.")}
+        </p>
       </form>
     </div>
   );
