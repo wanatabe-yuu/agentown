@@ -2162,7 +2162,7 @@ export class Service {
       `SELECT max(seq) - 2000 AS seq FROM agent_events WHERE org_id=$1`,
       [this.orgId],
     );
-    const notable = /^(agent\.(spawned|configured|team|retired)|task\.(created|status)|run\.(started|finished|lost)|artifact\.created|grant\.|credential\.(created|revoked)|user\.created)/;
+    const notable = /^(agent\.(spawned|configured|team|retired)|task\.(created|status)|run\.(started|finished|lost)|artifact\.created|grant\.|credential\.(created|revoked)|user\.created|runtime\.generation)/;
     const events = (await this.eventsAfter(actor, Math.max(0, Number(rows[0]?.seq ?? 0)), 2000)).filter((e) => notable.test(e.type));
     return events.slice(-limit).reverse();
   }
