@@ -47,3 +47,13 @@ describe("office layout", () => {
     expect(bounds(l.rooms.filter((r) => r.floorIndex === 1))).toMatchObject({ minX: 0, maxX: 8, y: FLOOR_HEIGHT });
   });
 });
+
+describe("seats do not depend on the order agents arrive in", () => {
+  it("same seats for the same people, however the list is ordered", () => {
+    const depts = [{ id: "eng", name: "Eng", color: "#336699" }];
+    const people = ["a-3", "a-1", "a-2"].map((id) => ({ id, departmentId: "eng", seat: 0, lifecycleState: "active", jobRole: "x" }));
+    const one = layoutWorld(null, depts, people).seatOf;
+    const two = layoutWorld(null, depts, [...people].reverse()).seatOf;
+    for (const p of people) expect(two.get(p.id)).toEqual(one.get(p.id));
+  });
+});

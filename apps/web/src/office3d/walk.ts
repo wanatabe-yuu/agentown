@@ -45,6 +45,16 @@ export interface Errand {
 }
 
 
+/** Where to stand to do something with an object: a little in front of it (towards its room's middle), on a free spot. */
+export function errandSpot(nav: Nav, room: string, at: THREE.Vector3, gesture: "pet" | "use"): Spot {
+  const r = nav.rooms.get(room);
+  const toward = r ? new THREE.Vector2(r.x + r.w / 2 - at.x, r.z + r.d / 2 - at.z) : new THREE.Vector2(0, 1);
+  if (toward.lengthSq() < 1e-4) toward.set(0, 1);
+  toward.setLength(gesture === "pet" ? 0.55 : 0.8);
+  const [x, z] = freeSpot(nav, room, at.x + toward.x, at.z + toward.y);
+  return { room, x, z };
+}
+
 /** Put an agent straight back in its chair (the editor is open, or there is no way back). */
 export function seat(r: Roamer) {
   if (!r.home) return;

@@ -89,14 +89,16 @@ export default function Office3D(props: Props) {
   }, []);
 
   // A reconnect re-reads the same world as a new object: compare contents, or everyone would be rebuilt where they started.
+  // Rebuild only when the structure or the roster changes, not on every heartbeat.
   const worldKey = useMemo(() => JSON.stringify(shownWorld), [shownWorld]);
-  const deptKey = snapshot.departments.map((d) => `${d.id}:${d.color}`).join("|");
-  const layout = useMemo(
-    () => layoutWorld(shownWorld, snapshot.departments, snapshot.agents),
-    // Rebuild only when the structure or the roster changes, not on every heartbeat.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [worldKey, deptKey, snapshot.agents.map((a) => `${a.id}:${a.departmentId}:${a.seat}:${a.lifecycleState}:${a.jobRole}`).join("|")],
-  );
+  const layoutKey = [
+    worldKey,
+    snapshot.departments.map((d) => `${d.id}:${d.color}`).join("|"),
+    // Sorted: the server lists agents in varying order, which must not rebuild the office (everyone would jump).
+    snapshot.agents.map((a) => `${a.id}:${a.departmentId}:${a.seat}:${a.lifecycleState}:${a.jobRole}`).sort().join("|"),
+  ].join("\n");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layout = useMemo(() => layoutWorld(shownWorld, snapshot.departments, snapshot.agents), [layoutKey]);
   const latest = useRef({ props, layout, editing, edit, floor, focusRoom, flat });
   latest.current = { props, layout, editing, edit, floor, focusRoom, flat };
   const engine = useRef<{
@@ -106,6 +108,8 @@ export default function Office3D(props: Props) {
     camera: THREE.OrthographicCamera;
     controls: MapControls;
     office: OfficeScene | null;
+    /** What the current scene was built from: the same again is not rebuilt. */
+    officeKey: string;
     hover: string | null;
     tween: { from: THREE.Vector3; to: THREE.Vector3; z0: number; z1: number; start: number } | null;
     /** Swinging the camera between the perspective and the top-down view. */
@@ -179,7 +183,7 @@ export default function Office3D(props: Props) {
     controls.maxPolarAngle = 1.2;
     controls.screenSpacePanning = false;
 
-    engine.current = { renderer, labels, scene, camera, controls, office: null, hover: null, tween: null, turn: null, gizmo: null };
+    engine.current = { renderer, labels, scene, camera, controls, office: null, officeKey: "", hover: null, tween: null, turn: null, gizmo: null };
     // ?debug in the address: the live scene, for inspecting it from the console.
     if (new URLSearchParams(location.search).has("debug")) (window as unknown as { office: unknown }).office = engine.current;
 
@@ -341,6 +345,8 @@ export default function Office3D(props: Props) {
   useEffect(() => {
     const e = engine.current;
     if (!e) return;
+    // React may recompute the layout (or re-run this effect) for the very same contents: keep the scene, and everyone where they are.
+    if (e.office && e.officeKey === layoutKey) return;
     const previous = e.office;
     const office = buildScene(layout, snapshot.world ?? null, snapshot.departments, snapshot.agents, buildNav(snapshot.world ?? null, layout), (roomId) => {
       setFocusRoom(roomId);
@@ -350,6 +356,7 @@ export default function Office3D(props: Props) {
     previous?.dispose();
     e.scene.add(office.root);
     e.office = office;
+    e.officeKey = layoutKey;
     if (firstFit.current) {
       firstFit.current = false;
       const start = layout.floors.length > 1 ? 0 : "all";

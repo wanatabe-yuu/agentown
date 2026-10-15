@@ -4,8 +4,8 @@ import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Agent, Department, ObjectActivity, WorkState } from "../types.ts";
 import { FLOOR_HEIGHT, type PlacedRoom, type Seat, type WorldLayout } from "./layout.ts";
 import { t } from "../i18n.ts";
-import { allowedRooms, freeSpot, type Nav } from "./nav.ts";
-import { type Roamer, seat, stepErrand, stepRoamer, swingLegs } from "./walk.ts";
+import { allowedRooms, type Nav } from "./nav.ts";
+import { errandSpot, type Roamer, seat, stepErrand, stepRoamer, swingLegs } from "./walk.ts";
 
 export { swingLegs } from "./walk.ts";
 import { loadModels, texture } from "./assets.ts";
@@ -700,15 +700,8 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
       const target = kinds.get(a.objectId);
       const gesture = target?.life.kind.actions.find((x) => x.id === a.action)?.gesture ?? "none";
       if (!node || !target || gesture === "none") continue;
-      const room = target.roamer?.room ?? target.roomId;
-      const at = target.root.position;
-      // Stand a little in front of it (towards the room's middle), on a free spot.
-      const r = s.nav.rooms.get(room);
-      const toward = r ? new THREE.Vector2(r.x + r.w / 2 - at.x, r.z + r.d / 2 - at.z) : new THREE.Vector2(0, 1);
-      if (toward.lengthSq() < 1e-4) toward.set(0, 1);
-      toward.setLength(gesture === "pet" ? 0.55 : 0.8);
-      const [x, z] = freeSpot(s.nav, room, at.x + toward.x, at.z + toward.y);
-      node.roamer.errand = { objectId: a.objectId, gesture, until: f.t + (until - f.clock), spot: { room, x, z }, arrived: false };
+      const spot = errandSpot(s.nav, target.roamer?.room ?? target.roomId, target.root.position, gesture);
+      node.roamer.errand = { objectId: a.objectId, gesture, until: f.t + (until - f.clock), spot, arrived: false };
       node.roamer.path = null;
     }
   }

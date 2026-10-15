@@ -202,7 +202,8 @@ export function layoutWorld(world: World | null, departments: Dept[], agentsAll:
   for (const d of departments) {
     const own = rooms.filter((r) => r.department === d.id);
     if (!own.length) continue;
-    const staff = agents.filter((a) => a.departmentId === d.id).sort((a, b) => a.seat - b.seat);
+    // Ties by id: the list arrives in varying order, and nobody should swap desks because of it.
+    const staff = agents.filter((a) => a.departmentId === d.id).sort((a, b) => a.seat - b.seat || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     let i = 0;
     own.forEach((room, k) => {
       const take = k === own.length - 1 ? staff.length - i : Math.min(room.capacity, staff.length - i);
