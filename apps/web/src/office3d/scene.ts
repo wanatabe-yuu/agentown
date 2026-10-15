@@ -1,14 +1,16 @@
-import type { Behavior, World } from "@agentown/core/world";
+import { objectState, type World } from "@agentown/core/world";
 import * as THREE from "three";
 import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
-import type { Agent, Department, WorkState } from "../types.ts";
+import type { Agent, Department, ObjectActivity, WorkState } from "../types.ts";
 import { FLOOR_HEIGHT, type PlacedRoom, type Seat, type WorldLayout } from "./layout.ts";
 import { t } from "../i18n.ts";
 import { allowedRooms, freeSpot, inside, type Nav, reachable, route, type Spot, type Waypoint } from "./nav.ts";
 import { loadModels, texture } from "./assets.ts";
+import { orgPath } from "../api.ts";
 import { chair, character, desk, lookObject, monitor } from "./procedural.ts";
-import { type Animated, applyBehavior, prepareBehaviors } from "./behave.ts";
+import { ObjectLife } from "./behave.ts";
 import { pattern } from "./patterns.ts";
+import { agentPortrait, lookPortrait } from "./portrait.ts";
 
 /** A task handed from one agent to another: a sheet of paper flies between their desks. */
 export interface Flight {
@@ -31,22 +33,29 @@ export const SCREEN: Record<string, string> = {
 export interface AgentNode {
   id: string;
   seat: Seat;
-  /** Desk, monitor and chair: stays put. */
+  /** Its workstation (desk, computer, chair): a thing of its own that stays put. */
   root: THREE.Group;
   /** The agent itself (avatar, ring, labels): sits at the desk, or walks when it may. */
   actor: THREE.Group;
   avatar: THREE.Group;
-  roamer: Roamer | null;
+  roamer: Roamer;
   pick: THREE.Mesh;
   ring: THREE.Mesh;
   screen: THREE.MeshStandardMaterial;
   label: HTMLDivElement;
   bubble: HTMLDivElement;
   floorIndex: number;
+  /** Seen from above (2D): their picture instead of their body, and a small screen for their desk. */
+  badge: THREE.Sprite;
+  deskBadge: THREE.Sprite;
 }
 
 /** Something that walks between rooms, through doors and stairs, within its access. */
 interface Roamer {
+  /** Who it is ("agent:id", "object:id"), to carry it over when the scene is rebuilt. */
+  key: string;
+  /** No way found home this many times in a row. */
+  lost: number;
   obj: THREE.Object3D;
   body: THREE.Object3D;
   allowed: Set<string>;
@@ -62,15 +71,46 @@ interface Roamer {
   home: Spot | null;
   seated: boolean;
   seed: number;
+  /** Strolls about when idle (its look roams); otherwise it stays at its desk unless sent somewhere. */
+  wanders: boolean;
+  /** Sent to do something with an object: walk there, do it, come back. */
+  errand: Errand | null;
 }
+
+interface Errand {
+  objectId: string;
+  gesture: "pet" | "use";
+  /** performance.now() time it ends. */
+  until: number;
+  spot: Spot;
+  arrived: boolean;
+}
+
+/** A placed object, living through its states. */
+export interface PlacedLife {
+  id: string;
+  life: ObjectLife;
+  /** Where it is placed (a roamer tracks its current room itself). */
+  roomId: string;
+  /** What carries it in world space. */
+  root: THREE.Object3D;
+  roamer: Roamer | null;
+  /** Its picture, seen from above (2D). */
+  badge: THREE.Sprite;
+}
+
+/** What a workstation shows: off (its person is offline), asleep (nobody at it), on, working. */
+export type DeskState = "off" | "sleep" | "on" | "working";
 
 
 export interface OfficeScene {
   root: THREE.Group;
   floors: Map<number, THREE.Group>;
   agents: Map<string, AgentNode>;
-  animated: Animated[];
+  lives: PlacedLife[];
   roamers: Roamer[];
+  /** Object actions already turned into errands. */
+  errands: Set<string>;
   nav: Nav;
   /** Animations that came with uploaded models. */
   mixers: THREE.AnimationMixer[];
@@ -149,14 +189,44 @@ export function animateAvatar(avatar: THREE.Object3D, work: string, sec: number,
     armLX = 15;
     armRX = 15;
     bob = Math.sin(t * 0.9) * 0.01 - 0.02;
+  } else if (work === "sleep") {
+    // Curled up: head down, slow deep breaths.
+    headX = 32 * deg;
+    headY = 0;
+    armLX = 8;
+    armRX = 8;
+    bob = Math.sin(t * 0.9) * 0.012 - 0.04;
+  } else if (work === "happy") {
+    bob = Math.abs(Math.sin(t * 5)) * 0.035;
+    headZ = Math.sin(t * 3) * 0.18;
+    headY = 0;
+    armLX = 40 + Math.sin(t * 5) * 10;
+    armRX = 40 - Math.sin(t * 5) * 10;
+  } else if (work === "play") {
+    bob = Math.abs(Math.sin(t * 7)) * 0.09;
+    armLX = 120 + Math.sin(t * 7) * 30;
+    armRX = 120 - Math.sin(t * 7) * 30;
+    headY = Math.sin(t * 3.5) * 0.3;
+  } else if (work === "pet") {
+    // Bent down, a hand stroking something in front.
+    bob = -0.16;
+    headX = 26 * deg;
+    headY = 0;
+    armLX = 55;
+    armRX = 72 + Math.sin(t * 4) * 14;
+  } else if (work === "use") {
+    headX = 12 * deg;
+    headY = Math.sin(t * 0.7) * 0.06;
+    armLX = 30;
+    armRX = 78 + Math.sin(t * 6) * 6;
   }
   avatar.position.y = baseY + bob;
   if (head) head.rotation.set(headX, headY, headZ);
   if (armL) armL.rotation.set(armLX * deg, 0, 0);
   if (armR) armR.rotation.set(armRX * deg, 0, armRZ * deg);
   // Blink every few seconds.
-  if (eyes) eyes.scale.y = (t * 0.7) % 4 < 0.12 ? 0.1 : 1;
-  if (tail) tail.rotation.z = Math.sin(t * (work === "executing" || walking ? 7 : 1.6)) * (work === "blocked" ? 0.1 : 0.45);
+  if (eyes) eyes.scale.y = work === "sleep" ? 0.1 : work === "happy" ? 0.55 : (t * 0.7) % 4 < 0.12 ? 0.1 : 1;
+  if (tail) tail.rotation.z = Math.sin(t * (work === "happy" || work === "play" ? 12 : work === "executing" || walking ? 7 : work === "sleep" ? 0.6 : 1.6)) * (work === "blocked" ? 0.1 : work === "sleep" ? 0.15 : 0.45);
   const tip = get("antenna-tip") as THREE.Mesh | undefined;
   if (tip) (tip.material as THREE.MeshStandardMaterial).emissiveIntensity = work === "executing" ? 0.5 + 0.5 * Math.sin(t * 12) : 0.4 + 0.3 * Math.sin(t * 2);
 }
@@ -234,6 +304,81 @@ function roomMesh(room: PlacedRoom): THREE.Group {
   return g;
 }
 
+/** Seen from above, everything is a round picture floating over where it is. */
+const BADGE_Y = 3.2;
+function badge(color: string, size: number, picture: Promise<string> | string | null, disposables: Array<{ dispose(): void }>, image?: string | null): THREE.Sprite {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d")!;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.setScalar(size);
+  sprite.position.y = BADGE_Y;
+  sprite.renderOrder = 10;
+  sprite.visible = false;
+  disposables.push(tex, mat);
+  const draw = (img: HTMLImageElement | null) => {
+    g.clearRect(0, 0, 128, 128);
+    g.beginPath();
+    g.arc(64, 64, 60, 0, Math.PI * 2);
+    g.fillStyle = color;
+    g.fill();
+    if (img) {
+      g.save();
+      g.beginPath();
+      g.arc(64, 64, 54, 0, Math.PI * 2);
+      g.clip();
+      g.fillStyle = "#f4efe6";
+      g.fillRect(0, 0, 128, 128);
+      g.drawImage(img, 10, 10, 108, 108);
+      g.restore();
+    }
+    g.lineWidth = 6;
+    g.strokeStyle = "#ffffff";
+    g.beginPath();
+    g.arc(64, 64, 60, 0, Math.PI * 2);
+    g.stroke();
+    tex.needsUpdate = true;
+  };
+  draw(null);
+  const load = (url: string) => {
+    if (!url) return;
+    const img = new Image();
+    img.onload = () => draw(img);
+    img.src = url;
+  };
+  if (image) load(image);
+  else if (typeof picture === "string") load(picture);
+  else picture?.then(load).catch(() => {});
+  return sprite;
+}
+
+/** A desk seen from above: a small screen glyph, tinted by the computer's state each frame. */
+function deskBadge(disposables: Array<{ dispose(): void }>): THREE.Sprite {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#ffffff";
+  g.beginPath();
+  g.roundRect(6, 10, 52, 36, 7);
+  g.fill();
+  g.fillRect(26, 46, 12, 8);
+  g.fillRect(18, 52, 28, 5);
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.setScalar(0.55);
+  sprite.position.set(0, BADGE_Y - 0.1, -0.55);
+  sprite.renderOrder = 9;
+  sprite.visible = false;
+  disposables.push(tex, mat);
+  return sprite;
+}
+
+const assetUrl = (id: string) => orgPath(`/api/assets/${encodeURIComponent(id)}`);
+
 /**
  * Build the scene graph for a layout. Called again only when the layout itself
  * changes (structure, hires); per-frame state goes through updateScene.
@@ -245,6 +390,8 @@ export function buildScene(
   agents: Agent[],
   nav: Nav,
   onRoomClick: (roomId: string) => void,
+  /** The scene this one replaces: whoever was walking keeps walking from where they were. */
+  previous?: OfficeScene | null,
 ): OfficeScene {
   const root = new THREE.Group();
   const floors = new Map<number, THREE.Group>();
@@ -318,8 +465,8 @@ export function buildScene(
   const roamers: Roamer[] = [];
   const lifted = (o: THREE.Object3D) => ((o.userData.lift as number | undefined) ?? 0) * o.scale.y;
 
-  // Placed objects, with their behaviors.
-  const animated: Animated[] = [];
+  // Placed objects, living through their states.
+  const lives: PlacedLife[] = [];
   for (const [i, o] of (world?.objects ?? []).entries()) {
     const kind = world!.kinds[o.kind];
     const room = roomById.get(o.room);
@@ -329,6 +476,7 @@ export function buildScene(
     obj.rotation.y = (o.rotationY * Math.PI) / 180;
     // The world editor finds placed objects by this index.
     obj.userData.objectIndex = i;
+    obj.userData.character = "character" in kind.look;
     obj.scale.multiplyScalar(o.scale);
     const title = o.title ?? kind.title;
     if (o.label || title) {
@@ -338,8 +486,12 @@ export function buildScene(
       tag.position.set(0, 1.4, 0);
       obj.add(tag);
     }
-    const roam = kind.behaviors.find((b) => b.type === "roam");
-    if (roam) {
+    const seed = hash(`${o.kind}:${i}`);
+    const walks = [kind.behaviors, ...kind.states.map((x) => x.behaviors ?? [])].some((bs) => bs.some((b) => b.type === "roam"));
+    const roam = [...kind.behaviors, ...kind.states.flatMap((x) => x.behaviors ?? [])].find((b) => b.type === "roam");
+    let roamer: Roamer | null = null;
+    let carrier: THREE.Object3D = obj;
+    if (walks && roam) {
       // Roamers live in world space: they change rooms and floors.
       const body = new THREE.Group();
       body.userData.objectIndex = i;
@@ -354,7 +506,10 @@ export function buildScene(
       }
       body.add(obj);
       root.add(body);
-      roamers.push({
+      carrier = body;
+      roamer = {
+        key: `object:${o.id ?? i}`,
+        lost: 0,
         obj: body,
         body: obj,
         allowed: allowedRooms(kind.access, room.id, null, world, layout),
@@ -366,17 +521,27 @@ export function buildScene(
         lift: lifted(obj),
         home: null,
         seated: false,
-        seed: hash(`${o.kind}:${i}`),
-      });
+        seed,
+        wanders: true,
+        errand: null,
+      };
+      roamers.push(roamer);
     } else {
       floorGroup(room.floorIndex).add(obj);
     }
-    animated.push(...prepareBehaviors(obj, kind, hash(`${o.kind}:${i}`) * 100, room));
+    // Bigger things get bigger pictures on the map, within reason.
+    const footprint = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+    const pic = badge("#f4efe6", Math.min(1.3, Math.max(0.55, Math.max(footprint.x, footprint.z) * 0.6)), lookPortrait(kind.look), disposables, o.image ? assetUrl(o.image) : null);
+    pic.scale.divideScalar(carrier === obj ? o.scale : 1);
+    pic.position.y = BADGE_Y / (carrier === obj ? o.scale : 1);
+    carrier.add(pic);
+    lives.push({ id: o.id ?? `#${i}`, life: new ObjectLife(obj, kind, seed * 100, room), roomId: room.id, root: carrier, roamer, badge: pic });
   }
 
   // Agents: desk, monitor, chair, avatar, labels.
   const agentNodes = new Map<string, AgentNode>();
-  const pickGeo = new THREE.BoxGeometry(1.2, 1.8, 1.4);
+  // Just the person: the desk in front of them is its own thing.
+  const pickGeo = new THREE.BoxGeometry(0.75, 1.7, 0.75);
   const pickMat = new THREE.MeshBasicMaterial({ visible: false });
   const ringGeo = new THREE.RingGeometry(0.62, 0.72, 40);
   disposables.push(pickGeo, pickMat, ringGeo);
@@ -393,6 +558,8 @@ export function buildScene(
     const c = chair();
     c.position.z = 0.35;
     g.add(d, mon, c);
+    // Picking the desk opens the workstation, not the person.
+    g.userData.workstation = a.id;
     disposables.push(screen);
 
     const { avatar, kind } = agentAvatar(a, world, deptColor(a.departmentId));
@@ -401,23 +568,26 @@ export function buildScene(
     actor.position.set(seat.x, seat.y, seat.z + 0.3);
     actor.add(avatar);
     root.add(actor);
+    // Everyone can walk (to pet the cat, to use the espresso machine); only roaming looks stroll about when idle.
     const roam = kind?.behaviors.find((b) => b.type === "roam");
-    const roamer: Roamer | null = roam
-      ? {
-          obj: actor,
-          body: avatar,
-          allowed: allowedRooms(kind!.access, seat.roomId, a.departmentId, world, layout),
-          room: seat.roomId,
-          speed: 1.2 * roam.amount * roam.speed,
-          path: null,
-          idx: 0,
-          waitUntil: 0,
-          lift: lifted(avatar),
-          home: { room: seat.roomId, x: seat.x, z: seat.z + 0.3 },
-          seated: true,
-          seed: hash(a.id),
-        }
-      : null;
+    const roamer: Roamer = {
+      key: `agent:${a.id}`,
+      lost: 0,
+      obj: actor,
+      body: avatar,
+      allowed: allowedRooms(kind?.access ?? "own-room", seat.roomId, a.departmentId, world, layout),
+      room: seat.roomId,
+      speed: roam ? 1.2 * roam.amount * roam.speed : 1.2,
+      path: null,
+      idx: 0,
+      waitUntil: 0,
+      lift: lifted(avatar),
+      home: { room: seat.roomId, x: seat.x, z: seat.z + 0.3 },
+      seated: true,
+      seed: hash(a.id),
+      wanders: !!roam,
+      errand: null,
+    };
 
     const ringMat = new THREE.MeshBasicMaterial({ color: "#38bdf8", transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
     disposables.push(ringMat);
@@ -427,7 +597,7 @@ export function buildScene(
     actor.add(ring);
 
     const pick = new THREE.Mesh(pickGeo, pickMat);
-    pick.position.set(0, 0.9, -0.3);
+    pick.position.set(0, 0.85, 0);
     pick.userData.agentId = a.id;
     actor.add(pick);
 
@@ -440,8 +610,14 @@ export function buildScene(
     actor.add(bubble.obj);
 
     floorGroup(room.floorIndex).add(g);
-    if (roamer) roamers.push(roamer);
-    agentNodes.set(a.id, { id: a.id, seat, root: g, actor, avatar, roamer, pick, ring, screen, label: name.el, bubble: bubble.el, floorIndex: room.floorIndex });
+    roamers.push(roamer);
+    const own = world?.avatars.byAgent?.[a.id]?.image;
+    const face = badge(deptColor(a.departmentId), 0.95, own ? null : agentPortrait(a, world, deptColor(a.departmentId)), disposables, own ? assetUrl(own) : null);
+    face.renderOrder = 11;
+    actor.add(face);
+    const screenBadge = deskBadge(disposables);
+    g.add(screenBadge);
+    agentNodes.set(a.id, { id: a.id, seat, root: g, actor, avatar, roamer, pick, ring, screen, label: name.el, bubble: bubble.el, floorIndex: room.floorIndex, badge: face, deskBadge: screenBadge });
   }
 
   // One sheet of paper, reused for every hand-off in flight.
@@ -451,6 +627,21 @@ export function buildScene(
   root.add(paper);
   disposables.push(paper.geometry, paperMat);
 
+  // Carry over everyone who was on the move, if the room they were in is still there as it was.
+  const before = new Map((previous?.roamers ?? []).map((r) => [r.key, r]));
+  const sameRoom = (id: string) => {
+    const a = previous?.nav.rooms.get(id);
+    const b = nav.rooms.get(id);
+    return !!a && !!b && a.x === b.x && a.z === b.z && a.w === b.w && a.d === b.d;
+  };
+  for (const r of roamers) {
+    const old = before.get(r.key);
+    if (!old || !sameRoom(old.room) || (old.path && !old.path.every((w) => sameRoom(w.room)))) continue;
+    r.obj.position.copy(old.obj.position);
+    r.obj.rotation.y = old.obj.rotation.y;
+    Object.assign(r, { room: old.room, path: old.path, idx: old.idx, waitUntil: old.waitUntil, seated: old.seated, errand: old.errand });
+  }
+
   const mixers: THREE.AnimationMixer[] = [];
   let alive = true;
   loadModels(root, mixers, () => alive);
@@ -459,8 +650,9 @@ export function buildScene(
     root,
     floors,
     agents: agentNodes,
-    animated,
+    lives,
     roamers,
+    errands: new Set((previous?.errands ?? []) as Iterable<string>),
     nav,
     mixers,
     paper,
@@ -482,34 +674,97 @@ export interface FrameInput {
   selected: string | null;
   hover: string | null;
   flights: Flight[];
-  t: number; // ms
+  /** Actions on objects still running, by object id. */
+  activity: Map<string, ObjectActivity>;
+  t: number; // ms, performance.now()
+  /** Wall-clock ms: objects' own rhythm and actions are timed in it. */
+  clock: number;
   /** Seconds since the previous frame. */
   dt: number;
   /** World editor open: everything holds still where it was placed. */
   frozen?: boolean;
+  /** Seen from above (2D): pictures instead of bodies and things. */
+  flat?: boolean;
 }
 
-/** Per-frame: agent state, behaviors, flights. Only transforms and materials change here. */
+const DESK_TINT: Record<DeskState, string> = { off: "#4b5563", sleep: "#60a5fa", on: "#a7f3d0", working: "#4ade80" };
+
+/** What a workstation shows, from what its person is doing. */
+export function deskState(work: WorkState, seated: boolean): DeskState {
+  if (work === "offline") return "off";
+  if (!seated) return "sleep";
+  return work === "executing" || work === "thinking" ? "working" : "on";
+}
+
+/** Light a workstation's screen for its state (and, when on, its runtime's color). */
+export function paintScreen(screen: THREE.MeshStandardMaterial, desk: DeskState, runtime: string, sec: number) {
+  if (desk === "off") {
+    screen.color.set("#0b0d12");
+    screen.emissive.set("#000000");
+    screen.emissiveIntensity = 0;
+  } else if (desk === "sleep") {
+    screen.color.set("#141c2e");
+    screen.emissive.set("#3b82f6");
+    screen.emissiveIntensity = 0.06 + 0.05 * Math.sin(sec * 1.3);
+  } else {
+    screen.color.set(SCREEN[runtime] ?? SCREEN.unknown!);
+    screen.emissive.set(SCREEN[runtime] ?? "#000000");
+    screen.emissiveIntensity = desk === "working" ? 0.55 + 0.35 * Math.sin(sec * 9) : 0.35;
+  }
+}
+
+/** Per-frame: agent state, objects' states and behaviors, errands, flights. Only transforms and materials change here. */
 export function updateScene(s: OfficeScene, f: FrameInput) {
   const sec = f.t / 1000;
+  const kinds = new Map<string, PlacedLife>(s.lives.map((l) => [l.id, l]));
+
+  // Someone was asked to do something with an object: send them over.
+  if (!f.frozen) {
+    for (const a of f.activity.values()) {
+      const until = Date.parse(a.until);
+      const key = `${a.objectId}:${a.until}`;
+      if (a.by.type !== "agent" || until <= f.clock || s.errands.has(key)) continue;
+      s.errands.add(key);
+      const node = s.agents.get(a.by.id);
+      const target = kinds.get(a.objectId);
+      const gesture = target?.life.kind.actions.find((x) => x.id === a.action)?.gesture ?? "none";
+      if (!node || !target || gesture === "none") continue;
+      const room = target.roamer?.room ?? target.roomId;
+      const at = target.root.position;
+      // Stand a little in front of it (towards the room's middle), on a free spot.
+      const r = s.nav.rooms.get(room);
+      const toward = r ? new THREE.Vector2(r.x + r.w / 2 - at.x, r.z + r.d / 2 - at.z) : new THREE.Vector2(0, 1);
+      if (toward.lengthSq() < 1e-4) toward.set(0, 1);
+      toward.setLength(gesture === "pet" ? 0.55 : 0.8);
+      const [x, z] = freeSpot(s.nav, room, at.x + toward.x, at.z + toward.y);
+      node.roamer.errand = { objectId: a.objectId, gesture, until: f.t + (until - f.clock), spot: { room, x, z }, arrived: false };
+      node.roamer.path = null;
+    }
+  }
+
   for (const node of s.agents.values()) {
     const a = f.agents.get(node.id);
     if (!a) continue;
     const work = f.workOf(a);
     const offline = work === "offline";
-    // Idle agents with a roaming avatar take a walk; any work brings them back to their chair.
-    if (node.roamer) {
-      if (offline || f.frozen) seat(node.roamer);
-      else stepRoamer(s.nav, node.roamer, f.t, f.dt, work !== "idle");
-    }
+    const r = node.roamer;
+    // Offline it is not shown and holds still; it walks back when it returns.
+    if (f.frozen) seat(r);
+    else if (!offline && !(r.errand && stepErrand(s, r, f.t, f.dt))) stepRoamer(s.nav, r, f.t, f.dt, work !== "idle" || !r.wanders);
     const floorShown = s.floors.get(Math.round(node.actor.position.y / FLOOR_HEIGHT))?.visible ?? true;
     node.actor.visible = !offline && floorShown; // offline: an empty chair
-    const screen = a.runtime?.state ?? "none";
-    node.screen.color.set(SCREEN[screen] ?? SCREEN.unknown!);
-    node.screen.emissive.set(SCREEN[screen] ?? "#000000");
-    node.screen.emissiveIntensity = work === "executing" ? 0.55 + 0.35 * Math.sin(sec * 9) : screen === "running" ? 0.35 : 0.15;
-    const walking = !!node.roamer && !node.roamer.seated && !!node.roamer.path;
-    animateAvatar(node.avatar, work, sec, node.roamer && !node.roamer.seated ? -node.roamer.lift : 0, walking);
+    const walking = !r.seated && !!r.path;
+    const pose = r.errand?.arrived ? r.errand.gesture : work;
+    animateAvatar(node.avatar, pose, sec, r.seated ? 0 : -r.lift, walking);
+
+    // The computer has its own state: it wakes when its person sits down and works.
+    const desk = deskState(work, r.seated);
+    paintScreen(node.screen, desk, a.runtime?.state ?? "none", sec);
+    const flat = !!f.flat;
+    node.avatar.visible = !flat;
+    node.badge.visible = flat;
+    for (const c of node.root.children) c.visible = c === node.deskBadge ? flat : !flat;
+    if (flat) (node.deskBadge.material as THREE.SpriteMaterial).color.set(DESK_TINT[desk]);
 
     const ringMat = node.ring.material as THREE.MeshBasicMaterial;
     ringMat.opacity = f.selected === node.id ? 0.95 : f.hover === node.id ? 0.45 : 0;
@@ -532,14 +787,29 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
     node.bubble.style.display = text ? "" : "none";
   }
 
-  for (const an of f.frozen ? [] : s.animated) applyBehavior(an, sec);
-
-  for (const r of s.roamers) {
-    if (r.home) continue; // agents were stepped above
-    if (!f.frozen) stepRoamer(s.nav, r, f.t, f.dt, false);
-    // Animals and people that roam breathe, look around, wag and swing their arms like agents do.
-    animateAvatar(r.body, "idle", sec, -r.lift, !!r.path);
-    r.obj.visible = s.floors.get(Math.round(r.obj.position.y / FLOOR_HEIGHT))?.visible ?? true;
+  for (const l of s.lives) {
+    // From above only its picture shows (its name stays).
+    if (l.badge.visible !== !!f.flat) {
+      l.badge.visible = !!f.flat;
+      l.life.obj.traverse((m) => {
+        if (m instanceof THREE.Mesh) m.visible = !f.flat;
+      });
+    }
+    const active = f.activity.get(l.id);
+    l.life.set(objectState(l.life.kind, l.id, f.clock, active ? { state: active.state, until: Date.parse(active.until) } : null));
+    if (!f.frozen) l.life.apply(sec);
+    const r = l.roamer;
+    if (r) {
+      // It walks only in a state that roams (a napping or purring cat stays put).
+      if (!f.frozen && l.life.roams) stepRoamer(s.nav, r, f.t, f.dt, false);
+      else if (r.path) {
+        r.path = null;
+        swingLegs(r.body, 0);
+      }
+      // Animals and people that roam breathe, look around, wag and swing their arms like agents do.
+      animateAvatar(r.body, l.life.pose, sec, -r.lift, !!r.path);
+      r.obj.visible = s.floors.get(Math.round(r.obj.position.y / FLOOR_HEIGHT))?.visible ?? true;
+    } else if (l.life.obj.userData.character) animateAvatar(l.life.obj, l.life.pose, sec);
   }
 
   if (!f.frozen) for (const m of s.mixers) m.update(Math.min(f.dt, 0.1));
@@ -561,7 +831,7 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
   }
 }
 
-/** Put an agent straight back in its chair (it went offline, or there is no way back). */
+/** Put an agent straight back in its chair (the editor is open, or there is no way back). */
 function seat(r: Roamer) {
   if (!r.home) return;
   r.obj.position.set(r.home.x, r.obj.position.y, r.home.z);
@@ -570,6 +840,8 @@ function seat(r: Roamer) {
   r.obj.rotation.y = 0;
   r.path = null;
   r.seated = true;
+  r.lost = 0;
+  r.errand = null;
   swingLegs(r.body, 0);
 }
 
@@ -587,6 +859,64 @@ export function swingLegs(body: THREE.Object3D, angle: number) {
   if (rr) rr.rotation.x = -angle;
 }
 
+/** One frame along the current path. Stairs and elevators are climbed too (slower), not jumped. */
+function advance(r: Roamer, now: number, dt: number): "idle" | "walking" | "arrived" {
+  const wp = r.path?.[r.idx];
+  if (!wp) {
+    swingLegs(r.body, 0);
+    return "idle";
+  }
+  const dx = wp.x - r.obj.position.x;
+  const dy = wp.y - r.obj.position.y;
+  const dz = wp.z - r.obj.position.z;
+  const flat = Math.hypot(dx, dz);
+  const dist = Math.hypot(flat, dy);
+  const stepLen = r.speed * (wp.jump ? 0.6 : 1) * Math.min(dt, 0.1);
+  if (dist > stepLen) {
+    r.obj.position.x += (dx / dist) * stepLen;
+    r.obj.position.y += (dy / dist) * stepLen;
+    r.obj.position.z += (dz / dist) * stepLen;
+    if (flat > 0.02) turnToward(r.obj, Math.atan2(-dx, -dz), dt);
+    swingLegs(r.body, Math.sin(now / 110) * 0.5);
+    return "walking";
+  }
+  r.obj.position.set(wp.x, wp.y, wp.z);
+  r.room = wp.room;
+  r.idx++;
+  if (r.idx < r.path!.length) return "walking";
+  r.path = null;
+  swingLegs(r.body, 0);
+  return "arrived";
+}
+
+/** Walk to an object and do the action there until it is over. False once there is nothing (left) to do. */
+function stepErrand(s: OfficeScene, r: Roamer, now: number, dt: number): boolean {
+  const e = r.errand!;
+  if (now > e.until) {
+    r.errand = null;
+    return false;
+  }
+  if (e.arrived) {
+    const target = s.lives.find((l) => l.id === e.objectId)?.root.position;
+    if (target) turnToward(r.obj, Math.atan2(-(target.x - r.obj.position.x), -(target.z - r.obj.position.z)), dt);
+    swingLegs(r.body, 0);
+    return true;
+  }
+  const last = r.path?.at(-1);
+  if (!last || last.x !== e.spot.x || last.z !== e.spot.z) {
+    r.seated = false;
+    // Sent by someone who may: any room on the way.
+    r.path = route(s.nav, { room: r.room, x: r.obj.position.x, z: r.obj.position.z }, e.spot, new Set(s.nav.rooms.keys()));
+    r.idx = 0;
+    if (!r.path) {
+      r.errand = null;
+      return false;
+    }
+  }
+  if (advance(r, now, dt) === "arrived") e.arrived = true;
+  return true;
+}
+
 /**
  * One frame of walking. Agents that should work head for their chair and sit;
  * everything else rests a while, then picks a room it may enter and walks there.
@@ -597,66 +927,50 @@ function stepRoamer(nav: Nav, r: Roamer, now: number, dt: number, goHome: boolea
     if (r.seated) return;
     const last = r.path?.at(-1);
     if (!last || last.x !== r.home.x || last.z !== r.home.z) {
-      r.path = route(nav, here, r.home, r.allowed);
-      r.idx = 0;
-      if (!r.path) return seat(r);
-    }
-  } else {
-    if (r.seated) {
-      // Stand up after a moment of idling.
-      if (!r.waitUntil) r.waitUntil = now + 2000 + r.seed * 6000;
       if (now < r.waitUntil) return;
-      r.seated = false;
-      r.waitUntil = 0;
-    }
-    if (!r.path && now >= r.waitUntil) {
-      const options = reachable(nav, r.room, r.allowed);
-      const room = nav.rooms.get(options[Math.floor(Math.random() * options.length)]!)!;
-      const [x, z] = freeSpot(nav, room.id, ...inside(room, room.x + Math.random() * room.w, room.z + Math.random() * room.d));
-      r.path = route(nav, here, { room: room.id, x, z }, r.allowed);
+      // From an errand too, the way back may cross rooms it would not stroll into.
+      r.path = route(nav, here, r.home, r.allowed.has(r.room) ? r.allowed : new Set(nav.rooms.keys()));
       r.idx = 0;
-      if (!r.path) r.waitUntil = now + 3000;
+      // No way home (a door was removed meanwhile): try again shortly, and only give up after a few tries.
+      if (!r.path) {
+        r.waitUntil = now + 2000;
+        if (++r.lost >= 3) seat(r);
+        return;
+      }
+      r.lost = 0;
     }
-  }
-  const wp = r.path?.[r.idx];
-  if (!wp) {
-    swingLegs(r.body, 0);
-    return;
-  }
-  {
-    // Stairs and elevators are climbed too (slower), not jumped.
-    const dx = wp.x - r.obj.position.x;
-    const dy = wp.y - r.obj.position.y;
-    const dz = wp.z - r.obj.position.z;
-    const flat = Math.hypot(dx, dz);
-    const dist = Math.hypot(flat, dy);
-    const stepLen = r.speed * (wp.jump ? 0.6 : 1) * Math.min(dt, 0.1);
-    if (dist > stepLen) {
-      r.obj.position.x += (dx / dist) * stepLen;
-      r.obj.position.y += (dy / dist) * stepLen;
-      r.obj.position.z += (dz / dist) * stepLen;
-      if (flat > 0.02) turnToward(r.obj, Math.atan2(-dx, -dz), dt);
-      swingLegs(r.body, Math.sin(now / 110) * 0.5);
-      return;
-    }
-    r.obj.position.set(wp.x, wp.y, wp.z);
-  }
-  r.room = wp.room;
-  r.idx++;
-  if (r.idx >= r.path!.length) {
-    r.path = null;
-    swingLegs(r.body, 0);
-    if (goHome && r.home) {
+    if (advance(r, now, dt) === "arrived") {
       r.seated = true;
       r.obj.rotation.y = 0;
-    } else {
-      r.waitUntil = now + 1500 + Math.random() * 4000;
     }
+    return;
   }
+  if (r.seated) {
+    // Stand up after a moment of idling.
+    if (!r.waitUntil) r.waitUntil = now + 2000 + r.seed * 6000;
+    if (now < r.waitUntil) return;
+    r.seated = false;
+    r.waitUntil = 0;
+  }
+  if (!r.path && now >= r.waitUntil) {
+    const options = reachable(nav, r.room, r.allowed);
+    const room = nav.rooms.get(options[Math.floor(Math.random() * options.length)]!)!;
+    const [x, z] = freeSpot(nav, room.id, ...inside(room, room.x + Math.random() * room.w, room.z + Math.random() * room.d));
+    r.path = route(nav, here, { room: room.id, x, z }, r.allowed);
+    r.idx = 0;
+    if (!r.path) r.waitUntil = now + 3000;
+  }
+  if (advance(r, now, dt) === "arrived") r.waitUntil = now + 1500 + Math.random() * 4000;
 }
 
 /** The placed object (index into world.objects) under a hit mesh, if any. */
 export function objectIndexOf(o: THREE.Object3D | null): number | null {
   for (let x = o; x; x = x.parent) if (typeof x.userData.objectIndex === "number") return x.userData.objectIndex as number;
+  return null;
+}
+
+/** The agent whose workstation a hit mesh belongs to, if any. */
+export function workstationOf(o: THREE.Object3D | null): string | null {
+  for (let x = o; x; x = x.parent) if (typeof x.userData.workstation === "string") return x.userData.workstation as string;
   return null;
 }

@@ -6,7 +6,8 @@ import { AssetsDialog } from "./Assets.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
 import { OrgEditor } from "./OrgEditor.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
-import { OwnerChatDialog, type ChatTarget } from "./OwnerChat.tsx";
+import { chatSelectionKey, OwnerChatDialog, type ChatTarget } from "./OwnerChat.tsx";
+import { Avatar, AvatarRoster } from "./Avatar.tsx";
 import { ConversationsSection } from "./Conversations.tsx";
 import { NeedsYou } from "./Inbox.tsx";
 import { EVENT_TEXT } from "./activity.ts";
@@ -236,8 +237,17 @@ function OrgApp({
   const working = active.filter((a) => ["thinking", "executing", "waiting"].includes(effectiveWork(a))).length;
 
   const openAgentChat = (id: string) => setEntityChat({ type: "agent", id, name: snapshot.agents.find((a) => a.id === id)!.displayName });
+  /** Open another conversation at one chat (a reference from the one open now). */
+  const openChat = (target: ChatTarget | null, chatId: string) => {
+    try {
+      localStorage.setItem(chatSelectionKey(orgId, me.actor.id, target), chatId);
+    } catch {}
+    setEntityChat(target);
+    setShowOwnerChat(!target);
+  };
 
   return (
+    <AvatarRoster value={{ world: snapshot.world, agents: snapshot.agents, departments: snapshot.departments, me: me.user?.displayName }}>
     <div className={`app${me.actor.owner ? " has-owner-chat" : ""}`}>
       <header className="topbar">
         <div className="brand">
@@ -277,9 +287,9 @@ function OrgApp({
             </button>
           )}
           {me.actor.owner && (
-            <button type="button" className="owner-chat-button" onClick={() => setShowOwnerChat(true)} aria-label={t("✦ Owner chat")}>
-              <span aria-hidden>✦</span>
-              <span className="btn-text">{t("✦ Owner chat").replace(/^✦ /, "")}</span>
+            <button type="button" className="owner-chat-button" onClick={() => setShowOwnerChat(true)} aria-label={t("System chat")}>
+              <Avatar who={{ type: "system" }} size={20} />
+              <span className="btn-text">{t("System chat")}</span>
             </button>
           )}
         </div>
@@ -343,7 +353,6 @@ function OrgApp({
           ) : (
             <AgentTable snapshot={snapshot} workOf={effectiveWork} now={now} onSelect={setSelected} selected={selected} onChat={me.actor.owner ? openAgentChat : undefined} />
           )}
-          {view === "office" && <Legend />}
         </section>
 
         {worldEditing ? null : selected ? (
@@ -366,6 +375,9 @@ function OrgApp({
               objectId={selectedObject}
               snapshot={snapshot}
               canDesign={!!me.can["org.design"]}
+              owner={!!me.actor.owner}
+              workOf={effectiveWork}
+              onSelectAgent={setSelected}
               onChat={me.actor.owner ? (id, name) => setEntityChat({ type: "object", id, name }) : undefined}
               onClose={() => setSelectedObject(null)}
               notify={notify}
@@ -413,8 +425,8 @@ function OrgApp({
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
       {showSettings && <SettingsDialog org={snapshot.organization} owner={!!me.actor.owner} onClose={() => setShowSettings(false)} />}
       {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
-      {entityChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} key={`${orgId}:${entityChat.type}:${entityChat.id}`} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} subject={entityChat} onClose={() => setEntityChat(null)} onKeys={() => { setEntityChat(null); setShowKeys(true); }} />}
-      {showOwnerChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} onClose={() => setShowOwnerChat(false)} onKeys={() => { setShowOwnerChat(false); setShowKeys(true); }} />}
+      {entityChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} key={`${orgId}:${entityChat.type}:${entityChat.id}`} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} subject={entityChat} onClose={() => setEntityChat(null)} onKeys={() => { setEntityChat(null); setShowKeys(true); }} onOpenChat={openChat} />}
+      {showOwnerChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} onClose={() => setShowOwnerChat(false)} onKeys={() => { setShowOwnerChat(false); setShowKeys(true); }} onOpenChat={openChat} />}
       {showAssets && <AssetsDialog onClose={() => setShowAssets(false)} notify={notify} />}
       {showOrg && <OrgEditor orgId={orgId} catalog={catalog} snapshot={snapshot} onClose={() => setShowOrg(false)} notify={notify} />}
       {showAdmin && (
@@ -438,6 +450,7 @@ function OrgApp({
         ))}
       </div>
     </div>
+    </AvatarRoster>
   );
 }
 
@@ -537,27 +550,6 @@ function AuditDialog({ onClose, now }: { onClose: () => void; now: number }) {
         </table>
       </div>
     </Modal>
-  );
-}
-
-function Legend() {
-  return (
-    <div className="legend" aria-label={tr("Legend")}>
-      <span>
-        <i className="sw sw-good" /> {t("runtime up")}
-      </span>
-      <span>
-        <i className="sw sw-warn" /> {t("starting")}
-      </span>
-      <span>
-        <i className="sw sw-bad" /> {t("failed")}
-      </span>
-      <span>{t("… thinking")}</span>
-      <span>{t("⌛ waiting")}</span>
-      <span>{t("! blocked")}</span>
-      <span>{t("? needs you")}</span>
-      <span>{t("empty chair = offline")}</span>
-    </div>
   );
 }
 

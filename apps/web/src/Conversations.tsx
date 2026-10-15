@@ -7,6 +7,7 @@ import { Modal, StatusPill, ago } from "./ui.tsx";
 import { t } from "./i18n.ts";
 import { EVENT_TEXT, plain } from "./activity.ts";
 import { ReportText } from "./Markdown.tsx";
+import { Avatar } from "./Avatar.tsx";
 
 type Filter = "you" | "team" | "other";
 
@@ -67,7 +68,7 @@ export function ConversationsSection({ snapshot, onChat, onOpenTask, now }: { sn
               {people.map((a) => (
                 <li key={a.id}>
                   <button type="button" className="conv-row" onClick={() => onChat({ type: "agent", id: a.id, name: a.displayName })}>
-                    <span className="conv-avatar" aria-hidden>{a.displayName.slice(0, 1)}</span>
+                    <Avatar who={{ type: "agent", id: a.id }} size={34} />
                     <span className="conv-main">
                       <b>{a.displayName}</b>
                       <span className="muted small">{a.jobRole} · {snapshot.teams.find((t) => t.id === a.teamId)?.name ?? a.teamId}</span>
@@ -81,7 +82,7 @@ export function ConversationsSection({ snapshot, onChat, onOpenTask, now }: { sn
                 return (
                   <li key={o.id}>
                     <button type="button" className="conv-row" onClick={() => onChat({ type: "object", id: o.id!, name: o.label || kind?.name || o.kind })}>
-                      <span className="conv-avatar object" aria-hidden>◆</span>
+                      <Avatar who={{ type: "object", id: o.id! }} size={34} />
                       <span className="conv-main">
                         <b>{o.label || kind?.name}</b>
                         <span className="muted small">{o.title || kind?.title || kind?.category || t("object")}</span>
@@ -178,7 +179,7 @@ function TeamChatDialog({ teamId, snapshot, now, onClose }: { teamId: string; sn
         {messages?.length === 0 && <p className="muted">{t("No messages yet. Team members post here with `agentown team say`.")}</p>}
         {messages?.map((m) => (
           <div key={m.id} className={`team-msg${m.system ? " system" : ""}${m.author.kind === "human" ? " human" : ""}`}>
-            <span className="team-msg-author">{m.author.name}</span>
+            <span className="team-msg-author"><Avatar who={m.author.kind === "agent" ? { type: "agent", id: m.author.id } : { type: "you" }} size={20} /> {m.author.name}</span>
             <span className="team-msg-text">
               {m.system ? (m.event && EVENT_TEXT[m.event.type] ? EVENT_TEXT[m.event.type]!(m.event, () => m.author.name).replace(`${m.author.name} `, "") : plain(m.text)) : <ReportText text={m.text} />}
             </span>

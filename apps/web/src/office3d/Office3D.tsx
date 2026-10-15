@@ -12,7 +12,7 @@ import { bounds, FLOOR_HEIGHT, layoutWorld, type PlacedRoom } from "./layout.ts"
 import { buildNav } from "./nav.ts";
 import { disposeMaterials } from "./procedural.ts";
 import { lightRoom } from "./env.ts";
-import { buildScene, type Flight, objectIndexOf, type OfficeScene, updateScene } from "./scene.ts";
+import { buildScene, type Flight, objectIndexOf, type OfficeScene, updateScene, workstationOf } from "./scene.ts";
 import type { Draft } from "./WorldEditor.tsx";
 
 // The editor (and its validation) is only downloaded when someone opens it.
@@ -49,6 +49,14 @@ export default function Office3D(props: Props) {
   const [failed, setFailed] = useState(false);
   const [floor, setFloor] = useState<number | "all">("all");
   const [focusRoom, setFocusRoom] = useState("");
+  // Seen from above (2D, pictures) or in perspective (3D, bodies); remembered per browser.
+  const [flat, setFlat] = useState(() => {
+    try {
+      return localStorage.getItem("agentown.view") === "2d";
+    } catch {
+      return false;
+    }
+  });
   const { snapshot } = props;
 
   // ---- world editor state (org.design)
@@ -80,14 +88,17 @@ export default function Office3D(props: Props) {
     setDirty(true);
   }, []);
 
+  // A reconnect re-reads the same world as a new object: compare contents, or everyone would be rebuilt where they started.
+  const worldKey = useMemo(() => JSON.stringify(shownWorld), [shownWorld]);
+  const deptKey = snapshot.departments.map((d) => `${d.id}:${d.color}`).join("|");
   const layout = useMemo(
     () => layoutWorld(shownWorld, snapshot.departments, snapshot.agents),
     // Rebuild only when the structure or the roster changes, not on every heartbeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [shownWorld, snapshot.departments, snapshot.agents.map((a) => `${a.id}:${a.departmentId}:${a.seat}:${a.lifecycleState}:${a.jobRole}`).join("|")],
+    [worldKey, deptKey, snapshot.agents.map((a) => `${a.id}:${a.departmentId}:${a.seat}:${a.lifecycleState}:${a.jobRole}`).join("|")],
   );
-  const latest = useRef({ props, layout, editing, edit, floor, focusRoom });
-  latest.current = { props, layout, editing, edit, floor, focusRoom };
+  const latest = useRef({ props, layout, editing, edit, floor, focusRoom, flat });
+  latest.current = { props, layout, editing, edit, floor, focusRoom, flat };
   const engine = useRef<{
     renderer: THREE.WebGLRenderer;
     labels: CSS2DRenderer;
@@ -97,6 +108,8 @@ export default function Office3D(props: Props) {
     office: OfficeScene | null;
     hover: string | null;
     tween: { from: THREE.Vector3; to: THREE.Vector3; z0: number; z1: number; start: number } | null;
+    /** Swinging the camera between the perspective and the top-down view. */
+    turn: { from: THREE.Vector3; to: THREE.Vector3; start: number; flat: boolean } | null;
     gizmo: TransformControls | null;
   } | null>(null);
 
@@ -107,7 +120,8 @@ export default function Office3D(props: Props) {
     if (!e || !el || !rooms.length) return;
     const b = bounds(rooms);
     const to = new THREE.Vector3((b.minX + b.maxX) / 2, b.y, (b.minZ + b.maxZ) / 2);
-    const span = (b.maxX - b.minX + (b.maxZ - b.minZ)) * 0.72 + 3;
+    // Tight framing: the world fills the stage, with just room for the labels.
+    const span = (b.maxX - b.minX + (b.maxZ - b.minZ)) * 0.6 + 1.5;
     const aspect = el.clientWidth / Math.max(1, el.clientHeight);
     // The isometric view shows a floor plan narrower than its span: fill the width on portrait screens.
     const zoom = Math.max(0.15, Math.min(6, (2 * VIEW) / (span * 0.62 + 2), (2 * VIEW * aspect) / (span * 0.9)));
@@ -163,7 +177,7 @@ export default function Office3D(props: Props) {
     controls.maxPolarAngle = 1.2;
     controls.screenSpacePanning = false;
 
-    engine.current = { renderer, labels, scene, camera, controls, office: null, hover: null, tween: null, gizmo: null };
+    engine.current = { renderer, labels, scene, camera, controls, office: null, hover: null, tween: null, turn: null, gizmo: null };
 
     const resize = () => {
       const w = el.clientWidth;
@@ -200,6 +214,19 @@ export default function Office3D(props: Props) {
         camera.updateProjectionMatrix();
         if (k >= 1) e.tween = null;
       }
+      if (e.turn) {
+        const k = Math.min(1, (now - e.turn.start) / 550);
+        const ease = 1 - (1 - k) ** 3;
+        const length = camera.position.distanceTo(controls.target);
+        camera.position.copy(controls.target).add(e.turn.from.clone().lerp(e.turn.to, ease).normalize().multiplyScalar(length));
+        if (k >= 1) {
+          // Top-down: no turning; perspective: the usual range.
+          controls.minPolarAngle = e.turn.flat ? 0 : 0.35;
+          controls.maxPolarAngle = e.turn.flat ? 0 : 1.2;
+          controls.enableRotate = !e.turn.flat;
+          e.turn = null;
+        }
+      }
       controls.update();
       const { props: p } = latest.current;
       if (e.office) {
@@ -210,9 +237,12 @@ export default function Office3D(props: Props) {
           selected: p.selected,
           hover: e.hover,
           flights: p.flights,
+          activity: new Map((p.snapshot.objectStates ?? []).map((x) => [x.objectId, x])),
           t: now,
+          clock: Date.now(),
           dt,
           frozen: latest.current.editing,
+          flat: latest.current.flat && !latest.current.editing,
         });
       }
       renderer.render(scene, camera);
@@ -259,9 +289,16 @@ export default function Office3D(props: Props) {
             aim(ev);
             const e = engine.current!;
             const hits = e.office ? ray.intersectObject(e.office.root, true).filter(h => h.object.visible && (h.object as THREE.Mesh).isMesh) : [];
-            const index = hits.map(h => objectIndexOf(h.object)).find(i => i !== null);
-            const object = index != null ? latest.current.props.snapshot.world?.objects[index] : undefined;
-            if (object?.id) latest.current.props.onSelectObject(object.id);
+            // The nearest thing hit: a placed object, or someone's workstation.
+            for (const h of hits) {
+              const index = objectIndexOf(h.object);
+              const object = index != null ? latest.current.props.snapshot.world?.objects[index] : undefined;
+              const desk = workstationOf(h.object);
+              if (object?.id) latest.current.props.onSelectObject(object.id);
+              else if (desk) latest.current.props.onSelectObject(`desk:${desk}`);
+              else continue;
+              break;
+            }
           }
         }
       }
@@ -300,12 +337,13 @@ export default function Office3D(props: Props) {
   useEffect(() => {
     const e = engine.current;
     if (!e) return;
-    e.office?.dispose();
+    const previous = e.office;
     const office = buildScene(layout, snapshot.world ?? null, snapshot.departments, snapshot.agents, buildNav(snapshot.world ?? null, layout), (roomId) => {
       setFocusRoom(roomId);
       const room = layout.rooms.find((r) => r.id === roomId);
       if (room) focus([room]);
-    });
+    }, previous);
+    previous?.dispose();
     e.scene.add(office.root);
     e.office = office;
     if (firstFit.current) {
@@ -316,6 +354,25 @@ export default function Office3D(props: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout]);
+
+  // 2D / 3D: swing the camera over or back.
+  useEffect(() => {
+    try {
+      localStorage.setItem("agentown.view", flat ? "2d" : "3d");
+    } catch {}
+    const e = engine.current;
+    if (!e) return;
+    e.controls.minPolarAngle = 0;
+    e.controls.maxPolarAngle = 1.2;
+    const from = e.camera.position.clone().sub(e.controls.target).normalize();
+    e.turn = { from, to: flat ? new THREE.Vector3(0, 1, 0.0001) : ISO.clone().normalize(), start: performance.now(), flat };
+    // Floors stacked on top of each other cannot be seen from above: show one.
+    if (flat && floor === "all" && layout.floors.length > 1) {
+      setFloor(0);
+      focus(layout.rooms.filter((r) => r.floorIndex === 0));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flat]);
 
   // Floor filter: show one floor, or all of them stacked.
   useEffect(() => {
@@ -416,6 +473,7 @@ export default function Office3D(props: Props) {
       setHistory([]);
       setDirty(!r.world);
       setSelectedObj(null);
+      setFlat(false);
       setEditing(true);
       props.onEditingChange?.(true);
     } catch (e) {
@@ -522,6 +580,16 @@ export default function Office3D(props: Props) {
           canUndo={history.length > 0}
           notify={notify}
         />
+      )}
+      {!editing && (
+        <div className="view-mode" role="group" aria-label={tr("View")}>
+          <button type="button" className={flat ? "" : "active"} aria-pressed={!flat} onClick={() => setFlat(false)} title={tr("3D: people and things as they are")}>
+            3D
+          </button>
+          <button type="button" className={flat ? "active" : ""} aria-pressed={flat} onClick={() => setFlat(true)} title={tr("2D: from above, everyone as their picture")}>
+            2D
+          </button>
+        </div>
       )}
       <div className={`zoom-controls ${editing ? "editing" : ""}`}>
         <button type="button" onClick={() => zoomBy(1.25)} aria-label={tr("Zoom in")}>

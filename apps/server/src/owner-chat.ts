@@ -285,7 +285,8 @@ export class OwnerChat {
     const status = (await this.db.query<{ status: string }>("SELECT status FROM owner_chat_runs WHERE id=$1", [theirs])).rows[0]?.status ?? "unknown";
     const reply = (await this.db.query<{ text: string }>("SELECT string_agg(text, E'\n\n' ORDER BY id) AS text FROM owner_chat_messages WHERE run_id=$1 AND role='assistant' AND NOT partial", [theirs])).rows[0]?.text ?? null;
     if (reply) await this.transcript(c.id, runId, "assistant", reply, false, subject);
-    if (status === "waiting_approval") await this.transcript(c.id, runId, "notice", `${entity.profile.name} is waiting for your confirmation in their chat.`, false, subject);
+    const vi = ctx.service.config.organization.language === "vi";
+    if (status === "waiting_approval") await this.transcript(c.id, runId, "notice", vi ? `${entity.profile.name} đang chờ bạn xác nhận trong chat riêng.` : `${entity.profile.name} is waiting for your confirmation in their chat.`, false, subject);
     return { from: entity.profile.name, status, reply, shownToOwner: !!reply, chatId };
   }
   private async resolveCalls(c: ChatRow, r: RunRow, signal: AbortSignal) {

@@ -106,6 +106,10 @@ export function useOffice(signedIn: boolean, onEvent?: (e: AgentEvent) => void) 
 }
 
 function applyEvent(s: Snapshot, e: AgentEvent): Snapshot {
+  if (e.type === "org.object") {
+    const a = e.payload as unknown as Snapshot["objectStates"][number];
+    return { ...s, cursor: e.seq, objectStates: [...(s.objectStates ?? []).filter((x) => x.objectId !== a.objectId), a] };
+  }
   const patch = (fn: (a: Agent) => Agent) => ({
     ...s,
     cursor: e.seq,

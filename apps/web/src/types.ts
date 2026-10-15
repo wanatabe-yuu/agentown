@@ -164,9 +164,19 @@ export interface Snapshot {
   projects: Array<{ id: string; name: string }>;
   /** Floors, rooms and objects from the organization's template; null = one room per department. */
   world: World | null;
+  /** Actions on objects still running (the pet cat purrs for a while). */
+  objectStates: ObjectActivity[];
   agents: Agent[];
   tasks: Task[];
   serverTime: string;
+}
+
+export interface ObjectActivity {
+  objectId: string;
+  action: string;
+  state: string;
+  by: { type: "human" | "agent" | "object"; id: string };
+  until: string;
 }
 
 /** A team works in one department and shares one runtime. */

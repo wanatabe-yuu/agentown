@@ -4,18 +4,22 @@ import { type CSSProperties, useCallback, useEffect, useRef, useState } from "re
 import { api, HttpError } from "./api.ts";
 import { Menu, Modal } from "./ui.tsx";
 import { requestId } from "./requestId.ts";
+import { Avatar, WhoName, type Who } from "./Avatar.tsx";
 
 interface Config { credentialId: string; model: string; effort: string | null; contextLimit: number; maxOutputTokens: number; maxTurns: number; approvalMode: "important" | "all" }
 interface Chat { id: string; title: string; archivedAt: string | null; config: Config; contextTokens: number; countMode: string; modelInfo: { contextWindow: number | null; nativeCompaction: boolean; efforts: string[] | null } | null; usage: { inputTokens?: number; outputTokens?: number; cachedTokens?: number; compactions?: number; incompleteRequests?: number } }
 interface Credential { id: string; name: string; provider: string; models: string[] }
-interface Entry { id: string; role: string; text: string; partial: boolean; run_id: string; created_at: string }
+interface Entry { id: string; role: string; text: string; partial: boolean; run_id: string; created_at: string; author_type: "agent" | "object" | null; author_id: string | null }
 interface Action { id: string; run_id: string; name: string; args: unknown; status: string; result: unknown; created_at: string }
 interface View { chat: Chat; messages: Entry[]; hasOlder: boolean; actions: Action[]; run: { id: string; status: string; partialText: string; error: string | null; rounds: number } | null }
 export interface ChatTarget { type: "agent" | "object"; id: string; name: string }
 interface Profile { name: string; role: string; template: string; instructions: string; authority: string }
-interface Index { profile?: Profile | null; chats: Chat[]; credentials: Credential[]; defaults: Config | null }
+interface Ref { chatId: string; title: string; subject: { type: "owner" | "agent" | "object"; id: string }; updatedAt: string }
+interface Index { profile?: Profile | null; chats: Chat[]; credentials: Credential[]; defaults: Config | null; refs?: Ref[] }
+/** Messages the system chat relays to someone start with this; their chat shows it as the owner speaking through it. */
+const RELAY = "[From the owner's system chat] ";
 const number = (n = 0) => n.toLocaleString();
-export const labels: Record<string, string> = { inspect: "Read world", patch_world: "Edit world", replace_world: "Replace world", patch_config: "Edit organization", create_task: "Create task", task_action: "Update task", spawn_agent: "Hire agent", update_agent: "Update agent", configure_agent: "Configure agent", prepare_self_runtime: "Set up task runtime", agent_action: "Control agent", retire_agent: "Retire agent", update_person: "Update member", grant_person: "Grant permission", revoke_permission: "Revoke permission", delegate_permission: "Delegate permission", credential_action: "Update API key", delete_asset: "Delete art" };
+export const labels: Record<string, string> = { ask: "Ask", assign_to_ceo: "Hand to the CEO", objects: "Look at objects", interact: "Interact", set_state: "Change state", look_around: "Look around", inspect: "Read world", patch_world: "Edit world", replace_world: "Replace world", patch_config: "Edit organization", create_task: "Create task", task_action: "Update task", spawn_agent: "Hire agent", update_agent: "Update agent", configure_agent: "Configure agent", prepare_self_runtime: "Set up task runtime", agent_action: "Control agent", retire_agent: "Retire agent", update_person: "Update member", grant_person: "Grant permission", revoke_permission: "Revoke permission", delegate_permission: "Delegate permission", credential_action: "Update API key", delete_asset: "Delete art" };
 
 /** Chat formatting: GitHub Markdown (tables, lists, code); model HTML and remote media never render. */
 function ChatText({ text }: { text: string }) {
@@ -31,7 +35,9 @@ function ActionCard({ action: a, busy, decide, agents, tasks, credentials }: { c
   const args = dataObject(a.args), result = dataObject(a.result);
   const agent = agents.find(x => x.id === (args.assigneeAgentId ?? args.agentId ?? args.id))?.displayName;
   const task = tasks.find(x => x.id === args.id)?.title;
-  const description = a.name === "create_task" ? `${args.title ?? t("New task")}${agent ? ` · ${agent}` : ""}` :
+  const description = a.name === "assign_to_ceo" ? `${args.title ?? ""}${result.assignedTo ? ` · ${result.assignedTo.name}` : ""}` :
+    a.name === "ask" ? `${agents.find(x => x.id === args.id)?.displayName ?? args.id}: ${String(args.message ?? "")}` :
+    a.name === "create_task" ? `${args.title ?? t("New task")}${agent ? ` · ${agent}` : ""}` :
     a.name === "prepare_self_runtime" ? `${agent ?? t("This agent")} · ${credentials.find(k => k.id === args.credentialId)?.name ?? t("saved API connection")} · ${modelLabel(String(args.model))}${args.effort ? ` · ${args.effort}` : ""}${t(". Applies to task execution after your confirmation.")}` :
     a.name === "task_action" ? `${String(args.action ?? t("Update"))} · ${task ?? args.id ?? t("task")}` :
     a.name === "inspect" ? t("Checked {what}", { what: args.kind ?? t("world") }) : agent ?? (args.note || "");
@@ -47,10 +53,13 @@ function ActionCard({ action: a, busy, decide, agents, tasks, credentials }: { c
   </div>;
 }
 
-export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [], tasks = [], onClose, onKeys }: { agents?: Array<{ id: string; displayName: string }>; tasks?: Array<{ id: string; title: string }>; subject?: ChatTarget; orgId: string; ownerId: string; orgName: string; onClose: () => void; onKeys: () => void }) {
+/** Where a chat's selection is remembered, so another chat (a reference) can open it at that conversation. */
+export const chatSelectionKey = (orgId: string, ownerId: string, subject?: { type: string; id: string } | null) => `owner-chat:${orgId}:${ownerId}${subject ? `:${subject.type}:${subject.id}` : ""}`;
+
+export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [], tasks = [], onClose, onKeys, onOpenChat }: { agents?: Array<{ id: string; displayName: string }>; tasks?: Array<{ id: string; title: string }>; subject?: ChatTarget; orgId: string; ownerId: string; orgName: string; onClose: () => void; onKeys: () => void; onOpenChat?: (target: ChatTarget | null, chatId: string) => void }) {
   // Pin the path to this org. A switch elsewhere cannot redirect an in-flight write.
   const base = `/api/orgs/${encodeURIComponent(orgId)}/${subject ? `entity-chats/${subject.type}/${encodeURIComponent(subject.id)}` : "owner-chats"}`;
-  const selectionKey = `owner-chat:${orgId}:${ownerId}${subject ? `:${subject.type}:${subject.id}` : ""}`;
+  const selectionKey = chatSelectionKey(orgId, ownerId, subject);
   const [index, setIndex] = useState<Index | null>(null);
   const [id, setId] = useState<string | null>(null);
   const [view, setView] = useState<View | null>(null);
@@ -208,9 +217,13 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
   const contextBudget = Math.min(config?.contextLimit ?? 64000, view?.chat.modelInfo?.contextWindow ?? Infinity);
   const context = view?.chat.contextTokens ?? 0;
   const usage = view?.chat.usage;
-  const assistantName = index?.profile?.name ?? subject?.name ?? t("Owner assistant");
+  const assistantName = index?.profile?.name ?? (subject?.name || (subject ? "" : t("System chat")));
   const actionable = view?.actions.filter(a => a.status === "pending") ?? [];
-  return <Modal title={subject ? t("Chat · {name}", { name: assistantName }) : t("Owner chat · {org}", { org: orgName })} onClose={onClose} wide className="owner-chat-modal" style={{ "--chat-viewport-height": viewportHeight ? `${viewportHeight}px` : "100dvh" } as CSSProperties}>
+  const self: Who = subject ? { type: subject.type, id: subject.id } : { type: "system" };
+  const whoOf = (m: Entry): Who => m.role === "user" ? { type: "you" } : m.author_type && m.author_id ? { type: m.author_type, id: m.author_id } : self;
+  const nameOf = (m: Entry) => m.author_type && m.author_id ? <WhoName who={{ type: m.author_type, id: m.author_id }} /> : assistantName;
+  const refWho = (r: Ref): Who => r.subject.type === "owner" ? { type: "system" } : { type: r.subject.type, id: r.subject.id };
+  return <Modal title={subject ? t("Chat · {name}", { name: assistantName }) : t("System chat · {org}", { org: orgName })} onClose={onClose} wide className="owner-chat-modal" style={{ "--chat-viewport-height": viewportHeight ? `${viewportHeight}px` : "100dvh" } as CSSProperties}>
     <div className="owner-chat-shell">
       <div className="owner-chat-toolbar">
         <select aria-label={t("Conversation")} value={id ?? ""} disabled={busy} onChange={e => choose(e.target.value || null)}>
@@ -227,6 +240,13 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
           ] : []),
         ]} />
       </div>
+      {!!index?.refs?.length && onOpenChat && <details className="chat-refs">
+        <summary>{t("Mentioned in {n} other conversations", { n: index.refs.length })}</summary>
+        <div>{index.refs.map(r => <button type="button" key={r.chatId} className="chat-ref" onClick={() => onOpenChat(r.subject.type === "owner" ? null : { type: r.subject.type, id: r.subject.id, name: "" }, r.chatId)}>
+          <Avatar who={refWho(r)} size={20} />
+          <span className="chat-ref-title"><b><WhoName who={refWho(r)} /></b> · {r.title}</span>
+        </button>)}</div>
+      </details>}
       {archived && <div className="chat-archive-banner">{t("Archived conversations")}<button type="button" disabled={busy} onClick={switchArchive}>{t("Back to chat")}</button></div>}
       {confirmDelete && <div className="chat-delete-confirm" role="alert">
         <p>{t("Delete “{title}” permanently? This removes its messages and action receipts. Changes already made in the world remain.", { title: view?.chat.title ?? index?.chats.find(c => c.id === id)?.title ?? "" })}</p>
@@ -284,16 +304,19 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
           <h3>{subject ? t("Talk with {name}", { name: assistantName }) : t("Your world, one conversation")}</h3>
           <p>{subject ? t("Ask a question or think something through together. Tasks are created when there is work to do.") : t("Ask about your team, or tell me what you want to change.")}</p>
           <div className="chat-suggestions">{(subject ? ["Bạn có thể giúp tôi những gì?", "Cùng phân tích tình trạng hiện tại"] : ["Tóm tắt tình trạng hiện tại", "Ai đang cần tôi xử lý?"]).map(text => <button type="button" key={text} onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}</div>
-          <small className="muted">{t("Private to you · Important changes need confirmation.")}</small>
+          <small className="muted">{subject ? t("Private to you · Important changes need confirmation.") : t("Private to you · I read everything but change nothing myself: I ask the right person, or hand work to the CEO once you confirm.")}</small>
         </div>}
         {timeline.map(row => row.kind === "action" ? <ActionCard key={row.item.id} action={row.item} busy={busy} decide={decide} agents={agents} tasks={tasks} credentials={index?.credentials ?? []} /> : row.kind === "activity" ? <details className="chat-activity" key={row.runId}>
           <summary>{row.items.length} {row.items.length === 1 ? t("step") : t("steps")}{row.items.some(a => a.status === "failed") ? t(" · {n} couldn't complete", { n: row.items.filter(a => a.status === "failed").length }) : t(" completed")}</summary>
           <div>{row.items.map(a => <ActionCard key={a.id} action={a} busy={busy} decide={decide} agents={agents} tasks={tasks} credentials={index?.credentials ?? []} />)}</div>
-        </details> : <article key={row.item.id} className={`chat-message chat-${row.item.role}`}>
-          <div className="chat-message-label">{row.item.role === "user" ? t("You") : row.item.role === "notice" ? t("Update") : assistantName}{row.item.partial && <span className="muted"> · {t("partial response")}</span>}</div>
-          <ChatText text={row.item.text} />
+        </details> : row.item.role === "notice" ? <article key={row.item.id} className="chat-message chat-notice"><ChatText text={row.item.text} /></article> : <article key={row.item.id} className={`chat-message chat-${row.item.role}${row.item.author_type ? " chat-relayed" : ""}`}>
+          <Avatar who={whoOf(row.item)} size={30} className="chat-avatar" />
+          <div className="chat-bubble">
+            <div className="chat-message-label">{row.item.role === "user" ? t("You") : nameOf(row.item)}{row.item.role === "user" && row.item.text.startsWith(RELAY) && <span className="muted"> · {t("via the system chat")}</span>}{row.item.partial && <span className="muted"> · {t("partial response")}</span>}</div>
+            <ChatText text={row.item.role === "user" && row.item.text.startsWith(RELAY) ? row.item.text.slice(RELAY.length) : row.item.text} />
+          </div>
         </article>)}
-        {view?.run?.partialText && <article className="chat-message chat-assistant"><div className="chat-message-label">{assistantName} · {t("writing")}</div><ChatText text={view.run.partialText} /></article>}
+        {view?.run?.partialText && <article className="chat-message chat-assistant"><Avatar who={self} size={30} className="chat-avatar" /><div className="chat-bubble"><div className="chat-message-label">{assistantName} · {t("writing")}</div><ChatText text={view.run.partialText} /></div></article>}
         {active && <div className="chat-working" role="status">{actionable.length ? t("Waiting for your confirmation above") : t("Working · step {n} of {max}", { n: view?.run?.rounds ?? 0, max: config?.maxTurns ?? 5 })}</div>}
         {view?.run?.error && <div className="chat-error" role="status">{view.run.error}</div>}
       </div>

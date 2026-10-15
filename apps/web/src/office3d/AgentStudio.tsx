@@ -5,12 +5,14 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { api } from "../api.ts";
 import { t } from "../i18n.ts";
+import { Avatar } from "../Avatar.tsx";
+import { uploadAsset } from "../Assets.tsx";
 import type { Agent, WorkState } from "../types.ts";
 import { StatusPill } from "../ui.tsx";
 import { loadModels } from "./assets.ts";
 import { lightRoom } from "./env.ts";
-import { chair, desk, monitor } from "./procedural.ts";
-import { agentAvatar, animateAvatar, SCREEN, swingLegs } from "./scene.ts";
+import { chair } from "./procedural.ts";
+import { agentAvatar, animateAvatar, swingLegs } from "./scene.ts";
 
 const BUILT_IN: Record<(typeof CHARACTERS)[number], string> = { person: "Person", cat: "Cat", dog: "Dog", robot: "Robot" };
 
@@ -57,8 +59,8 @@ export default function AgentStudio(p: {
   const holder = useRef<THREE.Group | null>(null);
   const [action, setAction] = useState<Action>("live");
   const shown = action === "live" ? p.work : action;
-  const live = useRef({ work: shown as string, runtime: p.agent.runtime?.state ?? "none" });
-  live.current = { work: shown, runtime: action === "live" ? (p.agent.runtime?.state ?? "none") : action === "offline" ? "stopped" : "running" };
+  const live = useRef({ work: shown as string });
+  live.current = { work: shown };
   const saved = p.world?.avatars.byAgent?.[p.agent.id] ?? {};
   const [draft, setDraft] = useState<AvatarOverride | null>(null);
   const look = draft ?? saved;
@@ -107,13 +109,10 @@ export default function AgentStudio(p: {
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
-    const d = desk();
-    d.position.z = -0.35;
-    const { group: mon, screen } = monitor();
-    mon.position.z = -0.35;
+    // The person on their own: their computer is a separate thing (its own panel), only a chair to sit on here.
     const c = chair();
     c.position.z = 0.35;
-    scene.add(d, mon, c);
+    scene.add(c);
     const actor = new THREE.Group();
     actor.position.set(SEAT.x, 0, SEAT.z);
     scene.add(actor);
@@ -123,9 +122,9 @@ export default function AgentStudio(p: {
     const bubble = new CSS2DObject(bubbleEl);
     scene.add(bubble);
 
-    // From the side of the desk, a little in front: the face, the hands and the screen, with the monitor out of the way.
+    // A three-quarter view from the front: face, hands and the whole body.
     const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 50);
-    camera.position.set(2.6, 1.45, -0.7);
+    camera.position.set(1.7, 1.45, -2.3);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(0.15, 0.75, 0.1);
     controls.enablePan = false;
@@ -160,7 +159,7 @@ export default function AgentStudio(p: {
     let shift = 0;
     const loop = (now: number) => {
       frame = requestAnimationFrame(loop);
-      const { work, runtime } = live.current;
+      const { work } = live.current;
       const sec = now / 1000;
       const avatar = actor.children[0];
       const walking = work === "walking";
@@ -176,9 +175,6 @@ export default function AgentStudio(p: {
         animateAvatar(avatar, walking ? "idle" : work, sec, walking ? -((avatar.userData.lift as number | undefined) ?? 0) * avatar.scale.y : 0, walking);
         swingLegs(avatar, walking ? Math.sin(sec * 9) * 0.6 : 0);
       }
-      screen.color.set(SCREEN[runtime] ?? SCREEN.unknown!);
-      screen.emissive.set(SCREEN[runtime] ?? "#000000");
-      screen.emissiveIntensity = work === "executing" ? 0.55 + 0.35 * Math.sin(sec * 9) : runtime === "running" ? 0.35 : 0.15;
       const [text, tone] = work === "thinking" ? [".".repeat(1 + (Math.floor(now / 400) % 3)), "plain"] : (BUBBLE[work] ?? ["", ""]);
       if (bubbleEl.textContent !== text) bubbleEl.textContent = text;
       bubbleEl.dataset.tone = tone;
@@ -199,7 +195,6 @@ export default function AgentStudio(p: {
       controls.dispose();
       floorGeo.dispose();
       floorMat.dispose();
-      screen.dispose();
       dropEnv();
       renderer.dispose();
       // Give the context back now: browsers keep only a few, and the office needs its own.
@@ -292,6 +287,39 @@ export default function AgentStudio(p: {
             </button>
             {presetOpen && (
               <div className="studio-preset-body">
+                <div className="avatar-setting">
+                  <Avatar who={{ type: "agent", id: p.agent.id }} size={52} />
+                  <div>
+                    <b>{t("Avatar")}</b>
+                    <span className="muted small">{saved.image ? t("Uploaded picture") : t("Portrait of the 3D character")}</span>
+                    <span className="btn-row">
+                      <label className={`button${busy ? " disabled" : ""}`}>
+                        {t("Upload…")}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          hidden
+                          disabled={busy}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (!file) return;
+                            try {
+                              await save({ ...saved, image: (await uploadAsset(file)).id });
+                            } catch (err) {
+                              p.notify((err as Error).message, "error");
+                            }
+                          }}
+                        />
+                      </label>
+                      {saved.image && (
+                        <button type="button" className="link" disabled={busy} onClick={() => void save({ ...saved, image: undefined })}>
+                          {t("Use the 3D portrait")}
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                </div>
                 <label>
                   {t("Character")}
                   <select
@@ -359,8 +387,8 @@ export default function AgentStudio(p: {
                     </button>
                   )}
                 </div>
-                {!changed && Object.keys(saved).length > 0 && (
-                  <button type="button" className="link" disabled={busy} onClick={() => void save(null)}>
+                {!changed && Object.keys(saved).some((k) => k !== "image") && (
+                  <button type="button" className="link" disabled={busy} onClick={() => void save(saved.image ? { image: saved.image } : null)}>
                     {t("Back to the template's look")}
                   </button>
                 )}

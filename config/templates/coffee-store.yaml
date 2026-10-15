@@ -208,6 +208,14 @@ world:
       chat:
         instructions: "You are Bean, the café's black shop cat. You nap in sunny spots, know every regular by the sound of their footsteps and judge the pastries. Speak like a cat who happens to talk: short, curious, a little smug, warm underneath."
 
+      states:
+        - { id: wander, name: Wandering }
+        - { id: nap, name: Napping, pose: sleep, auto: true, behaviors: [] }
+        - { id: purr, name: Purring, pose: happy, behaviors: [] }
+        - { id: play, name: Playing, pose: play, behaviors: [] }
+      actions:
+        - { id: pet, name: Pet, state: purr, seconds: 25, gesture: pet }
+        - { id: play, name: Play with, state: play, seconds: 20, gesture: pet }
     # ---- Counter & seating (1A)
     counter:
       name: Counter
@@ -289,6 +297,11 @@ world:
       behaviors:
         - { type: flicker, part: tube, speed: 0.8, amount: 1 }
         - { type: flicker, part: line, speed: 0.5, amount: 0.6 }
+      states:
+        - { id: open, name: Open }
+        - { id: closed, name: Closed, behaviors: [], glow: 0.08 }
+      actions:
+        - { id: close, name: Switch off, state: closed, seconds: 600, gesture: none }
     pendant-lamp:
       name: Pendant lamp
       category: dynamic
@@ -300,6 +313,11 @@ world:
       behaviors:
         - { type: flicker, part: bulb, speed: 0.5, amount: 0.5 }
         - { type: sway, speed: 0.15, amount: 0.08 }
+      states:
+        - { id: on, name: "On" }
+        - { id: dim, name: Dimmed, glow: 0.3 }
+      actions:
+        - { id: dim, name: Dim the light, state: dim, seconds: 600, gesture: none }
     cafe-table:
       name: Café table
       category: static
@@ -404,6 +422,11 @@ world:
       chat:
         instructions: "You are the café's old jukebox. You know every song you have ever played and you pick music for the mood of the room. Answer like a warm, slightly theatrical DJ; suggest a track when it fits."
 
+      states:
+        - { id: playing, name: Playing }
+        - { id: paused, name: Paused, behaviors: [], glow: 0.25 }
+      actions:
+        - { id: pause, name: Pause the music, state: paused, seconds: 180, gesture: use }
     # ---- Coffee bar (1B)
     espresso-station:
       name: Espresso station
@@ -440,6 +463,11 @@ world:
       behaviors:
         - { type: blink, part: led, speed: 1.5 }
         - { type: steam, part: cup, speed: 0.7, amount: 1.7 }
+      states:
+        - { id: ready, name: Ready, behaviors: [{ type: blink, part: led, speed: 0.4, amount: 0.4 }] }
+        - { id: brewing, name: Brewing, auto: true }
+      actions:
+        - { id: brew, name: Pull a shot, state: brewing, seconds: 30, gesture: use }
     shelf:
       name: Shelf
       category: static
@@ -499,6 +527,11 @@ world:
       behaviors:
         - { type: flicker, part: window, speed: 0.4, amount: 0.8 }
         - { type: steam, part: vent, speed: 0.35, amount: 0.9 }
+      states:
+        - { id: warm, name: Warm, behaviors: [{ type: flicker, part: window, speed: 0.2, amount: 0.3 }], glow: 0.5 }
+        - { id: baking, name: Baking, auto: true }
+      actions:
+        - { id: bake, name: Bake a batch, state: baking, seconds: 60, gesture: use }
     prep-table:
       name: Prep table
       category: static
@@ -640,6 +673,11 @@ world:
         - { type: spin, part: blades, speed: 0.9 }
         - { type: flicker, part: light, speed: 0.3, amount: 0.2 }
 
+      states:
+        - { id: on, name: "On" }
+        - { id: off, name: "Off", behaviors: [], glow: 0 }
+      actions:
+        - { id: switch-off, name: Switch off, state: off, seconds: 600, gesture: none }
     # ---- Roastery (2B)
     roaster-drum:
       name: Coffee roaster
@@ -663,6 +701,11 @@ world:
         - { type: steam, part: chimney, speed: 0.4, amount: 1.4 }
         - { type: blink, part: panel, speed: 0.6, amount: 0.4 }
 
+      states:
+        - { id: cooling, name: Cooling, behaviors: [{ type: blink, part: panel, speed: 0.3, amount: 0.2 }], glow: 0.4 }
+        - { id: roasting, name: Roasting, auto: true }
+      actions:
+        - { id: roast, name: Roast a batch, state: roasting, seconds: 90, gesture: use }
     # ---- Content studio (2C)
     ring-light:
       name: Ring light
@@ -677,6 +720,11 @@ world:
           - { shape: roundbox, size: [0.08, 0.15, 0.01], offset: [0, 1.65, 0.01], color: "#14181f", finish: gloss }
       behaviors:
         - { type: flicker, part: ring, speed: 0.4, amount: 0.15 }
+      states:
+        - { id: on, name: "On" }
+        - { id: off, name: "Off", behaviors: [], glow: 0 }
+      actions:
+        - { id: switch-off, name: Switch off, state: off, seconds: 600, gesture: use }
     camera-tripod:
       name: Camera
       category: dynamic
@@ -692,6 +740,11 @@ world:
           - { shape: sphere, size: [0.04, 0.04, 0.04], offset: [0.1, 1.15, 0.08], color: "#ff3b3b", emissive: "#ff1f1f", part: rec }
       behaviors:
         - { type: blink, part: rec, speed: 1 }
+      states:
+        - { id: standby, name: Standby, behaviors: [], glow: 0.15 }
+        - { id: recording, name: Recording }
+      actions:
+        - { id: record, name: Record a clip, state: recording, seconds: 120, gesture: use }
     backdrop:
       name: Backdrop
       category: static

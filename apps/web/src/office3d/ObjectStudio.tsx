@@ -5,22 +5,35 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { t } from "../i18n.ts";
 import { loadModels } from "./assets.ts";
 import { lightRoom } from "./env.ts";
-import { applyBehavior, prepareBehaviors } from "./behave.ts";
-import { lookObject } from "./procedural.ts";
-import { animateAvatar, swingLegs } from "./scene.ts";
+import { ObjectLife } from "./behave.ts";
+import { chair, desk, lookObject, monitor } from "./procedural.ts";
+import { animateAvatar, type DeskState, paintScreen, swingLegs } from "./scene.ts";
 
 type Kind = World["kinds"][string];
+type State = Kind["states"][number];
 
 /**
  * One placed object on its own: the same model as in the office, doing what
  * its behaviors make it do (spinning, steaming, glowing), framed to its size.
  * Drag sideways to turn it. A character (the shop cat) can be shown walking.
  */
-export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: boolean; /** Outline this part (index into the look's parts). */ highlight?: number | null }) {
+export default function ObjectStudio(p: {
+  kind?: Kind;
+  scale: number;
+  walking?: boolean;
+  /** Outline this part (index into the look's parts). */
+  highlight?: number | null;
+  /** Show it in this state (default: its first). */
+  state?: State | null;
+  /** Instead of a kind: someone's workstation, showing this state and runtime color. */
+  workstation?: { state: DeskState; runtime: string };
+}) {
   const wrap = useRef<HTMLDivElement>(null);
   const stage = useRef<{ holder: THREE.Group; fit: () => void } | null>(null);
   const walking = useRef(!!p.walking);
   walking.current = !!p.walking;
+  const station = useRef(p.workstation);
+  station.current = p.workstation;
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -110,14 +123,17 @@ export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: b
         lastLoaded = loaded;
         fit();
       }
-      for (const an of (holder.userData.animated as ReturnType<typeof prepareBehaviors> | undefined) ?? []) applyBehavior(an, sec);
+      const life = holder.userData.life as ObjectLife | undefined;
+      life?.apply(sec);
       for (const c of holder.children) if (c instanceof THREE.BoxHelper) c.update();
       const body = holder.children[0];
       if (body?.userData.character) {
         const lift = ((body.userData.lift as number | undefined) ?? 0) * body.scale.y;
-        animateAvatar(body, "idle", sec, walking.current ? -lift : 0, walking.current);
+        animateAvatar(body, walking.current ? "idle" : (life?.pose ?? "idle"), sec, walking.current ? -lift : 0, walking.current);
         swingLegs(body, walking.current ? Math.sin(sec * 9) * 0.6 : 0);
       }
+      const screen = holder.userData.screen as THREE.MeshStandardMaterial | undefined;
+      if (screen && station.current) paintScreen(screen, station.current.state, station.current.runtime, sec);
       controls.update();
       renderer.render(scene, camera);
     };
@@ -138,20 +154,41 @@ export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: b
   }, []);
 
   // The model itself, rebuilt when its look or placement changes (edits preview right away).
-  const key = JSON.stringify([p.kind.look, p.kind.behaviors, p.scale, p.highlight]);
+  const key = JSON.stringify([p.kind?.look, p.kind?.behaviors, p.kind?.states, p.state?.id, p.scale, p.highlight, !!p.workstation]);
   useEffect(() => {
     const s = stage.current;
     if (!s) return;
     s.holder.clear();
-    const obj = lookObject(p.kind.look, "#9aa3ad");
-    obj.userData.character = "character" in p.kind.look;
+    delete s.holder.userData.life;
+    delete s.holder.userData.screen;
+    if (!p.kind) {
+      // A workstation: desk, computer and chair, as at every seat.
+      const g = new THREE.Group();
+      const d = desk();
+      d.position.z = -0.35;
+      const { group: mon, screen } = monitor();
+      mon.position.z = -0.35;
+      const c = chair();
+      c.position.z = 0.35;
+      g.add(d, mon, c);
+      g.rotation.y = Math.PI;
+      s.holder.add(g);
+      s.holder.userData.screen = screen;
+      s.fit();
+      return () => screen.dispose();
+    }
+    const kind = p.kind;
+    const obj = lookObject(kind.look, "#9aa3ad");
+    obj.userData.character = "character" in kind.look;
     // Characters are built facing their desk (−z); turn them to face the viewer.
     if (obj.userData.character) obj.rotation.y = Math.PI;
     // Shown from the front, whichever way it is turned in its room.
     obj.scale.multiplyScalar(p.scale);
     s.holder.add(obj);
     s.holder.updateMatrixWorld(true);
-    s.holder.userData.animated = prepareBehaviors(obj, p.kind, 0, null);
+    const life = new ObjectLife(obj, kind, 0, null);
+    if (p.state) life.set(p.state);
+    s.holder.userData.life = life;
     if (p.highlight != null) {
       let hit: THREE.Object3D | undefined;
       obj.traverse((m) => {

@@ -114,3 +114,57 @@ export function applyBehavior(an: Animated, sec: number) {
     }
   }
 }
+
+type Kind = World["kinds"][string];
+type State = Kind["states"][number];
+
+/**
+ * One placed object living through its states: while a state is on, its
+ * behaviors replace the kind's (a napping cat stops roaming, a brewing machine
+ * steams), and glowing parts dim or brighten. Shared by the office and the studio.
+ */
+export class ObjectLife {
+  animated: Animated[] = [];
+  state: State | null = null;
+  private glows: Array<{ m: THREE.MeshStandardMaterial; base: number }> = [];
+  constructor(
+    readonly obj: THREE.Object3D,
+    readonly kind: Kind,
+    private seed: number,
+    private room: Animated["room"],
+  ) {
+    obj.traverse((o) => {
+      const m = o instanceof THREE.Mesh ? (o.material as THREE.MeshStandardMaterial) : null;
+      if (m?.emissive && m.emissive.getHex() !== 0 && !this.glows.some((g) => g.m === m)) this.glows.push({ m, base: m.emissiveIntensity });
+    });
+    this.set(kind.states[0] ?? null, true);
+  }
+  /** Switch state (no-op when it is already in it). */
+  set(state: State | null, first = false) {
+    if (!first && state?.id === this.state?.id) return;
+    for (const an of this.animated) {
+      an.target.position.copy(an.base.position);
+      an.target.rotation.copy(an.base.rotation);
+      an.target.scale.copy(an.base.scale);
+      for (const p of an.puffs ?? []) p.removeFromParent();
+    }
+    for (const g of this.glows) g.m.emissiveIntensity = g.base;
+    this.state = state;
+    this.animated = prepareBehaviors(this.obj, { ...this.kind, behaviors: state?.behaviors ?? this.kind.behaviors }, this.seed, this.room);
+  }
+  /** Walks between rooms in this state. */
+  get roams() {
+    return (this.state?.behaviors ?? this.kind.behaviors).some((b) => b.type === "roam");
+  }
+  /** How a character shows this state with its body. */
+  get pose(): string {
+    return this.state?.pose ?? "idle";
+  }
+  apply(sec: number) {
+    for (const an of this.animated) applyBehavior(an, sec);
+    const glow = this.state?.glow;
+    if (glow === undefined) return;
+    const moved = new Set(this.animated.flatMap((an) => an.materials));
+    for (const g of this.glows) g.m.emissiveIntensity = (moved.has(g.m) ? g.m.emissiveIntensity : g.base) * glow;
+  }
+}

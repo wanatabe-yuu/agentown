@@ -1,9 +1,12 @@
-import { canTalk, FINISHES, SHAPES, type World } from "@agentown/core/world";
+import { canTalk, FINISHES, objectState, SHAPES, type World } from "@agentown/core/world";
 import { addPart, duplicatePart, kindColors, recolorKind, removePart, updatePart } from "./office3d/kindEdit.ts";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { api } from "./api.ts";
 import { t } from "./i18n.ts";
-import type { Snapshot } from "./types.ts";
+import type { Agent, Snapshot, WorkState } from "./types.ts";
+import { Avatar } from "./Avatar.tsx";
+import { uploadAsset } from "./Assets.tsx";
+import { StatusPill } from "./ui.tsx";
 
 const ObjectStudio = lazy(() => import("./office3d/ObjectStudio.tsx"));
 
@@ -24,29 +27,109 @@ const BEHAVIOR: Record<string, string> = {
 };
 const CATEGORY: Record<string, string> = { character: "Character", static: "Furniture", dynamic: "Moving object" };
 
-/**
- * A placed object: the model in its own studio, what it is and what it can
- * do, and (for people who may design the world) its name, placement, colors
- * and whether it talks. Furniture that does not talk has no chat at all.
- */
-export function ObjectPanel(p: {
+type PanelProps = {
   objectId: string;
   snapshot: Snapshot;
   canDesign: boolean;
+  /** The owner: may have objects do things, and ask agents to. */
+  owner: boolean;
+  workOf: (a: Agent) => WorkState;
   onChat?: (id: string, name: string) => void;
+  onSelectAgent: (id: string) => void;
   onClose: () => void;
   notify: (msg: string, kind?: "error" | "info") => void;
-}) {
+};
+
+/** A placed object, or someone's workstation ("desk:<agent id>"). */
+export function ObjectPanel(p: PanelProps) {
+  return p.objectId.startsWith("desk:") ? <WorkstationPanel {...p} agentId={p.objectId.slice(5)} /> : <PlacedPanel {...p} />;
+}
+
+/** Re-render every `ms`, for things that change with time (an object's own rhythm). */
+function useTick(ms: number) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+  return now;
+}
+
+const DESK: Record<string, string> = { off: "Off", sleep: "Asleep", on: "On", working: "Working" };
+
+/**
+ * A workstation is its own thing: it wakes when its person sits down, works
+ * while they work, sleeps when they walk off and is off while they are offline.
+ */
+function WorkstationPanel(p: PanelProps & { agentId: string }) {
+  const agent = p.snapshot.agents.find((a) => a.id === p.agentId);
+  if (!agent) return null;
+  const work = p.workOf(agent);
+  const state = work === "offline" ? "off" : work === "executing" || work === "thinking" ? "working" : "on";
+  const room = p.snapshot.departments.find((d) => d.id === agent.departmentId)?.name;
+  return (
+    <aside className="panel agent-panel object-panel" aria-label={t("Workstation of {name}", { name: agent.displayName })}>
+      <header className="panel-head">
+        <div className="avatar object-avatar" aria-hidden>
+          ▣
+        </div>
+        <div className="panel-title">
+          <h2>{t("Workstation of {name}", { name: agent.displayName })}</h2>
+          <div className="muted">{[t("Desk and computer"), room].filter(Boolean).join(" · ")}</div>
+        </div>
+        <button type="button" className="icon-btn" onClick={p.onClose} aria-label={t("Close panel")}>
+          ×
+        </button>
+      </header>
+      <div className="panel-body">
+        <section className="studio">
+          <Suspense fallback={<div className="studio-stage studio-loading" />}>
+            <ObjectStudio scale={1} workstation={{ state, runtime: agent.runtime?.state ?? "none" }} />
+          </Suspense>
+        </section>
+        <section className="kv">
+          <div>{t("State")}</div>
+          <div>
+            <span className={`desk-state desk-${state}`}>{t(DESK[state]!)}</span>
+          </div>
+          <div>{t("Belongs to")}</div>
+          <div>
+            <button type="button" className="link who-link" onClick={() => p.onSelectAgent(agent.id)}>
+              <Avatar who={{ type: "agent", id: agent.id }} size={22} /> {agent.displayName}
+            </button>{" "}
+            <StatusPill state={work} />
+          </div>
+          <div>{t("Runtime")}</div>
+          <div>{agent.runtime?.state ?? t("none")}</div>
+          <div>{t("Can")}</div>
+          <div>{t("nothing on its own: it wakes when {name} sits down to work, sleeps when they walk away and turns off while they are offline.", { name: agent.displayName })}</div>
+        </section>
+      </div>
+    </aside>
+  );
+}
+
+/**
+ * A placed object: the model in its own studio, what it is doing and what
+ * can be done with it, and (for people who may design the world) its name,
+ * placement, colors, picture and whether it talks. Furniture that does not
+ * talk has no chat at all.
+ */
+function PlacedPanel(p: PanelProps) {
   const world = p.snapshot.world;
   const saved = world?.objects.find((o) => o.id === p.objectId);
   const [draft, setDraft] = useState<{ object: Placed; kind: Kind } | null>(null);
   const [walking, setWalking] = useState(false);
   const [part, setPart] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [doer, setDoer] = useState<Record<string, string>>({});
+  const clock = useTick(1000);
   useEffect(() => {
     setDraft(null);
     setWalking(false);
     setPart(null);
+    setPreview(null);
   }, [p.objectId]);
   const object = draft?.object ?? saved;
   const kind = draft?.kind ?? (saved ? world?.kinds[saved.kind] : undefined);
@@ -60,6 +143,21 @@ export function ObjectPanel(p: {
   const changed = !!draft && (JSON.stringify(draft.object) !== JSON.stringify(saved) || JSON.stringify(draft.kind) !== JSON.stringify(world.kinds[saved.kind]));
   const others = world.objects.filter((o) => o.kind === saved.kind).length - 1;
   const access = kind.access;
+  const activity = (p.snapshot.objectStates ?? []).find((x) => x.objectId === p.objectId && Date.parse(x.until) > clock);
+  const current = objectState(kind, p.objectId, clock, activity ? { state: activity.state, until: Date.parse(activity.until) } : null);
+  const shown = (preview ? kind.states.find((x) => x.id === preview) : current) ?? null;
+  const people = p.snapshot.agents.filter((a) => a.lifecycleState !== "retired");
+  const act = async (action: string, agentId?: string) => {
+    setBusy(true);
+    try {
+      await api("POST", `/api/objects/${encodeURIComponent(p.objectId)}/actions`, { action, ...(agentId ? { agentId } : {}) });
+      setPreview(null);
+    } catch (e) {
+      p.notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
   const where =
     access === "all" ? t("every room") : access === "own-room" ? t("its own room") : access === "own-department" ? t("its department's rooms") : "zone" in access ? t("zone {zone}", { zone: access.zone }) : access.rooms.map((id) => world.floors.flatMap((f) => f.rooms).find((r) => r.id === id)?.name ?? id).join(", ");
 
@@ -95,9 +193,7 @@ export function ObjectPanel(p: {
   return (
     <aside className="panel agent-panel object-panel" aria-label={name}>
       <header className="panel-head">
-        <div className="avatar object-avatar" aria-hidden>
-          {name.slice(0, 1)}
-        </div>
+        <Avatar who={{ type: "object", id: p.objectId }} size={40} />
         <div className="panel-title">
           <h2>{name}</h2>
           <div className="muted">
@@ -116,9 +212,23 @@ export function ObjectPanel(p: {
       <div className="panel-body">
         <section className="studio">
           <Suspense fallback={<div className="studio-stage studio-loading" />}>
-            <ObjectStudio kind={kind} scale={object.scale} walking={walking} highlight={p.canDesign ? part : null} />
+            <ObjectStudio kind={kind} scale={object.scale} walking={walking} state={shown} highlight={p.canDesign ? part : null} />
           </Suspense>
-          {roams && (
+          {kind.states.length > 0 && (
+            <div className="state-chips" role="group" aria-label={t("Show the object")}>
+              <button type="button" className={preview === null ? "active" : ""} onClick={() => setPreview(null)}>
+                {t("Now")}
+                {current ? ` · ${current.name}` : ""}
+              </button>
+              {kind.states.map((x) => (
+                <button key={x.id} type="button" className={preview === x.id ? "active" : ""} onClick={() => (setPreview(x.id), setWalking(false))}>
+                  {x.name}
+                  {x.auto && <span className="muted" title={t("It does this by itself now and then")}> ↻</span>}
+                </button>
+              ))}
+            </div>
+          )}
+          {roams && !kind.states.length && (
             <div className="btn-row studio-under">
               <button type="button" className={walking ? "" : "primary"} onClick={() => setWalking(false)}>
                 {t("Resting")}
@@ -129,6 +239,47 @@ export function ObjectPanel(p: {
             </div>
           )}
         </section>
+
+        {(current || kind.actions.length > 0) && (
+          <section className="object-life">
+            {current && (
+              <p className="object-now">
+                <span className="muted">{t("Now")}:</span> <b>{current.name}</b>
+                {activity && (
+                  <span className="muted small">
+                    {" · "}
+                    {activity.by.type === "agent" ? (
+                      <>
+                        <Avatar who={{ type: "agent", id: activity.by.id }} size={18} /> {people.find((a) => a.id === activity.by.id)?.displayName ?? activity.by.id}
+                      </>
+                    ) : activity.by.type === "object" ? t("by itself") : t("by you")}
+                    {" · "}
+                    {t("{n}s left", { n: Math.max(0, Math.round((Date.parse(activity.until) - clock) / 1000)) })}
+                  </span>
+                )}
+              </p>
+            )}
+            {p.owner &&
+              kind.actions.map((a) => (
+                <div key={a.id} className="object-action">
+                  <b>{a.name}</b>
+                  {a.gesture !== "none" && (
+                    <select value={doer[a.id] ?? ""} onChange={(e) => setDoer({ ...doer, [a.id]: e.target.value })} aria-label={t("Who does it")}>
+                      <option value="">{t("You, from afar")}</option>
+                      {people.map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button type="button" className="primary" disabled={busy} onClick={() => void act(a.id, doer[a.id] || undefined)}>
+                    {t("Do it")}
+                  </button>
+                </div>
+              ))}
+          </section>
+        )}
 
         <section className="kv">
           <div>{t("Kind")}</div>
@@ -147,13 +298,49 @@ export function ObjectPanel(p: {
           )}
           <div>{t("Can")}</div>
           <div>
-            {talks ? t("talk with the owner; it only knows its own room and can suggest tasks the owner confirms") : t("nothing: it is part of the room. No chat, no access to anything.")}
+            {talks
+              ? t("talk with the owner; it only knows its own room, changes only what it is doing itself, and suggests work to the CEO once the owner confirms")
+              : kind.actions.length
+                ? t("be used: {actions}. No chat, no access to anything else.", { actions: kind.actions.map((a) => a.name).join(", ") })
+                : t("nothing: it is part of the room. No chat, no access to anything.")}
           </div>
         </section>
 
         {p.canDesign && (
           <section className="object-edit">
             <h3>{t("Edit")}</h3>
+            <div className="avatar-setting">
+              <Avatar who={{ type: "object", id: p.objectId }} size={44} />
+              <div>
+                <b>{t("Avatar")}</b>
+                <span className="muted small">{object.image ? t("Uploaded picture") : t("Portrait of its 3D model")}</span>
+                <span className="btn-row">
+                  <label className="button">
+                    {t("Upload…")}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      hidden
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (!file) return;
+                        try {
+                          edit({ image: (await uploadAsset(file)).id });
+                        } catch (err) {
+                          p.notify((err as Error).message, "error");
+                        }
+                      }}
+                    />
+                  </label>
+                  {object.image && (
+                    <button type="button" className="link" onClick={() => edit({ image: undefined })}>
+                      {t("Use the 3D portrait")}
+                    </button>
+                  )}
+                </span>
+              </div>
+            </div>
             <div className="look-grid">
               <label>
                 {t("Name")}

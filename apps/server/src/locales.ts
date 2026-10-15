@@ -23,6 +23,12 @@ const VI: Record<string, string> = {
   "Floor 1": "Tầng 1", "Floor 2": "Tầng 2", "Front of house": "Khu phục vụ", "Jukebox": "Máy hát", "Kitchen": "Bếp", "Management": "Quản lý",
   "Manager": "Người quản lý", "Music player": "Máy phát nhạc", "Oven": "Lò nướng", "Plant": "Cây cảnh", "Roaster": "Thợ rang", "Roastery": "Xưởng rang",
   "Shelf": "Kệ", "Shift supervisor": "Giám sát ca", "Shop cat": "Mèo của quán", "Social media": "Mạng xã hội", "Sofa": "Ghế sofa", "Viewer": "Người xem", "Neon sign": "Biển neon",
+  // what coffee things do
+  "Wandering": "Đi dạo", "Napping": "Ngủ trưa", "Purring": "Rừ rừ", "Playing": "Đang chơi", "Pet": "Vuốt ve", "Play with": "Chơi cùng",
+  "Ready": "Sẵn sàng", "Brewing": "Đang pha", "Pull a shot": "Pha một shot", "Paused": "Tạm dừng", "Pause the music": "Tắt nhạc",
+  "Warm": "Giữ ấm", "Baking": "Đang nướng", "Bake a batch": "Nướng một mẻ", "Cooling": "Đang nguội", "Roasting": "Đang rang", "Roast a batch": "Rang một mẻ",
+  "On": "Bật", "Off": "Tắt", "Switch off": "Tắt đi", "Dimmed": "Dịu đèn", "Dim the light": "Giảm đèn", "Standby": "Chờ", "Recording": "Đang quay",
+  "Record a clip": "Quay một đoạn", "Open": "Mở cửa", "Closed": "Đóng cửa",
   // factory
   "Line A": "Dây chuyền A", "Line B": "Dây chuyền B", "Logistics": "Hậu cần", "Maintenance": "Bảo trì", "Plant management": "Quản lý nhà máy",
   "Production": "Sản xuất", "Quality": "Chất lượng", "Shift lead": "Trưởng ca",
