@@ -148,6 +148,18 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
   useEffect(() => {
     if (stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [view?.messages.length, view?.run?.partialText, view?.actions.length]);
+  // The keyboard opening (or the phone turning) resizes the history: whoever was reading the latest stays at the latest.
+  const userScrolledAt = useRef(0);
+  useEffect(() => {
+    const el = scroll.current;
+    if (!el) return;
+    const keep = () => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    };
+    const ro = new ResizeObserver(keep);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   useEffect(() => { if (!settings && config && window.matchMedia("(min-width: 701px)").matches) composer.current?.focus(); }, [settings, !!config]);
 
   const choose = (next: string | null) => {
@@ -311,8 +323,10 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
         {!!usage?.incompleteRequests && <small className="muted">{t("Usage totals are incomplete for {n} interrupted or unreported request(s).", { n: usage.incompleteRequests })}</small>}
       </details>
       <div className="owner-chat-history" ref={scroll} onScroll={() => {
+        // Only the reader's own scrolling decides whether to follow new messages; iOS moves things on its own when the keyboard opens.
+        if (Date.now() - userScrolledAt.current > 1200) { if (stick.current) scroll.current!.scrollTop = scroll.current!.scrollHeight; return; }
         const s = scroll.current!; stick.current = s.scrollHeight - s.scrollTop - s.clientHeight < 90;
-      }} aria-label={t("Chat history")}>
+      }} onTouchMove={() => (userScrolledAt.current = Date.now())} onWheel={() => (userScrolledAt.current = Date.now())} onKeyDown={() => (userScrolledAt.current = Date.now())} onPointerDown={() => (userScrolledAt.current = Date.now())} aria-label={t("Chat history")}>
         {view?.hasOlder && !historyExhausted && <button type="button" className="chat-older" disabled={busy} onClick={more}>{t("Load earlier messages")}</button>}
         {readOnly && <p className="chat-archive-notice muted">{id ? t("This chat is archived. Restore it to continue.") : t("Select an archived chat above, or start a new conversation.")}</p>}
         {!messages.length && !active && !readOnly && <div className="chat-welcome">
@@ -337,7 +351,7 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
       </div>
       {error && <div className="chat-error" role="alert">{error}</div>}
       <form className="owner-chat-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
-        <textarea ref={composer} aria-label={t("Message {name}", { name: assistantName })} placeholder={!index ? t("Loading…") : readOnly ? t("Restore this chat to continue…") : config ? subject ? t("Ask {name} or discuss an idea…", { name: assistantName }) : t("Ask or give an instruction for this world…") : t("Add an API key to start…")} value={draft} rows={2} maxLength={50000} disabled={!config || readOnly} onChange={e => setDraft(e.target.value)}
+        <textarea onFocus={() => setTimeout(() => { if (stick.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, 350)} ref={composer} aria-label={t("Message {name}", { name: assistantName })} placeholder={!index ? t("Loading…") : readOnly ? t("Restore this chat to continue…") : config ? subject ? t("Ask {name} or discuss an idea…", { name: assistantName }) : t("Ask or give an instruction for this world…") : t("Add an API key to start…")} value={draft} rows={2} maxLength={50000} disabled={!config || readOnly} onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && window.matchMedia("(min-width: 701px)").matches) { e.preventDefault(); if (!busy && !active) void send(); } }} />
         <div className="chat-send-row"><small className="muted">{config ? modelLabel(config.model) : index ? t("Choose a model") : ""}{config?.effort ? ` · ${config.effort}` : ""}</small>
           {active ? <button type="button" disabled={busy} onClick={() => execute(async () => { await api("POST", `${base}/${id}/stop`); await refresh(id!); })}>{t("Stop")}</button> : <button type="submit" className="primary" disabled={busy || readOnly || !draft.trim() || !config}>{busy ? t("Sending…") : `${t("Send")} ↑`}</button>}
