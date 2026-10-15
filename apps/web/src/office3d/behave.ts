@@ -20,7 +20,8 @@ export interface Animated {
 }
 
 const puffGeo = new THREE.SphereGeometry(0.5, 10, 8);
-const puffMat = new THREE.MeshStandardMaterial({ color: "#ffffff", transparent: true, opacity: 0.38, depthWrite: false, roughness: 1 });
+// A faint glow of its own keeps steam readable against dark rooms too.
+const puffMat = new THREE.MeshStandardMaterial({ color: "#ffffff", emissive: "#ffffff", emissiveIntensity: 0.25, transparent: true, opacity: 0.5, depthWrite: false, roughness: 1 });
 
 /** Everything but roam (which walks between rooms) for one placed object. */
 export function prepareBehaviors(obj: THREE.Object3D, kind: World["kinds"][string], seed: number, room: Animated["room"]): Animated[] {

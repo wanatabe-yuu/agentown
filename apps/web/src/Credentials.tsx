@@ -51,7 +51,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
         ...(provider === "custom" ? connection : {}),
         departments: departments.length ? departments : null,
       });
-      notify(`Key "${c.name}" saved — ${c.models.length} models available`, "info");
+      notify(tr("Key \"{name}\" saved — {n} models available", { name: c.name, n: c.models.length }), "info");
       setName("");
       setApiKey("");
       setWorkspaceId("");
@@ -111,10 +111,22 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
                   {c.workspaceId && <div className="muted small">{c.workspaceId}</div>}
                 </td>
                 <td data-label={tr("Departments")} className="small">{c.departments?.join(", ") ?? "all"}</td>
-                <td data-label={tr("Models")} className="small mobile-wide">{c.models.join(", ")}</td>
+                <td data-label={tr("Models")} className="small mobile-wide">
+                  {/* A long model list folds away: the count, the first few, the rest on demand. */}
+                  <details className="model-list">
+                    <summary>{tr("{n} models", { n: c.models.length })}</summary>
+                    <div className="chips">
+                      {c.models.map((m) => (
+                        <span key={m} className="chip mono">
+                          {m}
+                        </span>
+                      ))}
+                    </div>
+                  </details>
+                </td>
                 <td>
                   {!c.revokedAt && (
-                    <div className="btn-row">
+                    <div className="btn-row key-actions">
                       {c.provider === "custom" && <button type="button" disabled={busy} onClick={() => edit(c)}>{tr("Edit connection")}</button>}
                       <button type="button" onClick={() => refresh(c.id)}>
                         {tr("Refresh models")}
@@ -138,7 +150,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
         </table>
       </div>
       <form ref={form} className="form" onSubmit={add} style={{ marginTop: 16 }}>
-        <h3>{editing ? `Edit connection · ${editing.name}` : "Add a key"}</h3>
+        <h3>{editing ? tr("Edit connection · {name}", { name: editing.name }) : tr("Add a key")}</h3>
         {editing ? <p className="muted small">{tr("Uses the saved API key. Models are checked again before saving; the key stays encrypted and existing agent assignments are retained.")}</p> : <>
         <label>
           {tr("Name")}

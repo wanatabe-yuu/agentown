@@ -8,6 +8,7 @@ import { t } from "../i18n.ts";
 import type { Agent, WorkState } from "../types.ts";
 import { StatusPill } from "../ui.tsx";
 import { loadModels } from "./assets.ts";
+import { lightRoom } from "./env.ts";
 import { chair, desk, monitor } from "./procedural.ts";
 import { agentAvatar, animateAvatar, SCREEN, swingLegs } from "./scene.ts";
 
@@ -93,6 +94,7 @@ export default function AgentStudio(p: {
     el.prepend(labels.domElement);
 
     const scene = new THREE.Scene();
+    const dropEnv = lightRoom(renderer, scene);
     scene.add(new THREE.HemisphereLight("#ffffff", "#8a7f74", 1.5));
     const sun = new THREE.DirectionalLight("#ffffff", 1.7);
     sun.position.set(2, 5, -1);
@@ -198,7 +200,10 @@ export default function AgentStudio(p: {
       floorGeo.dispose();
       floorMat.dispose();
       screen.dispose();
+      dropEnv();
       renderer.dispose();
+      // Give the context back now: browsers keep only a few, and the office needs its own.
+      renderer.forceContextLoss();
       renderer.domElement.remove();
       labels.domElement.remove();
       holder.current = null;

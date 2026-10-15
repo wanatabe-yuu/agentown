@@ -11,6 +11,7 @@ import type { Agent, Snapshot, WorkState } from "../types.ts";
 import { bounds, FLOOR_HEIGHT, layoutWorld, type PlacedRoom } from "./layout.ts";
 import { buildNav } from "./nav.ts";
 import { disposeMaterials } from "./procedural.ts";
+import { lightRoom } from "./env.ts";
 import { buildScene, type Flight, objectIndexOf, type OfficeScene, updateScene } from "./scene.ts";
 import type { Draft } from "./WorldEditor.tsx";
 
@@ -137,6 +138,7 @@ export default function Office3D(props: Props) {
     el.appendChild(labels.domElement);
 
     const scene = new THREE.Scene();
+    const dropEnv = lightRoom(renderer, scene, 0.45);
     // Soft sky from above, warm bounce from the floor, a low warm sun for long soft shadows.
     const hemi = new THREE.HemisphereLight("#f4f1ff", "#a0846a", 1.25);
     const sun = new THREE.DirectionalLight("#fff1dc", 1.9);
@@ -284,6 +286,7 @@ export default function Office3D(props: Props) {
       engine.current?.office?.dispose();
       controls.dispose();
       disposeMaterials();
+      dropEnv();
       renderer.dispose();
       renderer.forceContextLoss();
       renderer.domElement.remove();

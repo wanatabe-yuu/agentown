@@ -2424,3 +2424,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 .part-form { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
 .vec3 { display: grid; grid-template-columns: 64px repeat(3, minmax(0, 1fr)); gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
 .vec3 input { min-width: 0; padding: 4px 4px; font-size: 12px; }
+.model-list summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.model-list .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; max-width: 320px; }
+.chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--surface-3); border: 1px solid var(--border); font-size: 11px; }
+.key-actions { flex-wrap: wrap; }

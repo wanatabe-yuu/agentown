@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { t } from "../i18n.ts";
 import { loadModels } from "./assets.ts";
+import { lightRoom } from "./env.ts";
 import { applyBehavior, prepareBehaviors } from "./behave.ts";
 import { lookObject } from "./procedural.ts";
 import { animateAvatar, swingLegs } from "./scene.ts";
@@ -38,6 +39,7 @@ export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: b
     renderer.toneMappingExposure = 1.15;
     el.prepend(renderer.domElement);
     const scene = new THREE.Scene();
+    const dropEnv = lightRoom(renderer, scene);
     scene.add(new THREE.HemisphereLight("#f4f1ff", "#a0846a", 1.3));
     const sun = new THREE.DirectionalLight("#fff1dc", 1.9);
     sun.position.set(3, 6, 4);
@@ -119,7 +121,10 @@ export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: b
       controls.dispose();
       floorGeo.dispose();
       floorMat.dispose();
+      dropEnv();
       renderer.dispose();
+      // Give the context back now: browsers keep only a few, and the office needs its own.
+      renderer.forceContextLoss();
       renderer.domElement.remove();
       stage.current = null;
     };
@@ -133,6 +138,8 @@ export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: b
     s.holder.clear();
     const obj = lookObject(p.kind.look, "#9aa3ad");
     obj.userData.character = "character" in p.kind.look;
+    // Characters are built facing their desk (−z); turn them to face the viewer.
+    if (obj.userData.character) obj.rotation.y = Math.PI;
     // Shown from the front, whichever way it is turned in its room.
     obj.scale.multiplyScalar(p.scale);
     s.holder.add(obj);
