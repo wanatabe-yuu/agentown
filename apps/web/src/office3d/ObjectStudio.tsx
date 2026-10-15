@@ -100,9 +100,21 @@ export default function ObjectStudio(p: { kind: Kind; scale: number; walking?: b
     size();
 
     let frame = 0;
+    let ticks = 0;
+    let lastMeshes = 0;
     const loop = (now: number) => {
       frame = requestAnimationFrame(loop);
       const sec = now / 1000;
+      // A model from the art library arrives after its stand-in block: frame it again once it does.
+      // (Counted in meshes, so rising steam or a pulse never reframes it.)
+      if (++ticks % 20 === 0) {
+        let meshes = 0;
+        holder.traverse((m) => void ((m as THREE.Mesh).isMesh && meshes++));
+        if (meshes !== lastMeshes) {
+          lastMeshes = meshes;
+          fit();
+        }
+      }
       for (const an of (holder.userData.animated as ReturnType<typeof prepareBehaviors> | undefined) ?? []) applyBehavior(an, sec);
       for (const c of holder.children) if (c instanceof THREE.BoxHelper) c.update();
       const body = holder.children[0];
