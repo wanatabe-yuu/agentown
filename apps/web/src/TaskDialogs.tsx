@@ -496,7 +496,7 @@ function CampaignForm({ snapshot, active, why, notify, onDone }: { snapshot: Sna
           </label>
         ))}
       </fieldset>
-      <div className="form-grid">
+      <div className="campaign-limits">
         <label>
           {t("Stop after failed tasks")}
           <input type="number" min={1} max={20} value={maxFailures} onChange={(e) => setMaxFailures(Number(e.target.value) || 1)} />

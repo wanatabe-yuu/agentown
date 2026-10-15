@@ -8,6 +8,8 @@ import { ago, StatusPill } from "./ui.tsx";
 type Notify = (msg: string, kind?: "error" | "info") => void;
 
 const CAMPAIGN_TONE: Record<Campaign["status"], string> = { active: "good", achieved: "info", failed: "bad", stopped: "muted" };
+/** A manual campaign that is "active" is only open for tasks: nothing runs by itself. */
+const statusLabel = (c: Campaign) => (c.status === "active" ? (c.mode === "auto" ? "Running" : "Open for tasks") : { achieved: "Goal met", failed: "Failed", stopped: "Stopped" }[c.status]);
 
 /**
  * Projects, the campaigns inside them and their tasks: where a campaign's
@@ -30,6 +32,7 @@ export function ProjectsView({ snapshot, me, now, notify, onOpenTask }: { snapsh
     };
   }, [taskStamp, tick]);
   const refresh = () => setTick((n) => n + 1);
+  const count = (projectId: string) => snapshot.tasks.filter((x) => x.projectId === projectId).length;
 
   if (!snapshot.projects.length) {
     return (
@@ -48,7 +51,8 @@ export function ProjectsView({ snapshot, me, now, notify, onOpenTask }: { snapsh
             <header>
               <h3>{p.name}</h3>
               <span className="muted small">
-                {t("{c} campaigns · {n} tasks", { c: mine.length, n: snapshot.tasks.filter((x) => x.projectId === p.id).length })}
+                {t(mine.length === 1 ? "1 campaign" : "{c} campaigns", { c: mine.length })} ·{" "}
+                {t(count(p.id) === 1 ? "1 task" : "{n} tasks", { n: count(p.id) })}
               </span>
             </header>
             {campaigns === null && <p className="muted small">{t("Loading…")}</p>}
@@ -100,7 +104,7 @@ function CampaignCard({ c, snapshot, me, now, notify, onOpenTask, onChanged }: {
         </div>
         <div className="campaign-tags">
           <span className={`pill pill-${c.mode === "auto" ? "info" : "neutral"}`}>{t(c.mode === "auto" ? "Automatic" : "Manual")}</span>
-          <span className={`pill pill-${CAMPAIGN_TONE[c.status]}`}>{t(`campaign ${c.status}`)}</span>
+          <span className={`pill pill-${c.status === "active" && c.mode === "manual" ? "neutral" : CAMPAIGN_TONE[c.status]}`}>{t(statusLabel(c))}</span>
         </div>
       </header>
       <p className="campaign-goal">{c.goal}</p>

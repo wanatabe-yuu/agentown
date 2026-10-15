@@ -615,7 +615,7 @@ select {
   text-align: left;
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
-  vertical-align: top;
+  vertical-align: middle;
 }
 .grid th {
   font-size: 11px;
@@ -2493,7 +2493,7 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
 .projects-view { height: 100%; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
 .project-card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .project-card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.project-card h3 { margin: 0; font-size: 16px; }
+.project-card h3 { margin: 0; font-size: 16px; font-weight: 650; text-transform: none; letter-spacing: 0; color: var(--text); }
 .campaign-card { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--surface-2); }
 .campaign-card.campaign-achieved { border-left-color: var(--ok, #3fa37a); }
 .campaign-card.campaign-failed { border-left-color: var(--bad); }
@@ -2508,14 +2508,50 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
 .campaign-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .campaign-actions .switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .task-rows { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.task-rows button { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; text-align: left; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); min-height: 40px; }
-.task-rows .task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-rows button { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); min-height: 40px; }
+.task-rows .task-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-rows button > .muted, .task-rows button > .pill, .task-rows .step-tag { flex-shrink: 0; }
 .step-tag { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
 .loose-tasks summary, .campaign-tasks summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 @media (max-width: 700px) {
   .projects-view { padding: 10px; }
-  .task-rows button { grid-template-columns: auto minmax(0, 1fr) auto; }
   .task-rows button > .muted { display: none; }
+  .campaign-card > header { flex-direction: column; }
+  .campaign-tags { justify-content: flex-start; }
   .topbar > .seg-toggle button { padding: 0 10px; }
   .topbar > .task-actions { padding-left: 196px; }
+}
+
+/* ---- Layout pass: the top bar stays one row on laptop widths (the account menu used to wrap alone) */
+@media (min-width: 901px) {
+  .topbar { flex-wrap: nowrap; }
+  .topbar > .brand { min-width: 0; flex-shrink: 1; }
+}
+@media (min-width: 901px) and (max-width: 1200px) {
+  .topbar > .stats { display: none; }
+  .owner-chat-button .btn-text { display: none; }
+  .owner-chat-button { width: 40px; padding: 0; justify-content: center; }
+}
+/* New task dialog: tabs flush with the form, radios beside their titles, limits side by side */
+.modal .new-work-tabs { margin-top: -4px; margin-bottom: 14px; }
+.form .mode-choice .radio { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; color: var(--text); font-size: 13px; }
+.form .mode-choice .radio input { margin: 1px 0 0; flex-shrink: 0; width: 16px; height: 16px; min-height: 0; padding: 0; }
+.form .mode-choice .radio .muted { font-size: 12px; line-height: 1.45; }
+.campaign-limits { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* Tabs inside a dialog line their first label up with the content below (the buttons keep their padding). */
+.modal .tabs { padding: 0; margin-left: -10px; margin-right: -10px; }
+.modal .tabs button { padding-left: 10px; padding-right: 10px; }
+/* Editable rows: fields fill their column, the row action sits at the right edge. */
+.grid.mobile-cards td > input:not([type="color"]):not([type="checkbox"]),
+.grid.mobile-cards td > select { width: 100%; }
+.grid.mobile-cards td:last-child { text-align: right; width: 1%; white-space: nowrap; }
+/* Agent table: name and its Chat button stay on one line; text cells do not wrap mid-word into tall rows */
+@media (min-width: 701px) {
+  .grid.agents td:first-child { white-space: nowrap; }
+  .grid.agents td:first-child > * { vertical-align: middle; }
+}
+/* Table view: the framed table sits evenly inside the stage (it used to touch two edges and leave 48px under it). */
+@media (min-width: 901px) {
+  .stage.view-table > .table-wrap { inset: 12px; }
 }

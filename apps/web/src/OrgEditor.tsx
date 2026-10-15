@@ -20,7 +20,6 @@ const ORG_ONLY = ["credential.manage", "audit.view", "org.design"];
 // Agents sit in the reporting tree, so tree-relative scopes make sense for them; people get org/departments/agents/projects.
 const AGENT_SCOPES = ["self", "direct-reports", "descendants", "team", "department", "org", "departments", "agents", "projects"];
 const PERSON_SCOPES = ["org", "departments", "agents", "projects"];
-const ID = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
 
 const scopeKind = (s: Cap["scope"]) => (typeof s === "string" ? s : Object.keys(s)[0]!);
 const scopeIds = (s: Cap["scope"]) => (typeof s === "string" ? [] : (Object.values(s)[0] ?? []));
@@ -33,7 +32,8 @@ const makeScope = (kind: string, ids: string[]): Cap["scope"] => (["departments"
 export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId: string; catalog: Catalog | null; snapshot: Snapshot; onClose: () => void; notify: Notify }) {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [revision, setRevision] = useState(0);
-  const [saved, setSaved] = useState<Set<string>>(new Set());
+  // Ids already saved, per list: they stay as they are; new rows get theirs from their name.
+  const [saved, setSaved] = useState<Record<IdList, Set<string>>>(savedIds({}));
   const [dirty, setDirty] = useState(false);
   const [tab, setTab] = useState<Tab>("departments");
   const [busy, setBusy] = useState(false);
@@ -42,10 +42,22 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
     const r = await api<{ revision: number; doc: Doc }>("GET", "/api/config");
     setDoc(structuredClone(r.doc));
     setRevision(r.revision);
-    setSaved(new Set((r.doc.departments as Doc[]).map((d) => d.id)));
+    setSaved(savedIds(r.doc));
     setDirty(false);
   }, []);
   useEffect(() => void load().catch((e) => notify(e.message, "error")), [load]);
+
+  /** Rename a row; a row not saved yet takes its id from the name (unique in its list). */
+  const rename = (list: IdList, i: number, field: string, value: string) =>
+    edit((d) => {
+      const row = d[list][i];
+      row[field] = value;
+      if (saved[list].has(row.id)) return;
+      const taken = new Set<string>((d[list] as Doc[]).filter((_, j) => j !== i).map((r) => r.id));
+      // A team named like a department would silently replace that department's default team.
+      if (list === "teams") for (const dep of d.departments as Doc[]) taken.add(dep.id);
+      row.id = slugId(value, taken, FALLBACK[list]);
+    });
 
   /** Edit a copy of the document; every editor below goes through this. */
   const edit = (fn: (d: Doc) => void) => {
@@ -62,7 +74,7 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
     try {
       const r = await api<{ revision: number; doc: Doc }>("PUT", "/api/config", { revision, doc });
       setRevision(r.revision);
-      setSaved(new Set((r.doc.departments as Doc[]).map((d) => d.id)));
+      setSaved(savedIds(r.doc));
       setDirty(false);
       notify("Saved. New hires and new role assignments use it right away.", "info");
     } catch (e) {
@@ -115,16 +127,15 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
 
       {tab === "departments" && (
         <RowsTable
-          headers={["Id", "Name", "Color"]}
+          headers={["Name", "Color"]}
           rows={departments}
           onAdd={() => edit((d) => d.departments.push({ id: "", name: "", color: "#8899aa" }))}
           onRemove={(i) => edit((d) => d.departments.splice(i, 1))}
           render={(row, i) => [
-            <IdInput key="id" value={row.id} locked={saved.has(row.id)} onChange={(v) => edit((d) => (d.departments[i].id = v))} />,
-            <input key="n" value={row.name} onChange={(e) => edit((d) => (d.departments[i].name = e.target.value))} aria-label={tr("Department name")} />,
+            <input key="n" value={row.name} onChange={(e) => rename("departments", i, "name", e.target.value)} placeholder={tr("e.g. Kitchen")} aria-label={tr("Department name")} required />,
             <input key="c" type="color" value={row.color ?? "#8899aa"} onChange={(e) => edit((d) => (d.departments[i].color = e.target.value))} aria-label={tr("Department color")} />,
           ]}
-          note="A department's id is fixed once saved (it names namespaces, scopes and seats). A department with agents cannot be removed."
+          note="A department with agents cannot be removed."
         />
       )}
 
@@ -141,13 +152,12 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
       )}
       {tab === "teams" && (
         <RowsTable
-          headers={["Id", "Name", "Department", "Runtime"]}
+          headers={["Name", "Department", "Runtime"]}
           rows={doc.teams ?? []}
           onAdd={() => edit((d) => (d.teams ??= []).push({ id: "", name: "", department: departments[0]?.id ?? "" }))}
           onRemove={(i) => edit((d) => d.teams.splice(i, 1))}
           render={(row, i) => [
-            <IdInput key="id" value={row.id} onChange={(v) => edit((d) => (d.teams[i].id = v))} />,
-            <input key="n" value={row.name} onChange={(e) => edit((d) => (d.teams[i].name = e.target.value))} aria-label={tr("Team name")} />,
+            <input key="n" value={row.name} onChange={(e) => rename("teams", i, "name", e.target.value)} placeholder={tr("e.g. Morning shift")} aria-label={tr("Team name")} required />,
             <select key="d" value={row.department} onChange={(e) => edit((d) => (d.teams[i].department = e.target.value))} aria-label={tr("Team department")}>
               {departments.map((dep) => <option key={dep.id} value={dep.id}>{dep.name || dep.id}</option>)}
             </select>,
@@ -162,13 +172,12 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
 
       {tab === "projects" && (
         <RowsTable
-          headers={["Id", "Name"]}
+          headers={["Name"]}
           rows={projects}
           onAdd={() => edit((d) => (d.projects ??= []).push({ id: "", name: "" }))}
           onRemove={(i) => edit((d) => d.projects.splice(i, 1))}
           render={(row, i) => [
-            <IdInput key="id" value={row.id} onChange={(v) => edit((d) => (d.projects[i].id = v))} />,
-            <input key="n" value={row.name} onChange={(e) => edit((d) => (d.projects[i].name = e.target.value))} aria-label={tr("Project name")} />,
+            <input key="n" value={row.name} onChange={(e) => rename("projects", i, "name", e.target.value)} placeholder={tr("e.g. Autumn menu")} aria-label={tr("Project name")} required />,
           ]}
           note="A project with open tasks cannot be removed."
         />
@@ -176,13 +185,12 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
 
       {tab === "jobs" && (
         <RowsTable
-          headers={["Id", "Job title", "Runtime", "Permissions"]}
+          headers={["Job title", "Runtime", "Permissions"]}
           rows={jobs}
           onAdd={() => edit((d) => d.agentTemplates.push({ id: "", jobRole: "", runtimePreset: catalog?.presets[0]?.id ?? "", policyProfile: Object.keys(profiles)[0] ?? "" }))}
           onRemove={(i) => edit((d) => d.agentTemplates.splice(i, 1))}
           render={(row, i) => [
-            <IdInput key="id" value={row.id} onChange={(v) => edit((d) => (d.agentTemplates[i].id = v))} />,
-            <input key="r" value={row.jobRole} onChange={(e) => edit((d) => (d.agentTemplates[i].jobRole = e.target.value))} aria-label={tr("Job title")} />,
+            <input key="r" value={row.jobRole} onChange={(e) => rename("agentTemplates", i, "jobRole", e.target.value)} placeholder={tr("e.g. Barista")} aria-label={tr("Job title")} required />,
             <select key="p" value={row.runtimePreset} onChange={(e) => edit((d) => (d.agentTemplates[i].runtimePreset = e.target.value))} aria-label={tr("Runtime")}>
               {(catalog?.presets ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
@@ -222,7 +230,7 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
           lists={lists}
           named
           note="Starting points for people (Users → invite). Picking a role copies these permissions; each can then be changed per person."
-          onAdd={(key) => edit((d) => ((d.humanRoles ??= {})[key] = { name: key, permissions: [] }))}
+          onAdd={(key, name) => edit((d) => ((d.humanRoles ??= {})[key] = { name, permissions: [] }))}
           onRemove={(key) => edit((d) => delete d.humanRoles[key])}
           onChange={(key, caps, name) => edit((d) => (d.humanRoles[key] = { name: name ?? d.humanRoles[key].name, permissions: caps }))}
         />
@@ -233,19 +241,29 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
   );
 }
 
-function IdInput({ value, locked, onChange }: { value: string; locked?: boolean; onChange: (v: string) => void }) {
-  return (
-    <input
-      value={value}
-      readOnly={locked}
-      onChange={(e) => onChange(e.target.value.toLowerCase())}
-      className={`mono ${value && !ID.test(value) ? "invalid" : ""}`}
-      placeholder="id"
-      maxLength={40}
-      aria-label={tr("Id")}
-      title={locked ? "Fixed once saved" : "lowercase letters, digits, dashes"}
-    />
-  );
+type IdList = "departments" | "teams" | "projects" | "agentTemplates";
+const FALLBACK: Record<IdList, string> = { departments: "department", teams: "team", projects: "project", agentTemplates: "job" };
+
+function savedIds(doc: Doc): Record<IdList, Set<string>> {
+  const ids = (list: IdList) => new Set<string>(((doc[list] as Doc[] | undefined) ?? []).map((r) => r.id));
+  return { departments: ids("departments"), teams: ids("teams"), projects: ids("projects"), agentTemplates: ids("agentTemplates") };
+}
+
+/** "Thực đơn mùa thu" → "thuc-don-mua-thu": a lowercase dns-label id, unique among `taken`. */
+export function slugId(name: string, taken: Set<string>, fallback: string): string {
+  const base =
+    name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[đĐ]/g, "d")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+/, "")
+      .slice(0, 34)
+      .replace(/-+$/, "") || fallback;
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  return id;
 }
 
 function RowsTable({ headers, rows, render, onAdd, onRemove, note }: { headers: string[]; rows: Doc[]; render: (row: Doc, i: number) => React.ReactNode[]; onAdd: () => void; onRemove: (i: number) => void; note: string }) {
@@ -305,7 +323,7 @@ function NamedCapSets({
   withDelegable?: boolean;
   named?: boolean;
   note: string;
-  onAdd: (key: string) => void;
+  onAdd: (key: string, name: string) => void;
   onRemove: (key: string) => void;
   onChange: (key: string, caps: Cap[], name?: string) => void;
 }) {
@@ -336,13 +354,14 @@ function NamedCapSets({
             {tr("Remove")}
           </button>
         )}
-        <input value={fresh} onChange={(e) => setFresh(e.target.value.toLowerCase())} placeholder={tr("new id")} className="mono" aria-label={tr("New id")} />
+        <input value={fresh} onChange={(e) => setFresh(e.target.value)} placeholder={tr("New name")} aria-label={tr("New name")} maxLength={60} />
         <button
           type="button"
-          disabled={!ID.test(fresh) || keys.includes(fresh)}
+          disabled={!fresh.trim()}
           onClick={() => {
-            onAdd(fresh);
-            setOpen(fresh);
+            const key = slugId(fresh, new Set(keys), "set");
+            onAdd(key, fresh.trim());
+            setOpen(key);
             setFresh("");
           }}
         >
