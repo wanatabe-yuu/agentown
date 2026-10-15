@@ -555,7 +555,7 @@ function seat(r: Roamer) {
   swingLegs(r.body, 0);
 }
 
-function swingLegs(body: THREE.Object3D, angle: number) {
+export function swingLegs(body: THREE.Object3D, angle: number) {
   const l = body.getObjectByName("leg-l");
   const rr = body.getObjectByName("leg-r");
   if (l) l.rotation.x = angle;

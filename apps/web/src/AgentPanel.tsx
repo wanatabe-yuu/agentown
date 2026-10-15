@@ -80,7 +80,7 @@ export function AgentPanel(p: Props) {
   };
 
   return (
-    <aside className="panel" aria-label={agent.displayName}>
+    <aside className="panel agent-panel" aria-label={agent.displayName}>
       <header className="panel-head">
         <div className="avatar" style={{ background: dept?.color }} aria-hidden>
           {agent.displayName.slice(0, 1)}
@@ -96,21 +96,20 @@ export function AgentPanel(p: Props) {
         </button>
       </header>
 
-      {p.onChat && (
-        <div className="agent-chat-entry">
-          <button type="button" className="primary" onClick={p.onChat}>
-            {t("Chat with {name}", { name: agent.displayName })}
+      <div className="tabs-row">
+        <nav className="tabs" role="tablist">
+          {visibleTabs.map((x) => (
+            <button key={x} role="tab" aria-selected={shownTab === x} className={shownTab === x ? "active" : ""} onClick={() => setTab(x)}>
+              {t(TAB_LABEL[x])}
+            </button>
+          ))}
+        </nav>
+        {p.onChat && (
+          <button type="button" className="primary tab-chat" onClick={p.onChat} title={t("Questions, analysis & tasks")} aria-label={t("Chat with {name}", { name: agent.displayName })}>
+            {t("Chat")}
           </button>
-          <span className="muted small">{t("Questions, analysis & tasks")}</span>
-        </div>
-      )}
-      <nav className="tabs" role="tablist">
-        {visibleTabs.map((x) => (
-          <button key={x} role="tab" aria-selected={shownTab === x} className={shownTab === x ? "active" : ""} onClick={() => setTab(x)}>
-            {t(TAB_LABEL[x])}
-          </button>
-        ))}
-      </nav>
+        )}
+      </div>
 
       <div className="panel-body">
         {shownTab === "overview" && (
@@ -124,9 +123,10 @@ export function AgentPanel(p: Props) {
                 activity={[p.snapshot.tasks.find((x) => x.assigneeAgentId === agent.id && x.status === "in_progress")?.title, agent.work.detail].filter(Boolean).join(" · ") || null}
                 canDesign={!!p.canDesign}
                 notify={p.notify}
+                onMore={() => document.getElementById(`agent-facts-${agent.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
               />
             </Suspense>
-            <section className="kv">
+            <section className="kv" id={`agent-facts-${agent.id}`}>
               <div>{t("Status")}</div>
               <div>
                 <StatusPill state={work} /> {agent.work.detail && <span className="muted">{agent.work.detail}</span>}

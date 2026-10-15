@@ -2163,3 +2163,44 @@ input.short {
 .color-row { display: flex; align-items: center; gap: 8px; }
 .color-row input[type="color"] { width: 44px; height: 32px; padding: 2px; }
 @media (max-width: 700px) { .studio-stage { height: 220px; } }
+
+/* ---- agent panel v2: chat in the tab row, a big studio, full screen on phones */
+.tabs-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-right: 10px; flex-shrink: 0; }
+.tabs-row .tabs { flex: 1; min-width: 0; border-bottom: 0; }
+.tab-chat { padding: 4px 12px; min-height: 32px !important; font-size: 13px; flex-shrink: 0; }
+.agent-chat-entry { display: none; }
+@media (min-width: 1101px) { .main.panel-open > .agent-panel { width: 520px; } }
+.studio-stage { height: 420px; }
+.studio-labels { position: absolute; inset: 0; pointer-events: none; }
+.studio-action { position: absolute; top: 8px; left: 8px; z-index: 2; }
+.studio-action select { font-size: 13px; padding: 4px 8px; max-width: 200px; background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(4px); }
+.studio-caption { right: 56px; z-index: 2; }
+.studio.preset-open .studio-caption { right: calc(min(46%, 210px) + 12px); }
+.studio-more {
+  position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 3;
+  width: 36px; height: 36px; padding: 0; border-radius: 50%; font-size: 22px; line-height: 1;
+  background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--border);
+  animation: studio-nudge 1.8s ease-in-out infinite;
+}
+.studio.preset-open .studio-more { left: calc((100% - min(46%, 210px)) / 2); }
+@keyframes studio-nudge { 0%, 100% { translate: 0 0; } 50% { translate: 0 4px; } }
+@media (prefers-reduced-motion: reduce) { .studio-more { animation: none; } }
+.studio-caption { bottom: 52px; }
+.studio-preset { position: absolute; top: 8px; right: 8px; bottom: 8px; z-index: 2; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
+.studio-preset > * { pointer-events: auto; }
+.studio-preset.open { width: min(46%, 210px); }
+.studio-preset-toggle { font-size: 13px; padding: 4px 10px; background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(4px); }
+.studio-preset-body {
+  width: 100%; flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding: 10px;
+  border-radius: 10px; border: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(6px);
+}
+.studio-preset-body label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.studio-preset-body select { font-size: 13px; }
+.studio-preset-body .btn-row button { font-size: 13px; padding: 6px 10px; }
+@media (max-width: 900px) {
+  .main.panel-open > .agent-panel { position: fixed; inset: 0; z-index: 15; height: 100dvh; padding-top: env(safe-area-inset-top); }
+  .studio-stage { height: max(300px, calc(100dvh - 230px)); }
+}
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* CSS2DRenderer re-shows every label each frame: an empty bubble must stay hidden. */
+.agent-bubble:empty { display: none !important; }
