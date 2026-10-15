@@ -456,7 +456,7 @@ export class OwnerChat {
     return { runId: r };
   }
   async stop(orgId: string, actor: Actor, id: string, subject: ChatSubject = ownerSubject) {
-    const { chat: c } = await this.scoped(orgId, actor, id, subject);
+    await this.scoped(orgId, actor, id, subject);
     const r = (await this.db.query<RunRow>("SELECT * FROM owner_chat_runs WHERE chat_id=$1 AND status IN ('running','waiting_approval')", [id])).rows[0];
     if (!r) return { ok: true };
     const job = this.jobs.get(r.id);

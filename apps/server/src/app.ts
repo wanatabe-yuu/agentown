@@ -670,7 +670,6 @@ export async function buildApp(opts: AppOptions) {
   });
 
   // ---- terminal: POST mints a one-time ticket (header auth); the WebSocket redeems it.
-  const terminals = new Map<string, (reason: string) => void>();
   r.post<{ Params: { id: string } }>("/agents/:id/terminal-sessions", async (req, reply) => {
     if (!opts.driver) throw new ApiError(501, "no_runtime", "no runtime driver configured");
     reply.status(201);

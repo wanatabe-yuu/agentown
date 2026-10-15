@@ -103,7 +103,7 @@ export class CapabilityGateway {
   readonly registry: CapabilityDescriptor[];
   constructor(
     private readonly instance: Instance,
-    private readonly proposals: ProposalEngine,
+    proposals: ProposalEngine,
     tools: ChatTool[],
   ) {
     this.registry = capabilityRegistry(tools);

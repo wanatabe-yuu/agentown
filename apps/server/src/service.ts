@@ -4,7 +4,6 @@ import {
   type Actor,
   type AgentConfig,
   type Effort,
-  type AgentNode,
   type Grant,
   type GrantConstraints,
   type OrgConfig,
@@ -12,7 +11,6 @@ import {
   type Scope,
   type TaskSpec,
   type TaskStatus,
-  type Target,
   type WorkState,
   type ApiProtocol,
   type AuthHeader,
@@ -49,7 +47,7 @@ import type { AgentEventRow, EventBus } from "./bus.ts";
 import { type Db, type Queryable, tx } from "./db.ts";
 import { type ModelLister, normalizeBaseUrl, PROVIDER_INFO, PROVIDERS, type Provider, providerBaseUrl, providerInfo, WORKSPACE_ID_PATTERN } from "./providers.ts";
 import { openProposal, recordProposal } from "./proposals.ts";
-import { type CredentialRow, type GrantRow, Kernel, type LoadedPolicy, MEMBERS_SQL, type ModelConnection, parseShare, type Share, toGrant } from "./kernel/index.ts";
+import { type CredentialRow, type GrantRow, Kernel, type LoadedPolicy, MEMBERS_SQL, type ModelConnection, parseShare, type Share } from "./kernel/index.ts";
 import type { Permissions } from "./kernel/permissions.ts";
 
 export type { LoadedPolicy, Share };

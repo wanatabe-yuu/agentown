@@ -112,7 +112,7 @@ describe("conversations", () => {
     expect((await env.call(env.owner, "POST", "/api/teams/eng/messages", { text: "Thanks!" })).status).toBe(201);
     const read = await env.call(env.owner, "GET", "/api/teams/eng/messages");
     const said = read.body.messages.filter((m: any) => !m.system).map((m: any) => [m.author.name, m.text]);
-    expect(said).toEqual([["Linh", "Standup: tests are green"], ["Owner", "Thanks!"]].map(([n, t]) => [expect.any(String), t]));
+    expect(said).toEqual([["Linh", "Standup: tests are green"], ["Owner", "Thanks!"]].map(([, t]) => [expect.any(String), t]));
     expect(read.body.messages.some((m: any) => m.system && /started "Busy work"/.test(m.text))).toBe(true);
     expect((await env.call(env.token("lead-ops"), "POST", "/api/teams/eng/messages", { text: "hi" })).status).toBe(403);
     expect((await env.call(env.owner, "GET", "/api/teams/nope/messages")).status).toBe(404);
