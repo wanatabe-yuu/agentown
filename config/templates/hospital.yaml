@@ -4,6 +4,7 @@
 format: agentown.template/v1
 meta:
   id: hospital
+  term: hospital
   name: Hospital
   description: Administration over admissions, scheduling, pharmacy supply and records; no clinical decisions.
 

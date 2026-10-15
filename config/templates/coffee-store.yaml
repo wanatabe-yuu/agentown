@@ -5,6 +5,7 @@
 format: agentown.template/v1
 meta:
   id: coffee-store
+  term: café
   name: Coffee store
   description: A two-floor café. Counter, bar, kitchen and patio downstairs; office, roastery and a content studio upstairs. Mocha the cat runs social media.
 

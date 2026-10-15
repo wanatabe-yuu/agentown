@@ -27,4 +27,20 @@ describe("template language", () => {
     expect(back.departments.find((d: any) => d.id === "eng").name).toBe("Engineering");
     expect((await (await env.instance.org("agentown")).runConfig(agent)).instructions).not.toMatch(/Vietnamese/);
   });
+
+  it("a template carries what its world is called; the importer can rename it", async () => {
+    const yaml = await env.instance.exportTemplate({ kind: "human", id: "owner", admin: true } as never, "coffee-store");
+    expect(yaml).toMatch(/term: café/);
+    const imported = await env.call(env.owner, "POST", "/api/templates", { yaml, term: "quán" });
+    expect(imported.status).toBe(201);
+    expect(imported.body.term).toBe("quán");
+    expect((await env.call(env.owner, "POST", "/api/templates", { yaml, term: "" })).status).toBe(400);
+    const r = await env.call(env.owner, "POST", "/api/admin/orgs", { id: "quan", name: "Quán", templateId: imported.body.id, language: "vi", owner: { displayName: "Bé" } });
+    expect(r.status).toBe(201);
+    const svc = await env.instance.org("quan");
+    expect(svc.config.organization).toMatchObject({ language: "vi", term: "quán" });
+    expect(svc.config.departments.find((d) => d.id === "bar")!.name).toBe("Quầy pha chế");
+    // The install's own organization predates terms: it takes its built-in template's.
+    expect((await env.instance.org("agentown")).config.organization.term).toBe("company");
+  });
 });

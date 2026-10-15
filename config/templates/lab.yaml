@@ -2,6 +2,7 @@
 format: agentown.template/v1
 meta:
   id: lab
+  term: lab
   name: Science lab
   description: A principal investigator with research groups, a data team and lab operations.
 

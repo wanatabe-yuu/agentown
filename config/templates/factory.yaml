@@ -3,6 +3,7 @@
 format: agentown.template/v1
 meta:
   id: factory
+  term: factory
   name: Factory
   description: A plant manager over production, quality, maintenance and logistics lines.
 

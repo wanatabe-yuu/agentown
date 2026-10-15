@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { api } from "./api.ts";
-import { type Lang, langChoice, LANGUAGES, setLang, t } from "./i18n.ts";
+import { type Lang, langChoice, languageLabel, LANGUAGES, setLang, t } from "./i18n.ts";
 import { Modal } from "./ui.tsx";
 
 const browserLang = (): Lang => (navigator.language?.toLowerCase().startsWith("vi") ? "vi" : "en");
 const nameOf = (id: Lang) => LANGUAGES.find((l) => l.id === id)!.name;
 
 /** Per-person interface language, and the organization's template language (owner only). */
-export function SettingsDialog({ org, owner, onClose }: { org: { name: string; language: Lang }; owner: boolean; onClose: () => void }) {
+export function SettingsDialog({ org, owner, onClose }: { org: { name: string; language: Lang; term?: string }; owner: boolean; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState<Lang | null>(null);
@@ -42,7 +42,7 @@ export function SettingsDialog({ org, owner, onClose }: { org: { name: string; l
       </section>
       <section className="settings-section">
         <label htmlFor="template-language">
-          <h3>{t("Template language")}</h3>
+          <h3>{languageLabel(org.term)}</h3>
         </label>
         <p className="muted small">
           {t(
@@ -58,7 +58,7 @@ export function SettingsDialog({ org, owner, onClose }: { org: { name: string; l
           ))}
         </select>
         {!owner && <p className="muted small">{t("Only the owner can change it.")}</p>}
-        {saved && <p className="small ok" role="status">{t("Template language set to {lang}", { lang: nameOf(saved) })}</p>}
+        {saved && <p className="small ok" role="status">{org.term ? t("{term} language set to {lang}", { term: t(org.term), lang: nameOf(saved) }) : t("Template language set to {lang}", { lang: nameOf(saved) })}</p>}
         {error && <p className="error small" role="alert">{error}</p>}
       </section>
     </Modal>

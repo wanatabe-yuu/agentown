@@ -96,7 +96,7 @@ describe("organizations made by the instance admin", () => {
       expect(r.id).toMatch(/^a-/);
     }
     const snap = await call(factoryToken, "GET", `${F}/office/snapshot`);
-    expect(snap.body.organization).toEqual({ id: "factory", name: "Factory", language: "en" });
+    expect(snap.body.organization).toEqual({ id: "factory", name: "Factory", language: "en", term: "factory" });
     expect(snap.body.departments.map((d: { id: string }) => d.id)).toContain("production");
     expect(snap.body.agents.every((a: { id: string }) => rows.some((r) => r.id === a.id))).toBe(true);
     // The owner of the first org is not a member of this one.

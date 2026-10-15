@@ -89,9 +89,12 @@ const teamSchema = z.object({
 });
 export type TeamConfig = z.infer<typeof teamSchema>;
 
+/** What a template's world is called as a whole, chosen by whoever imports it. */
+export const termSchema = z.string().trim().min(1).max(40);
+
 export const orgConfigSchema = z
   .object({
-    organization: z.object({ id: idSchema, name: z.string(), language: z.enum(["en", "vi"]).default("en") }),
+    organization: z.object({ id: idSchema, name: z.string(), language: z.enum(["en", "vi"]).default("en"), term: termSchema.optional() }),
     departments: z.array(z.object({ id: idSchema, name: z.string(), color: z.string().default("#8aa") })).min(1),
     projects: z.array(z.object({ id: idSchema, name: z.string() })).default([]),
     teams: z.array(teamSchema).default([]),
@@ -205,13 +208,14 @@ export function splitInstanceConfig(text: string) {
 }
 
 /** Validate an organization's document against the install's runtime catalog. */
-export function orgConfigFrom(doc: unknown, organization: { id: string; name: string; language?: string }, catalog: unknown): OrgConfig {
+export function orgConfigFrom(doc: unknown, organization: { id: string; name: string; language?: string; term?: string }, catalog: unknown): OrgConfig {
   return orgConfigSchema.parse({ ...(doc as Record<string, unknown>), organization, runtimeCatalog: catalog });
 }
 
 const templateMetaSchema = z.object({
   format: z.literal("agentown.template/v1"),
-  meta: z.object({ id: idSchema, name: z.string().min(1).max(80), description: z.string().max(500).default("") }),
+  // term: what the template's world is called as a whole ("café", "factory"), e.g. in "café language".
+  meta: z.object({ id: idSchema, name: z.string().min(1).max(80), description: z.string().max(500).default(""), term: termSchema.optional() }),
 });
 export type TemplateMeta = z.infer<typeof templateMetaSchema>["meta"];
 

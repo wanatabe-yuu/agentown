@@ -34,6 +34,9 @@ export function setLang(next: Lang | "auto") {
   location.reload();
 }
 
+/** "Café language": the template language, named after what the template calls its world. */
+export const languageLabel = (term?: string) => (term ? t("{term} language", { term: t(term) }) : t("Template language"));
+
 /** Languages an organization can work in (its template language). */
 export const LANGUAGES: Array<{ id: Lang; name: string }> = [
   { id: "en", name: "English" },
@@ -682,6 +685,17 @@ const VI: Record<string, string> = {
   "Stairs": "Cầu thang",
   "Elevator": "Thang máy",
   "Template language": "Ngôn ngữ template",
+  "{term} language": "Ngôn ngữ {term}",
+  "{term} language set to {lang}": "Đã đặt ngôn ngữ {term}: {lang}",
+  "café": "quán", "factory": "nhà máy", "hospital": "bệnh viện", "lab": "phòng lab", "company": "công ty",
+  "What its world is called (e.g. café, factory)": "Tên gọi chung (ví dụ: quán, nhà máy)",
+  "Shown as “{example}” in Settings. Leave empty to keep the file's own.": "Hiện thành “{example}” trong Cài đặt. Để trống thì dùng tên trong file.",
+  "Called “{term}”": "Gọi là “{term}”",
+  "Saved to your templates": "Đã lưu vào template của bạn",
+  "Imported {file}": "Đã import {file}",
+  "Export failed ({status})": "Export thất bại ({status})",
+  "Delete template {name}?": "Xoá template {name}?",
+  "Deleted": "Đã xoá",
   "Menus and screens, for you in this browser.": "Ngôn ngữ của menu và màn hình, áp dụng cho bạn trên trình duyệt này.",
   "Follow the browser ({lang})": "Theo trình duyệt ({lang})",
   "The language {org} works in. Agents write reports, team messages and deliverables in it from their next task, chats default to it, and names from the template (departments, rooms, objects…) switch to it. Names you wrote yourself stay as they are.": "Ngôn ngữ mà {org} làm việc. Agent viết báo cáo, tin nhắn team và sản phẩm bằng ngôn ngữ này từ task tiếp theo, chat mặc định dùng nó, và các tên có sẵn từ template (phòng ban, phòng, đồ vật…) được chuyển theo. Tên bạn tự đặt được giữ nguyên.",

@@ -468,6 +468,9 @@ const MIGRATIONS: string[] = [
    ON CONFLICT (source_type, source_id) DO NOTHING;`,
   // 20: template language — what agents write in and which names the template's world shows.
   `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS language text NOT NULL DEFAULT 'en' CHECK (language IN ('en','vi'));`,
+  // 21: what a template's world is called as a whole ("café"), kept by the organizations made from it.
+  `ALTER TABLE templates ADD COLUMN IF NOT EXISTS term text;
+   ALTER TABLE organizations ADD COLUMN IF NOT EXISTS term text;`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

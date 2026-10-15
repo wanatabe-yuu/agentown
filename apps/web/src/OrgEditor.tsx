@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { HttpError, api } from "./api.ts";
 import type { Catalog, Snapshot } from "./types.ts";
 import { Modal } from "./ui.tsx";
-import { t as tr } from "./i18n.ts";
+import { languageLabel, t as tr } from "./i18n.ts";
 
 type Notify = (msg: string, kind?: "error" | "info") => void;
 /** The organization's document in its authoring format (the same shape as a template file). */
@@ -462,6 +462,7 @@ interface TemplateRow {
   name: string;
   description: string;
   builtIn: boolean;
+  term?: string;
   departments: string[];
 }
 
@@ -470,6 +471,8 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
   const [rows, setRows] = useState<TemplateRow[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [term, setTerm] = useState("");
+  const [importTerm, setImportTerm] = useState("");
   const load = useCallback(() => api<{ templates: TemplateRow[] }>("GET", "/api/templates").then((r) => setRows(r.templates)), []);
   useEffect(() => void load().catch(() => {}), [load]);
   const run = async (fn: () => Promise<unknown>, ok: string) => {
@@ -483,7 +486,7 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
   };
   const download = async (t: TemplateRow) => {
     const res = await fetch(`/api/templates/${t.id}/export`);
-    if (!res.ok) return notify(`Export failed (${res.status})`, "error");
+    if (!res.ok) return notify(tr("Export failed ({status})", { status: res.status }), "error");
     const url = URL.createObjectURL(new Blob([await res.text()], { type: "text/yaml" }));
     const a = Object.assign(document.createElement("a"), { href: url, download: `${t.name.replace(/[^\w-]+/g, "-")}.yaml` });
     a.click();
@@ -495,7 +498,7 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
         className="form"
         onSubmit={(e) => {
           e.preventDefault();
-          void run(() => api("POST", `/api/orgs/${orgId}/templates`, { name, description }).then(() => setName("")), "Saved to your templates");
+          void run(() => api("POST", `/api/orgs/${orgId}/templates`, { name, description, ...(term.trim() ? { term: term.trim() } : {}) }).then(() => setName("")), tr("Saved to your templates"));
         }}
       >
         <h3>{tr("Save this organization as a template")}</h3>
@@ -504,6 +507,7 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
         <div className="form-row">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("Template name")} required maxLength={80} aria-label={tr("Template name")} />
           <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder={tr("Description")} maxLength={500} aria-label={tr("Description")} />
+          <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder={tr("What its world is called (e.g. café, factory)")} maxLength={40} aria-label={tr("What its world is called (e.g. café, factory)")} />
           <button type="submit" className="primary">
             {tr("Save as template")}
           </button>
@@ -517,7 +521,10 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
             <tr key={t.id}>
               <td>
                 <strong>{t.name}</strong> {t.builtIn && <span className="tag">{tr("built-in")}</span>}
-                <div className="muted small">{t.description || t.departments.join(", ")}</div>
+                <div className="muted small">
+                  {t.term && <>{tr("Called “{term}”", { term: tr(t.term) })} · </>}
+                  {t.description || t.departments.join(", ")}
+                </div>
               </td>
               <td>
                 <div className="btn-row">
@@ -525,7 +532,7 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
                     {tr("Export YAML")}
                   </button>
                   {!t.builtIn && (
-                    <button type="button" className="danger" onClick={() => confirm(`Delete template ${t.name}?`) && void run(() => api("DELETE", `/api/templates/${t.id}`), "Deleted")}>
+                    <button type="button" className="danger" onClick={() => confirm(tr("Delete template {name}?", { name: t.name })) && void run(() => api("DELETE", `/api/templates/${t.id}`), tr("Deleted"))}>
                       {tr("Delete")}
                     </button>
                   )}
@@ -536,6 +543,11 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
         </tbody>
       </table>
       <label style={{ marginTop: 12, display: "block" }}>
+        {tr("What its world is called (e.g. café, factory)")}
+        <input value={importTerm} onChange={(e) => setImportTerm(e.target.value)} maxLength={40} />
+        <small className="muted">{tr("Shown as “{example}” in Settings. Leave empty to keep the file's own.", { example: languageLabel(importTerm.trim() || "café") })}</small>
+      </label>
+      <label style={{ marginTop: 12, display: "block" }}>
         {tr("Import a template file (.yaml)")}
         <input
           type="file"
@@ -543,7 +555,7 @@ function TemplatesTab({ orgId, dirty, notify }: { orgId: string; dirty: boolean;
           onChange={(e) => {
             const f = e.target.files?.[0];
             e.target.value = "";
-            if (f) void run(async () => api("POST", "/api/templates", { yaml: await f.text() }), `Imported ${f.name}`);
+            if (f) void run(async () => api("POST", "/api/templates", { yaml: await f.text(), ...(importTerm.trim() ? { term: importTerm.trim() } : {}) }).then(() => setImportTerm("")), tr("Imported {file}", { file: f.name }));
           }}
         />
       </label>

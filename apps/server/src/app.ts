@@ -1,7 +1,7 @@
 import { chatSubjectSchema, type ChatSubject } from "./chat/subjects.ts";
 import { existsSync } from "node:fs";
 import { PassThrough, Readable } from "node:stream";
-import { ACTIONS, type Actor, EFFORTS, WORK_STATES, authHeaderSchema } from "@agentown/core";
+import { ACTIONS, type Actor, EFFORTS, WORK_STATES, authHeaderSchema, termSchema } from "@agentown/core";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -146,8 +146,8 @@ const S = {
   orgConfig: z.object({ revision: z.number().int(), doc: z.record(z.string(), z.unknown()) }),
   orgWorld: z.object({ revision: z.number().int(), world: z.record(z.string(), z.unknown()).nullable() }),
   assetQuery: z.object({ kind: z.enum(["model", "texture"]), name: z.string().max(200).default("") }),
-  saveTemplate: z.object({ name: z.string().trim().min(1).max(80), description: z.string().max(500).default("") }),
-  importTemplate: z.object({ yaml: z.string().min(1).max(256 * 1024) }),
+  saveTemplate: z.object({ name: z.string().trim().min(1).max(80), description: z.string().max(500).default(""), term: termSchema.optional() }),
+  importTemplate: z.object({ yaml: z.string().min(1).max(256 * 1024), term: termSchema.optional() }),
   createUser: z.object({ displayName: z.string().trim().min(1).max(60), roleId: z.string().nullable().optional() }),
   updateUser: z.object({ displayName: z.string().trim().min(1).max(60).optional(), disabled: z.boolean().optional(), roleId: z.string().optional() }),
   grantUser: z.object({
@@ -299,7 +299,8 @@ export async function buildApp(opts: AppOptions) {
   app.get("/api/templates", async (req) => ({ templates: await instance.listTemplates(principalOf(req)) }));
   app.post("/api/templates", async (req, reply) => {
     reply.status(201);
-    return instance.importTemplate(principalOf(req), parse(S.importTemplate, req.body).yaml);
+    const body = parse(S.importTemplate, req.body);
+    return instance.importTemplate(principalOf(req), body.yaml, body.term);
   });
   app.get<{ Params: { id: string } }>("/api/templates/:id/export", async (req, reply) => {
     const yaml = await instance.exportTemplate(principalOf(req), req.params.id);

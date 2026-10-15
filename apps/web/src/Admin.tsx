@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { type Lang, lang, LANGUAGES, t as tr } from "./i18n.ts";
+import { type Lang, lang, languageLabel, LANGUAGES, t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import type { Account } from "./types.ts";
 import { Modal } from "./ui.tsx";
@@ -21,6 +21,7 @@ interface TemplateRow {
   id: string;
   name: string;
   description: string;
+  term?: string;
   departments: string[];
 }
 interface AccountRow {
@@ -181,7 +182,7 @@ export function AdminDialog({ account, onClose, onChanged, onOpen, notify }: { a
           </select>
         </label>
         <label>
-          {tr("Template language")}
+          {languageLabel(template?.term)}
           <select value={language} onChange={(e) => setLanguage(e.target.value as Lang)}>
             {LANGUAGES.map((l) => (
               <option key={l.id} value={l.id}>

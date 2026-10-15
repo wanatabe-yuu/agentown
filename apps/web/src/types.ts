@@ -155,7 +155,7 @@ export interface Department {
 
 export interface Snapshot {
   cursor: number;
-  organization: { id: string; name: string; language: "en" | "vi" };
+  organization: { id: string; name: string; language: "en" | "vi"; term?: string };
   me: { kind: string; id: string };
   departments: Department[];
   teams: Team[];

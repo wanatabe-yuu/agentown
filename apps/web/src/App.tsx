@@ -10,7 +10,7 @@ import { OwnerChatDialog, type ChatTarget } from "./OwnerChat.tsx";
 import { ConversationsSection } from "./Conversations.tsx";
 import { NeedsYou } from "./Inbox.tsx";
 import { EVENT_TEXT } from "./activity.ts";
-import { t } from "./i18n.ts";
+import { languageLabel, t } from "./i18n.ts";
 import { SettingsDialog } from "./Settings.tsx";
 import { UsersDialog } from "./Users.tsx";
 import { HttpError, api, setOrg } from "./api.ts";
@@ -274,7 +274,7 @@ function OrgApp({
             </>
           }
           items={[
-            { label: t("Settings"), hint: t("{system} · {template}", { system: t("System language"), template: t("Template language") }), onSelect: () => setShowSettings(true) },
+            { label: t("Settings"), hint: t("{system} · {template}", { system: t("System language"), template: languageLabel(snapshot.organization.term) }), onSelect: () => setShowSettings(true) },
             { label: t("Sign out"), onSelect: onSignOut, danger: true },
           ]}
         />

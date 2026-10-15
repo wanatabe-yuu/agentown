@@ -63,7 +63,7 @@ export class Instance {
     if (upgradeScripts) this.file.doc = upgradeScriptTemplates(this.file.doc);
     const { organization, doc } = this.file;
     this.builtInTemplates.set("company", {
-      meta: { id: "company", name: "Company", description: `The ${organization.name} organization this install shipped with.` },
+      meta: { id: "company", name: "Company", description: `The ${organization.name} organization this install shipped with.`, term: "company" },
       doc,
       builtIn: true,
     });
@@ -115,8 +115,8 @@ export class Instance {
 
   /** The Service of one organization, rebuilt whenever its document changes. Archived orgs are not found. */
   async org(orgId: string, opts: { includeArchived?: boolean } = {}): Promise<Service> {
-    const { rows } = await this.db.query<{ name: string; language: string; config: unknown; config_revision: number; archived_at: Date | null; runtime_namespace: string | null }>(
-      "SELECT name, language, config, config_revision, archived_at, runtime_namespace FROM organizations WHERE id=$1",
+    const { rows } = await this.db.query<{ name: string; language: string; term: string | null; template_id: string | null; config: unknown; config_revision: number; archived_at: Date | null; runtime_namespace: string | null }>(
+      "SELECT name, language, term, template_id, config, config_revision, archived_at, runtime_namespace FROM organizations WHERE id=$1",
       [orgId],
     );
     const o = rows[0];
@@ -125,7 +125,9 @@ export class Instance {
     if (hit && hit.revision === o.config_revision && hit.name === o.name) return hit.service;
     let config;
     try {
-      config = orgConfigFrom(o.config, { id: orgId, name: o.name, language: o.language }, this.file.catalog);
+      // Organizations made before terms existed take their built-in template's.
+      const term = o.term ?? this.builtInTemplates.get(o.template_id ?? "company")?.meta.term;
+      config = orgConfigFrom(o.config, { id: orgId, name: o.name, language: o.language, ...(term ? { term } : {}) }, this.file.catalog);
     } catch (err) {
       // A document this server cannot read (edited elsewhere, newer format): fail this org's requests, nothing else.
       throw new ApiError(503, "org_config_invalid", `organization ${orgId} has a configuration this server cannot load: ${err instanceof z.ZodError ? z.prettifyError(err).slice(0, 500) : (err as Error).message}`);
@@ -272,7 +274,7 @@ export class Instance {
   async listTemplates(p: Principal) {
     this.requireHuman(p);
     const { rows } = await this.db.query(
-      `SELECT t.id, t.name, t.description, t.doc, t.owner_user_id, u.display_name AS owner_name, t.source_org_id, t.created_at
+      `SELECT t.id, t.name, t.description, t.term, t.doc, t.owner_user_id, u.display_name AS owner_name, t.source_org_id, t.created_at
          FROM templates t JOIN users u ON u.id = t.owner_user_id WHERE $2 OR t.owner_user_id = $1 ORDER BY t.created_at`,
       [p.id, p.admin],
     );
@@ -283,6 +285,7 @@ export class Instance {
         id: r.id as string,
         name: r.name as string,
         description: r.description as string,
+        term: (r.term as string | null) ?? undefined,
         builtIn: false,
         owner: { id: r.owner_user_id as string, displayName: r.owner_name as string },
         sourceOrgId: r.source_org_id as string | null,
@@ -297,7 +300,7 @@ export class Instance {
     if (builtIn) return builtIn;
     const { rows } = await this.db.query("SELECT * FROM templates WHERE id=$1 AND ($3 OR owner_user_id=$2)", [id, p.id, p.admin]);
     if (!rows[0]) throw notFound("template");
-    return { meta: { id: rows[0].id, name: rows[0].name, description: rows[0].description }, doc: rows[0].doc, builtIn: false };
+    return { meta: { id: rows[0].id, name: rows[0].name, description: rows[0].description, term: rows[0].term ?? undefined }, doc: rows[0].doc, builtIn: false };
   }
 
   /** Portable YAML: what a marketplace would carry. */
@@ -306,24 +309,26 @@ export class Instance {
     return stringify({ format: "agentown.template/v1", meta: t.meta, ...t.doc });
   }
 
-  private async storeTemplate(p: Principal, meta: { name: string; description: string }, doc: Record<string, unknown>, sourceOrgId: string | null) {
+  private async storeTemplate(p: Principal, meta: { name: string; description: string; term?: string }, doc: Record<string, unknown>, sourceOrgId: string | null) {
     this.requireHuman(p);
     const id = newId("tpl");
     orgConfigFrom(doc, { id, name: meta.name }, this.file.catalog); // never store something an org could not be made from
-    await this.db.query("INSERT INTO templates(id, name, description, doc, owner_user_id, source_org_id) VALUES ($1,$2,$3,$4,$5,$6)", [
+    await this.db.query("INSERT INTO templates(id, name, description, doc, owner_user_id, source_org_id, term) VALUES ($1,$2,$3,$4,$5,$6,$7)", [
       id,
       meta.name,
       meta.description,
       JSON.stringify(doc),
       p.id,
       sourceOrgId,
+      meta.term ?? null,
     ]);
     await this.auditInstance(p, "template.create", id, { name: meta.name, sourceOrgId }, sourceOrgId);
     return (await this.listTemplates(p)).find((t) => t.id === id)!;
   }
 
   /** Import a template file (untrusted: size- and alias-bounded, validated against this install's catalog). */
-  async importTemplate(p: Principal, yaml: string) {
+  /** `term` (what its world is called as a whole) overrides the file's own. */
+  async importTemplate(p: Principal, yaml: string, term?: string) {
     this.requireHuman(p);
     let parsed: ReturnType<typeof parseTemplate>;
     try {
@@ -331,12 +336,12 @@ export class Instance {
     } catch (err) {
       throw badRequest(`not a usable template: ${err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message}`);
     }
-    return this.storeTemplate(p, { name: parsed.meta.name, description: parsed.meta.description }, parsed.doc, null);
+    return this.storeTemplate(p, { name: parsed.meta.name, description: parsed.meta.description, term: term ?? parsed.meta.term }, parsed.doc, null);
   }
 
   /** Save an organization (structure + current agent tree) as a template in the owner's library. */
-  async saveOrgAsTemplate(p: Principal, service: Service, actor: Actor, meta: { name: string; description: string }) {
-    return this.storeTemplate(p, meta, await service.asTemplateDoc(actor), service.orgId);
+  async saveOrgAsTemplate(p: Principal, service: Service, actor: Actor, meta: { name: string; description: string; term?: string }) {
+    return this.storeTemplate(p, { ...meta, term: meta.term ?? service.config.organization.term }, await service.asTemplateDoc(actor), service.orgId);
   }
 
   async deleteTemplate(p: Principal, id: string) {
@@ -404,8 +409,8 @@ export class Instance {
       if ((await c.query("SELECT 1 FROM organizations WHERE id=$1", [input.id])).rowCount) throw conflict("exists", "an organization with this id already exists");
       if ((await c.query("SELECT 1 FROM agent_runtimes WHERE namespace=$1 LIMIT 1", [namespace])).rowCount) throw conflict("namespace_taken", `namespace ${namespace} is in use`);
       await c.query(
-        "INSERT INTO organizations(id, name, config, template_id, created_by, runtime_namespace, language) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-        [input.id, input.name, JSON.stringify(worldIdentities(translateNames(template.doc, "en", input.language ?? "en"))), template.meta.id, `human:${p.id}`, namespace, input.language ?? "en"],
+        "INSERT INTO organizations(id, name, config, template_id, created_by, runtime_namespace, language, term) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [input.id, input.name, JSON.stringify(worldIdentities(translateNames(template.doc, "en", input.language ?? "en"))), template.meta.id, `human:${p.id}`, namespace, input.language ?? "en", template.meta.term ?? null],
       );
       let ownerId: string;
       const newPerson = !("userId" in input.owner);
