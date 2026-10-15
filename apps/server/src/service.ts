@@ -20,6 +20,8 @@ import {
   defaultAuthHeader,
   authHeaderSchema,
   worldAssets,
+  canTalk,
+  objectState,
   type World,
   PLAYBOOK_ARG_NAME,
   PLAYBOOK_NAME,
@@ -438,6 +440,75 @@ export class Service {
       const revision = upd.rows[0]!.config_revision;
       await this.emit(ctx, { type: "org.config", payload: { revision, part: "world" } });
       return { revision, world: (doc as Record<string, unknown>).world ?? null };
+    });
+  }
+
+  // ---------------------------------------------------------------- what objects are doing
+
+  /** Actions on objects still running (the rest are the objects' own rhythm, computed by viewers). */
+  async objectStates() {
+    const { rows } = await this.db.query("SELECT object_id, action, state, by_type, by_id, until FROM object_states WHERE org_id=$1 AND until > now()", [this.orgId]);
+    return rows.map((r) => ({ objectId: r.object_id as string, action: r.action as string, state: r.state as string, by: { type: r.by_type as string, id: r.by_id as string }, until: (r.until as Date).toISOString() }));
+  }
+
+  /** Objects someone can talk to or do something with: where they are, what they are doing, what they offer. */
+  async objectCatalog() {
+    const world = this.config.world;
+    if (!world) return [];
+    const active = new Map((await this.objectStates()).map((x) => [x.objectId, x]));
+    const rooms = new Map(world.floors.flatMap((f) => f.rooms).map((r) => [r.id, r.name]));
+    return world.objects.flatMap((o) => {
+      const k = world.kinds[o.kind];
+      if (!o.id || !k || !(k.actions.length || k.states.length || canTalk(world, o))) return [];
+      const a = active.get(o.id);
+      const state = objectState(k, o.id, Date.now(), a ? { state: a.state, until: Date.parse(a.until) } : null);
+      return [{ id: o.id, name: o.label ?? k.name, kind: k.name, room: rooms.get(o.room) ?? o.room, state: state?.id ?? null, actions: k.actions.map((x) => ({ id: x.id, name: x.name })), talks: canTalk(world, o) }];
+    });
+  }
+
+  /**
+   * Do something with a placed object. The owner may (for themself, or by
+   * asking an agent); an agent only for itself and only with objects it can
+   * reach: in its department's room, a shared room, or one that walks about.
+   * Only an object itself may switch straight to one of its states.
+   */
+  async objectAction(actor: Actor, objectId: string, choice: { action: string } | { state: string }, by?: { type: "agent" | "object"; id: string }) {
+    const world = this.config.world;
+    const object = world?.objects.find((o) => o.id === objectId);
+    const kind = object && world!.kinds[object.kind];
+    if (!object || !kind) throw notFound("world object");
+    const doer = by ?? (actor.kind === "agent" ? { type: "agent" as const, id: actor.id } : null);
+    if (actor.kind === "agent" && (doer?.type !== "agent" || doer.id !== actor.id)) throw deny("an agent acts only for itself");
+    if (actor.kind === "human" && !isOwner(actor)) throw deny("only the owner directs objects");
+    if (doer?.type === "object" && doer.id !== objectId) throw deny("an object only changes itself");
+    let action: { id: string; state: string; seconds: number };
+    if ("state" in choice) {
+      if (doer?.type !== "object") throw deny("pick one of its actions");
+      if (!kind.states.some((x) => x.id === choice.state)) throw badRequest(`${kind.name} has no state ${choice.state}`);
+      action = { id: `state:${choice.state}`, state: choice.state, seconds: 120 };
+    } else {
+      const a = kind.actions.find((x) => x.id === choice.action);
+      if (!a) throw badRequest(`${kind.name} has no action ${choice.action}; it can: ${kind.actions.map((x) => x.id).join(", ") || "nothing"}`);
+      action = a;
+    }
+    if (doer?.type === "agent") {
+      const agent = (await this.db.query<AgentRow>("SELECT * FROM agents WHERE org_id=$1 AND id=$2 AND lifecycle_state <> 'retired'", [this.orgId, doer.id])).rows[0];
+      if (!agent) throw notFound("agent");
+      const room = world!.floors.flatMap((f) => f.rooms).find((r) => r.id === object.room);
+      const reachable = !room?.department || room.department === agent.department_id || kind.behaviors.some((b) => b.type === "roam");
+      if (!reachable) throw deny(`${agent.display_name} cannot reach ${object.label ?? kind.name}: it is in another department's room`);
+    }
+    const who = doer ?? { type: "human" as const, id: actor.id };
+    return this.withTx(async (ctx) => {
+      const { rows } = await ctx.c.query(
+        `INSERT INTO object_states(org_id, object_id, action, state, by_type, by_id, until) VALUES ($1,$2,$3,$4,$5,$6, now() + make_interval(secs => $7))
+         ON CONFLICT (org_id, object_id) DO UPDATE SET action=EXCLUDED.action, state=EXCLUDED.state, by_type=EXCLUDED.by_type, by_id=EXCLUDED.by_id, until=EXCLUDED.until, at=now()
+         RETURNING until`,
+        [this.orgId, objectId, action.id, action.state, who.type, who.id, action.seconds],
+      );
+      const out = { objectId, action: action.id, state: action.state, by: who, until: (rows[0].until as Date).toISOString() };
+      await this.emit(ctx, { type: "org.object", payload: out });
+      return out;
     });
   }
 
@@ -2165,6 +2236,7 @@ export class Service {
       recent,
       projects: this.config.projects,
       world: this.config.world ?? null,
+      objectStates: await this.objectStates(),
       agents,
       tasks,
       serverTime: new Date().toISOString(),

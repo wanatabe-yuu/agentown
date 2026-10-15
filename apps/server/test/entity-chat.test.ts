@@ -53,7 +53,7 @@ describe("individual conversations", () => {
     expect(result.chat.usage.requests).toBe(1);
     expect((await env.db.query("SELECT count(*)::int n FROM tasks")).rows[0].n).toBe(count);
     expect(inputs[0]!.system).toContain("Explain engineering tradeoffs.");
-    expect(inputs[0]!.tools.map(t => t.name)).toEqual(["inspect", "create_task", "task_action", "prepare_self_runtime"]);
+    expect(inputs[0]!.tools.map(t => t.name)).toEqual(["inspect", "objects", "interact", "create_task", "task_action", "prepare_self_runtime"]);
     expect(JSON.stringify(inputs)).not.toContain("sk-test-small-entity");
     expect(JSON.stringify(result)).not.toContain("sk-test-small-entity");
   });
@@ -61,7 +61,7 @@ describe("individual conversations", () => {
     const id = await create("object", cat);
     await send("object", cat, id, "Only the cat knows this discussion");
     // An object knows its own room only, and furniture does not talk at all.
-    expect(inputs.at(-1)!.tools.map(t => t.name)).toEqual(["look_around", "create_task", "task_action"]);
+    expect(inputs.at(-1)!.tools.map(t => t.name)).toEqual(["look_around", "assign_to_ceo"]);
     expect((await call("object", desk, "GET")).status).toBe(409);
     for (const [type, subject] of [["object", dog], ["agent", worker]]) {
       expect((await call(type!, subject!, "GET")).body.chats.some((c: any) => c.id === id)).toBe(false);
@@ -132,28 +132,28 @@ describe("individual conversations", () => {
     expect((await call("agent", worker, "GET", `/${id}`)).body.actions[0].status).toBe("failed");
     expect((await env.call(env.owner, "GET", `/api/tasks/${task.id}`)).body.status).not.toBe("cancelled");
   });
-  it("animal persona manages owner tasks with approvals, compact, archive, restore and delete", async () => {
+  it("animal persona proposes work to the CEO with approval, then compact, archive, restore and delete", async () => {
     const index = (await call("object", cat, "GET")).body;
     expect(index.profile.template).toContain("cat companion");
     expect(index.profile.instructions).toContain("Enjoy coffee discussions.");
     expect(index.profile.instructions).toContain("Be curious.");
     const id = await create("object", cat);
-    plan = [tool("create_task", { title: "Cat follow-up" })];
-    const first = await send("object", cat, id); const task = first.actions[0].result.task;
-    expect(task.createdBy).toBe("human:owner");
-    plan = [tool("task_action", { id: task.id, action: "cancel" })];
+    plan = [tool("create_task", { title: "Cat direct task" }), tool("assign_to_ceo", { title: "Cat follow-up", description: "Restock the coffee beans." })];
     const next = await send("object", cat, id);
+    expect(next.actions[0].status).toBe("failed");
     expect(next.run.status).toBe("waiting_approval");
     const a = next.actions.find((a: any) => a.status === "pending");
     expect((await call("object", cat, "POST", `/${id}/actions/${a.id}`, { approve: true })).status).toBe(200);
-    await env.ownerChat.idle(); expect((await env.call(env.owner, "GET", `/api/tasks/${task.id}`)).body.status).toBe("cancelled");
+    await env.ownerChat.idle();
+    const task = (await call("object", cat, "GET", `/${id}`)).body.actions.find((x: any) => x.id === a.id).result.task;
+    expect((await env.call(env.owner, "GET", `/api/tasks/${task.id}`)).body).toMatchObject({ assigneeAgentId: "ceo", createdBy: "human:owner" });
     expect((await call("object", cat, "POST", `/${id}/compact`, { requestId: crypto.randomUUID() })).status).toBe(200); await env.ownerChat.idle();
     expect((await call("object", cat, "GET", `/${id}`)).body.chat.usage.compactions).toBe(1);
     expect((await call("object", cat, "PUT", `/${id}/archive`, { archived: true })).status).toBe(200);
     expect((await call("object", cat, "GET", "?archived=true")).body.chats.some((c: any) => c.id === id)).toBe(true);
     expect((await call("object", cat, "PUT", `/${id}/archive`, { archived: false })).status).toBe(200);
     expect((await call("object", cat, "DELETE", `/${id}`)).status).toBe(200);
-    expect((await env.call(env.owner, "GET", `/api/tasks/${task.id}`)).body.status).toBe("cancelled");
+    expect((await env.call(env.owner, "GET", `/api/tasks/${task.id}`)).body.title).toBe("Cat follow-up");
   });
   it("filters department keys, rechecks their scope at send and leaves runtime settings unchanged", async () => {
     const opsKey = (await env.call(env.owner, "POST", "/api/credentials", { name: "Ops key", apiKey: "sk-test-small-ops", departments: ["ops"] })).body.id;

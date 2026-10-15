@@ -40,10 +40,14 @@ const send = async (id: string, text = "Inspect my world", requestId = crypto.ra
   const res = await call("POST", `/${id}/messages`, { requestId, text }); expect(res.status).toBe(200); await env.ownerChat.idle(); return (await call("GET", `/${id}`)).body;
 };
 const tool = (name: string, args: Record<string, unknown>, id: string = crypto.randomUUID()): Message => ({ role: "assistant", text: "Working on your request.", calls: [{ id, name, args }] });
+const ceo = (title: string) => tool("assign_to_ceo", { title, description: `Do: ${title}` });
+const approve = async (id: string, actionId: string) => { await call("POST", `/${id}/actions/${actionId}`, { approve: true }); await env.ownerChat.idle(); return (await call("GET", `/${id}`)).body; };
 
 beforeAll(async () => {
   env = await setup(() => fake);
   key = (await env.call(env.owner, "POST", "/api/credentials", { name: "Owner test key", apiKey: "sk-test-small-owner" })).body.id;
+  // The CEO takes the work the system chat hands off.
+  expect((await env.call(env.owner, "PUT", "/api/agents/ceo/config", { credentialId: key, model: "claude-haiku-5-5", effort: "medium" })).status).toBe(200);
   viewer = (await env.call(env.owner, "POST", "/api/users", { displayName: "Chat viewer", roleId: "admin" })).body.token;
   ownerId = (await env.instance.authenticate(env.owner))!.id;
 });
@@ -65,8 +69,8 @@ describe("owner harness chat", () => {
   });
   it("archives, reads, restores and deletes history with its receipts without undoing world changes", async () => {
     const id = await create();
-    plan = [tool("create_task", { title: "Keep task after deleting chat" })];
-    const original = await send(id);
+    plan = [ceo("Keep task after deleting chat")];
+    const original = await approve(id, (await send(id)).actions[0].id);
     expect(original.actions).toHaveLength(1);
     expect((await call("PUT", `/${id}/archive`, { archived: true })).status).toBe(200);
     expect((await call("GET", "")).body.chats.some((c: any) => c.id === id)).toBe(false);
@@ -106,7 +110,7 @@ describe("owner harness chat", () => {
     await call("POST", `/${id}/messages`, { requestId: crypto.randomUUID(), text: "Wait" }); await gate;
     for (const action of ["archive", "delete"]) expect((await call(action === "delete" ? "DELETE" : "PUT", `/${id}${action === "delete" ? "" : "/archive"}`, action === "delete" ? undefined : { archived: true })).status).toBe(409);
     await call("POST", `/${id}/stop`);
-    plan = [tool("agent_action", { id: "ceo", action: "stop" })]; await send(id);
+    plan = [ceo("Pending while archiving")]; await send(id);
     expect((await call("DELETE", `/${id}`)).status).toBe(409);
     expect((await call("PUT", `/${id}/archive`, { archived: true })).status).toBe(409);
     await call("POST", `/${id}/stop`);
@@ -147,57 +151,86 @@ describe("owner harness chat", () => {
   });
   it("creates work once, persists tool receipts and deduplicates message retries", async () => {
     const id = await create(); const req = crypto.randomUUID();
-    plan = [tool("create_task", { title: "Owner once" })];
-    const first = await send(id, "Create one task", req);
+    plan = [ceo("Owner once")];
+    const first = await approve(id, (await send(id, "Create one task", req)).actions[0].id);
     expect(first.actions[0].status).toBe("applied");
+    expect(first.actions[0].result.assignedTo.id).toBe("ceo");
     await send(id, "Create one task", req);
     expect((await env.db.query("SELECT count(*)::int n FROM tasks WHERE title='Owner once'")).rows[0].n).toBe(1);
     expect((await env.db.query("SELECT spec FROM tasks WHERE title='Owner once'")).rows[0].spec.kind).toBe("prompt");
     expect((await call("GET", `/${id}`)).body.messages.filter((m: any) => m.role === "user")).toHaveLength(1);
     expect(inputs[1]!.messages.at(-1)?.role).toBe("tool");
+    expect((await env.db.query("SELECT assignee_agent_id, requires_review FROM tasks WHERE title='Owner once'")).rows[0]).toEqual({ assignee_agent_id: "ceo", requires_review: true });
+  });
+  it("works with the least privilege: reads and answers, never changes the world, agents or tasks itself", async () => {
+    const id = await create();
+    await send(id, "What can you do?");
+    expect(inputs[0]!.tools.map(t => t.name)).toEqual(["inspect", "objects", "ask", "assign_to_ceo"]);
+    const before = (await env.call(env.owner, "GET", "/api/world")).body;
+    plan = [tool("replace_world", { revision: before.revision, world: null }), tool("update_agent", { id: "po", change: { displayName: "Sneaky" } }), tool("create_task", { title: "Direct task" })];
+    const data = await send(id, "Change things directly");
+    expect(data.actions.map((a: any) => a.status)).toEqual(["failed", "failed", "failed"]);
+    expect((await env.call(env.owner, "GET", "/api/world")).body.revision).toBe(before.revision);
+    expect((await env.db.query("SELECT display_name FROM agents WHERE id='po'")).rows[0].display_name).not.toBe("Sneaky");
+    expect((await env.db.query("SELECT count(*)::int n FROM tasks WHERE title='Direct task'")).rows[0].n).toBe(0);
+  });
+  it("reports the handed-off work back into the chat, from whoever did it", async () => {
+    const id = await create(); plan = [ceo("Report back")];
+    const done = await approve(id, (await send(id)).actions[0].id);
+    const taskId = done.actions[0].result.task.id;
+    await env.db.query("UPDATE tasks SET status='review', summary='Ready: three options drafted.' WHERE id=$1", [taskId]);
+    let view = (await call("GET", `/${id}`)).body;
+    const report = view.messages.filter((m: any) => m.author_type === "agent");
+    expect(report).toHaveLength(1);
+    expect(report[0]).toMatchObject({ role: "assistant", author_id: "ceo" });
+    expect(report[0].text).toContain("Ready: three options drafted.");
+    view = (await call("GET", `/${id}`)).body;
+    expect(view.messages.filter((m: any) => m.author_type === "agent")).toHaveLength(1);
+    // The CEO's chat history lists this conversation.
+    expect((await env.call(env.owner, "GET", "/api/entity-chats/agent/ceo")).body.refs.some((r: any) => r.chatId === id)).toBe(true);
   });
   it("parks important changes for approval, rejects once, and prevents automatic replay", async () => {
     const id = await create();
-    plan = [tool("agent_action", { id: "ceo", action: "stop" })];
+    plan = [ceo("Parked until confirmed")];
     const pending = await send(id);
     expect(pending.run.status).toBe("waiting_approval");
     expect(pending.actions[0].status).toBe("pending");
-    expect((await env.service.getAgent({ kind: "human", id: ownerId, owner: true }, "ceo")).desiredRuntime).toBe("running");
+    expect((await env.db.query("SELECT count(*)::int n FROM tasks WHERE title='Parked until confirmed'")).rows[0].n).toBe(0);
     const actionId = pending.actions[0].id;
     expect((await call("POST", `/${id}/actions/${actionId}`, { approve: false })).status).toBe(200);
     await env.ownerChat.idle();
     expect((await call("GET", `/${id}`)).body.actions[0].status).toBe("rejected");
     await call("POST", `/${id}/actions/${actionId}`, { approve: true }); await env.ownerChat.idle();
-    expect((await env.service.getAgent({ kind: "human", id: ownerId, owner: true }, "ceo")).desiredRuntime).toBe("running");
+    expect((await env.db.query("SELECT count(*)::int n FROM tasks WHERE title='Parked until confirmed'")).rows[0].n).toBe(0);
   });
   it("a chat action waiting for approval is a proposal that can be decided from the proposals inbox", async () => {
     const id = await create({ approvalMode: "all" });
-    plan = [tool("update_agent", { id: "po", change: { displayName: "Inbox renamed" } })];
+    plan = [ceo("From the inbox")];
     const pending = await send(id);
     const list = (await env.call(env.owner, "GET", "/api/proposals?status=pending")).body.proposals;
     const p = list.find((x: any) => x.source.type === "chat_action" && x.source.id === pending.actions[0].id);
-    expect(p).toMatchObject({ kind: "capability_call", canDecide: true, payload: { tool: "update_agent", chatId: id } });
+    expect(p).toMatchObject({ kind: "capability_call", canDecide: true, payload: { tool: "assign_to_ceo", chatId: id } });
     expect((await env.call(env.owner, "POST", `/api/proposals/${p.id}/decide`, { verdict: "approve" })).status).toBe(200);
     await env.ownerChat.idle();
-    expect((await env.db.query("SELECT display_name FROM agents WHERE id='po'")).rows[0].display_name).toBe("Inbox renamed");
+    expect((await env.db.query("SELECT count(*)::int n FROM tasks WHERE title='From the inbox'")).rows[0].n).toBe(1);
     const settled = (await env.call(env.owner, "GET", "/api/proposals")).body.proposals.find((x: any) => x.id === p.id);
     expect(settled).toMatchObject({ status: "applied", decisions: [{ verdict: "approve" }] });
     expect((await env.call(env.owner, "POST", `/api/proposals/${p.id}/decide`, { verdict: "approve" })).status).toBe(409);
   });
   it("approval executes the exact proposal only once, then continues the response", async () => {
     const id = await create({ approvalMode: "all" });
-    plan = [tool("update_agent", { id: "po", change: { displayName: "Owner renamed" } })];
+    plan = [ceo("Exactly once")];
     const pending = await send(id);
     const path = `/${id}/actions/${pending.actions[0].id}`;
     await Promise.all([call("POST", path, { approve: true }), call("POST", path, { approve: true })]); await env.ownerChat.idle();
     const data = (await call("GET", `/${id}`)).body;
     expect(data.run.status).toBe("succeeded"); expect(data.actions[0].status).toBe("applied");
-    expect((await env.db.query("SELECT display_name FROM agents WHERE id='po'")).rows[0].display_name).toBe("Owner renamed");
+    expect((await env.db.query("SELECT count(*)::int n FROM tasks WHERE title='Exactly once'")).rows[0].n).toBe(1);
   });
   it("validates model and limits and prevents setting changes while approval is pending", async () => {
     expect((await call("POST", "", config({ model: "unavailable" }))).status).toBe(400);
     expect((await call("POST", "", config({ contextLimit: 8192, maxOutputTokens: 4096 }))).status).toBe(400);
-    const id = await create(); plan = [tool("retire_agent", { id: "ceo" })]; await send(id);
+    const id = await create(); plan = [ceo("Settings locked")]; await send(id);
     expect((await call("PUT", `/${id}/config`, config({ maxTurns: 2 }))).status).toBe(409);
     await call("POST", `/${id}/stop`);
     expect((await call("GET", `/${id}`)).body.run.status).toBe("cancelled");
@@ -214,7 +247,7 @@ describe("owner harness chat", () => {
     expect(data.run.status).toBe("cancelled"); expect(data.messages.at(-1).partial).toBe(true); expect(data.messages.at(-1).text).toContain("Partial reply");
   });
   it("rechecks owner rights before approved writes", async () => {
-    const id = await create(); plan = [tool("agent_action", { id: "ceo", action: "stop" })]; const data = await send(id);
+    const id = await create(); plan = [ceo("Owner rights")]; const data = await send(id);
     await env.db.query("UPDATE org_members SET is_owner=false WHERE user_id=$1 AND org_id='agentown'", [ownerId]);
     try { expect((await call("POST", `/${id}/actions/${data.actions[0].id}`, { approve: true })).status).toBe(403); }
     finally { await env.db.query("UPDATE org_members SET is_owner=true WHERE user_id=$1 AND org_id='agentown'", [ownerId]); }
@@ -222,11 +255,11 @@ describe("owner harness chat", () => {
   });
   it("rechecks account rights during a running model response before tools execute", async () => {
     const id = await create();
-    plan = [async () => { await env.db.query("UPDATE org_members SET disabled_at=now() WHERE user_id=$1 AND org_id='agentown'", [ownerId]); return tool("update_agent", { id: "po", change: { displayName: "Forbidden rename" } }); }];
+    plan = [async () => { await env.db.query("UPDATE org_members SET disabled_at=now() WHERE user_id=$1 AND org_id='agentown'", [ownerId]); return tool("objects", {}); }];
     await send(id).catch(() => {});
     await env.db.query("UPDATE org_members SET disabled_at=NULL WHERE user_id=$1 AND org_id='agentown'", [ownerId]);
     expect((await call("GET", `/${id}`)).body.run.status).toBe("failed");
-    expect((await env.db.query("SELECT display_name FROM agents WHERE id='po'")).rows[0].display_name).not.toBe("Forbidden rename");
+    expect((await call("GET", `/${id}`)).body.actions.every((a: any) => a.status !== "applied")).toBe(true);
   });
   it("automatically compacts without losing transcript or the next request", async () => {
     const id = await create(); await send(id, "large history old request"); countLarge = true;
@@ -277,24 +310,6 @@ describe("owner harness chat", () => {
     expect((await env.db.query("SELECT display_name FROM agents WHERE id='po'")).rows[0].display_name).not.toBe("Never replay");
     expect(inputs[0]!.messages.some(m => m.role === "tool" && m.toolId === tid)).toBe(true);
   });
-  it("preserves revision checks on approved world replacements", async () => {
-    const current = (await env.call(env.owner, "GET", "/api/world")).body;
-    const id = await create(); plan = [tool("replace_world", { revision: current.revision - 1, world: null })]; const pending = await send(id);
-    await call("POST", `/${id}/actions/${pending.actions[0].id}`, { approve: true }); await env.ownerChat.idle();
-    expect((await call("GET", `/${id}`)).body.actions[0].result.error).toMatch(/changed meanwhile/);
-  });
-  it("edits a validated world immediately and rejects unknown assets through the same service", async () => {
-    const current = (await env.call(env.owner, "GET", "/api/world")).body;
-    const world = { floors: [{ id: "main", name: "Main", rooms: [{ id: "lobby", name: "Lobby", area: { x: 0, z: 0, w: 10, d: 8 } }] }] };
-    expect((await env.call(env.owner, "PUT", "/api/world", { revision: current.revision, world })).status).toBe(200);
-    const id = await create(); let state = (await env.call(env.owner, "GET", "/api/world")).body;
-    plan = [tool("patch_world", { revision: state.revision, operations: [{ op: "replace", path: "/floors/0/rooms/0/name", value: "Owner lobby" }] })];
-    const edited = await send(id, "Rename lobby"); expect(edited.actions[0].status).toBe("applied");
-    state = (await env.call(env.owner, "GET", "/api/world")).body; expect(state.world.floors[0].rooms[0].name).toBe("Owner lobby");
-    plan = [tool("patch_world", { revision: state.revision, operations: [{ op: "add", path: "/floors/0/rooms/0/floorTexture", value: "another-world-asset" }] })];
-    const rejected = await send(id, "Use invalid art"); expect(rejected.actions.at(-1).status).toBe("failed");
-    expect((await env.call(env.owner, "GET", "/api/world")).body.world.floors[0].rooms[0].floorTexture).toBeUndefined();
-  });
   it("does not execute truncated tool calls or duplicate provider call IDs", async () => {
     const id = await create(); truncated = true;
     plan = [tool("update_agent", { id: "po", change: { displayName: "Incomplete change" } })];
@@ -310,15 +325,14 @@ describe("owner harness chat", () => {
     expect((await env.db.query("SELECT count(*)::int n FROM tasks WHERE title='Hidden shell'")).rows[0].n).toBe(0);
   });
   it("resumes a committed approval after restart without replaying an applied action", async () => {
-    const id = await create(); plan = [tool("agent_action", { id: "po", action: "restart" })];
+    const id = await create(); plan = [ceo("Resumed after restart")];
     const pending = await send(id);
     await env.db.query("UPDATE owner_chat_actions SET status='approved' WHERE id=$1", [pending.actions[0].id]);
     await env.ownerChat.recover(); await env.ownerChat.idle();
     const after = (await call("GET", `/${id}`)).body;
     expect(after.actions[0].status).toBe("applied"); expect(after.run.status).toBe("succeeded");
-    const generation = (await env.service.getRuntimeRow("po")).generation;
     await env.ownerChat.recover(); await env.ownerChat.idle();
-    expect((await env.service.getRuntimeRow("po")).generation).toBe(generation);
+    expect((await env.db.query("SELECT count(*)::int n FROM tasks WHERE title='Resumed after restart'")).rows[0].n).toBe(1);
   });
 });
 

@@ -453,6 +453,11 @@ export async function buildApp(opts: AppOptions) {
   r.get("/catalog", async (req) => svcOf(req).catalog(actorOf(req)));
   r.get("/capabilities", async (req) => svcOf(req).me(actorOf(req)));
   r.get("/office/snapshot", async (req) => svcOf(req).snapshot(actorOf(req)));
+  // Doing something with an object: the owner (for themself or by asking an agent), or an agent for itself.
+  r.post<{ Params: { id: string } }>("/objects/:id/actions", async (req) => {
+    const b = parse(z.object({ action: z.string().min(1).max(64), agentId: z.string().min(1).max(64).optional() }).strict(), req.body);
+    return svcOf(req).objectAction(actorOf(req), req.params.id, { action: b.action }, b.agentId ? { type: "agent", id: b.agentId } : undefined);
+  });
 
   // ---- agents
   r.get("/agents", async (req) => ({ agents: await svcOf(req).listAgents(actorOf(req)) }));

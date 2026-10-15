@@ -471,6 +471,34 @@ const MIGRATIONS: string[] = [
   // 21: what a template's world is called as a whole ("café"), kept by the organizations made from it.
   `ALTER TABLE templates ADD COLUMN IF NOT EXISTS term text;
    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS term text;`,
+  // 22: who said each chat line, which chats mention whom, tasks a chat handed off, what objects are doing.
+  `ALTER TABLE owner_chat_messages ADD COLUMN IF NOT EXISTS author_type text CHECK (author_type IN ('agent','object'));
+   ALTER TABLE owner_chat_messages ADD COLUMN IF NOT EXISTS author_id text;
+   CREATE TABLE IF NOT EXISTS chat_refs (
+     chat_id text NOT NULL REFERENCES owner_chats(id) ON DELETE CASCADE,
+     subject_type text NOT NULL CHECK (subject_type IN ('agent','object')),
+     subject_id text NOT NULL,
+     at timestamptz NOT NULL DEFAULT now(),
+     PRIMARY KEY (chat_id, subject_type, subject_id)
+   );
+   CREATE INDEX IF NOT EXISTS chat_refs_subject ON chat_refs(subject_type, subject_id, at DESC);
+   CREATE TABLE IF NOT EXISTS chat_tasks (
+     chat_id text NOT NULL REFERENCES owner_chats(id) ON DELETE CASCADE,
+     task_id text NOT NULL,
+     reported_status text,
+     PRIMARY KEY (chat_id, task_id)
+   );
+   CREATE TABLE IF NOT EXISTS object_states (
+     org_id text NOT NULL REFERENCES organizations(id),
+     object_id text NOT NULL,
+     action text NOT NULL,
+     state text NOT NULL,
+     by_type text NOT NULL CHECK (by_type IN ('human','agent','object')),
+     by_id text NOT NULL,
+     until timestamptz NOT NULL,
+     at timestamptz NOT NULL DEFAULT now(),
+     PRIMARY KEY (org_id, object_id)
+   );`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

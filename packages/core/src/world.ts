@@ -23,6 +23,10 @@ export const SIDES = ["north", "south", "east", "west"] as const;
 export const FLOOR_STYLES = ["plain", "wood", "tile", "checker", "concrete", "deck"] as const;
 export const WALL_STYLES = ["plain", "brick", "panel", "stripe"] as const;
 export const OBJECT_CATEGORIES = ["character", "static", "dynamic"] as const;
+/** How a character shows a state with its body; things ignore it. */
+export const POSES = ["idle", "sleep", "happy", "play", "work"] as const;
+/** What someone does to trigger an action: walk over and pet it, walk over and use it, or nothing (from afar). */
+export const GESTURES = ["pet", "use", "none"] as const;
 
 const primitiveSchema = z.object({
   shape: z.enum(SHAPES),
@@ -78,6 +82,8 @@ const avatarOverrideSchema = z.object({
   character: z.enum(CHARACTERS).optional(),
   color: color.optional(),
   accent: color.optional(),
+  /** A picture from the asset library shown wherever this agent appears flat (chats, the 2D map). */
+  image: z.string().min(1).max(64).optional(),
 });
 export type AvatarOverride = z.infer<typeof avatarOverrideSchema>;
 
@@ -87,6 +93,32 @@ export type AvatarOverride = z.infer<typeof avatarOverrideSchema>;
  * never says anything has no chat at all.
  */
 const objectChatSchema = z.object({ enabled: z.boolean().optional(), instructions: z.string().max(12000).optional() });
+
+/**
+ * What an object can be doing. The first state is its usual one; states marked
+ * `auto` are ones it drifts into by itself now and then (a cat naps). While in
+ * a state its `behaviors` replace the kind's (a sleeping cat stops roaming).
+ */
+const stateSchema = z.object({
+  id: idSchema,
+  name: z.string().min(1).max(40),
+  behaviors: z.array(behaviorSchema).max(8).optional(),
+  pose: z.enum(POSES).optional(),
+  /** Glowing parts: 0 off, 1 as built, up to 3 brighter. */
+  glow: num(0, 3).optional(),
+  auto: z.boolean().default(false),
+});
+export type ObjectState = z.infer<typeof stateSchema>;
+
+/** Something people (the owner, agents, the object itself) can do with it: puts it in `state` for a while. */
+const actionSchema = z.object({
+  id: idSchema,
+  name: z.string().min(1).max(40),
+  state: idSchema,
+  seconds: num(1, 3600).default(20),
+  gesture: z.enum(GESTURES).default("use"),
+});
+export type ObjectAction = z.infer<typeof actionSchema>;
 
 const objectKindSchema = z.object({
   chat: objectChatSchema.optional(),
@@ -98,6 +130,8 @@ const objectKindSchema = z.object({
   look: lookSchema,
   behaviors: z.array(behaviorSchema).max(8).default([]),
   access: accessSchema.default("own-room"),
+  states: z.array(stateSchema).max(12).default([]),
+  actions: z.array(actionSchema).max(12).default([]),
 });
 export type ObjectKind = z.infer<typeof objectKindSchema>;
 
@@ -144,6 +178,8 @@ const placementSchema = z.object({
   label: z.string().max(40).optional(),
   /** A smaller line under the name: a role or title (Shop cat, Barista, Music player); default: its kind's title. */
   title: z.string().max(40).optional(),
+  /** Its picture in chats and on the 2D map (an image asset); default: a portrait of its model. */
+  image: z.string().min(1).max(64).optional(),
 });
 
 export const worldSchema = z.object({
@@ -206,6 +242,15 @@ export function checkWorld(world: World, departments: Set<string>, issue: (messa
       if (b.part && !("parts" in kind.look && kind.look.parts.some((p) => p.part === b.part))) issue(`world: kind ${kindId} animates unknown part ${b.part}`);
     }
   }
+  for (const [kindId, kind] of Object.entries(world.kinds)) {
+    const states = new Set(kind.states.map((x) => x.id));
+    if (states.size !== kind.states.length) issue(`world: kind ${kindId} has duplicate state ids`);
+    for (const a of kind.actions) if (!states.has(a.state)) issue(`world: kind ${kindId} action ${a.id} puts it in unknown state ${a.state}`);
+    if (new Set(kind.actions.map((a) => a.id)).size !== kind.actions.length) issue(`world: kind ${kindId} has duplicate action ids`);
+    for (const st of kind.states) for (const b of st.behaviors ?? []) {
+      if (b.part && !("parts" in kind.look && kind.look.parts.some((p) => p.part === b.part))) issue(`world: kind ${kindId} state ${st.id} animates unknown part ${b.part}`);
+    }
+  }
   const floorOf = new Map(world.floors.flatMap((f) => f.rooms.map((r) => [r.id, f.id] as const)));
   for (const r of rooms.values()) {
     for (const d of r.doors) {
@@ -246,5 +291,28 @@ export function worldAssets(world: World | undefined): string[] {
   const ids = new Set<string>();
   for (const k of Object.values(world.kinds)) if ("asset" in k.look) ids.add(k.look.asset);
   for (const f of world.floors) for (const r of f.rooms) for (const t of [r.floorTexture, r.wallTexture]) if (t) ids.add(t);
+  for (const o of world.objects) if (o.image) ids.add(o.image);
+  for (const a of Object.values(world.avatars.byAgent)) if (a.image) ids.add(a.image);
   return [...ids];
+}
+
+/**
+ * The state an object is in right now: an action someone took (until it runs
+ * out), else one of its `auto` states when its own rhythm says so, else its
+ * first state. The rhythm is a pure function of time and the object's id, so
+ * every viewer sees the same nap at the same moment.
+ */
+export function objectState(kind: Pick<ObjectKind, "states">, objectId: string, now: number, active?: { state: string; until: number } | null): ObjectState | null {
+  if (!kind.states.length) return null;
+  if (active && active.until > now) return kind.states.find((x) => x.id === active.state) ?? kind.states[0]!;
+  const autos = kind.states.filter((x) => x.auto);
+  if (!autos.length) return kind.states[0]!;
+  // Cycles of 60–150 s; the object spends roughly the last third of each in an auto state.
+  let h = 2166136261;
+  for (let i = 0; i < objectId.length; i++) h = Math.imul(h ^ objectId.charCodeAt(i), 16777619);
+  const seed = (h >>> 0) / 4294967295;
+  const period = 60_000 + seed * 90_000;
+  const cycle = Math.floor((now + seed * period) / period);
+  const phase = ((now + seed * period) % period) / period;
+  return phase > 0.66 ? autos[cycle % autos.length]! : kind.states[0]!;
 }
