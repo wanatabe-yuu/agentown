@@ -522,6 +522,11 @@ const MIGRATIONS: string[] = [
    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS campaign_id text REFERENCES campaigns(id);
    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS campaign_step int;
    CREATE INDEX IF NOT EXISTS tasks_campaign ON tasks(campaign_id);`,
+  // 24: agents ask the person who gave them the work (a question with a deadline, then they decide themselves).
+  `ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_kind_check;
+   ALTER TABLE proposals ADD CONSTRAINT proposals_kind_check
+     CHECK (kind IN ('capability_call','config_change','task_result','world_change','permission_change','runtime_change','team_change','question'));
+   CREATE INDEX IF NOT EXISTS proposals_task ON proposals ((payload->>'taskId')) WHERE status = 'pending';`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

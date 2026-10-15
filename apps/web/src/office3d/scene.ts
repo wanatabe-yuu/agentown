@@ -585,6 +585,7 @@ export function buildScene(
     name.obj.position.set(0, -0.05, 0.65);
     actor.add(name.obj);
     const bubble = label("agent-bubble", "");
+    bubble.el.dataset.agent = a.id;
     bubble.obj.position.set(0.45, 1.8, -0.1);
     actor.add(bubble.obj);
 
@@ -654,6 +655,8 @@ export interface FrameInput {
   agents: Map<string, Agent>;
   workOf: (a: Agent) => WorkState;
   needsOwner: Set<string>;
+  /** Agents that cannot work for lack of an API key: their bubble says so (and opens their settings). */
+  keyMissing?: Set<string>;
   selected: string | null;
   hover: string | null;
   flights: Flight[];
@@ -755,6 +758,7 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
     let text = "";
     let tone = "";
     if (f.needsOwner.has(node.id)) [text, tone] = ["?", "review"];
+    else if (f.keyMissing?.has(node.id)) [text, tone] = [t("🔑 No API key"), "bad"];
     else if (work === "blocked") [text, tone] = ["!", "bad"];
     else if (work === "error") [text, tone] = ["×", "bad"];
     else if (work === "waiting") [text, tone] = ["⌛", "plain"];

@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t as tr } from "./i18n.ts";
 import { AdminDialog } from "./Admin.tsx";
-import { AgentPanel } from "./AgentPanel.tsx";
+import { AgentPanel, type PanelTab } from "./AgentPanel.tsx";
 import { AssetsDialog } from "./Assets.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
 import { OrgEditor } from "./OrgEditor.tsx";
@@ -11,7 +11,7 @@ import { chatSelectionKey, OwnerChatDialog, type ChatTarget } from "./OwnerChat.
 import { Avatar, AvatarRoster } from "./Avatar.tsx";
 import { ConversationsSection } from "./Conversations.tsx";
 import { NeedsYou } from "./Inbox.tsx";
-import { EVENT_TEXT } from "./activity.ts";
+import { EVENT_TEXT, plain } from "./activity.ts";
 import { languageLabel, t } from "./i18n.ts";
 import { SettingsDialog } from "./Settings.tsx";
 import { UsersDialog } from "./Users.tsx";
@@ -219,7 +219,8 @@ function OrgApp({
 
   // "Needs you": agents whose proposals wait for this person (a "?" over their head).
   const [needsOwner, setNeedsOwner] = useState<Set<string>>(new Set());
-  const inboxKey = useMemo(() => feed.filter((e) => /^(task\.status|proposal|run\.finished)/.test(e.type)).length, [feed]);
+  const [panelTab, setPanelTab] = useState<{ tab: PanelTab; focus: number } | undefined>(undefined);
+  const inboxKey = useMemo(() => feed.filter((e) => /^(task\.status|task\.question|proposal|run\.finished)/.test(e.type)).length, [feed]);
 
   if (!me) return <div className="center muted">{t("Loading…")}</div>;
   if (!snapshot) return <div className="center muted">{t("Connecting to the office…")}</div>;
@@ -235,6 +236,10 @@ function OrgApp({
   ];
   const name = (id: string | null) => snapshot.agents.find((a) => a.id === id)?.displayName ?? id ?? "—";
   const active = snapshot.agents.filter((a) => a.lifecycleState !== "retired");
+  // Agents whose runtime needs a model but who have no API key: they cannot work, and the office says so.
+  const keyMissing = new Set(
+    active.filter((a) => catalog?.presets.find((p) => p.id === a.runtime?.presetId)?.harness !== "script" && !a.config.credentialId).map((a) => a.id),
+  );
   const working = active.filter((a) => ["thinking", "executing", "waiting"].includes(effectiveWork(a))).length;
 
   const openAgentChat = (id: string) => setEntityChat({ type: "agent", id, name: snapshot.agents.find((a) => a.id === id)!.displayName });
@@ -342,6 +347,11 @@ function OrgApp({
                 snapshot={snapshot}
                 workOf={effectiveWork}
                 needsOwner={needsOwner}
+                keyMissing={keyMissing}
+                onFixKey={(id) => {
+                  setSelected(id);
+                  setPanelTab({ tab: "config", focus: Date.now() });
+                }}
                 selected={selected}
                 onSelect={setSelected}
                 onSelectObject={selectObject}
@@ -363,6 +373,7 @@ function OrgApp({
           <AgentPanel
             onChat={me.actor.owner ? () => openAgentChat(selected) : undefined}
             agentId={selected}
+            openTab={panelTab}
             snapshot={snapshot}
             catalog={catalog}
             workOf={effectiveWork}
@@ -398,13 +409,45 @@ function OrgApp({
                 {feed
                   .filter((e) => EVENT_TEXT[e.type])
                   .slice(0, 40)
-                  .map((e) => (
-                    <li key={e.seq}>
-                      <button type="button" className="feed-row" onClick={() => (e.taskId ? setOpenTask(e.taskId) : e.agentId && setSelected(e.agentId))}>
-                        <span className="muted small">{ago(e.at, now)}</span> {EVENT_TEXT[e.type]!(e, name)}
-                      </button>
-                    </li>
-                  ))}
+                  .map((e) =>
+                    e.type === "agent.said" || e.type === "task.question" ? (
+                      // What an agent says while it works reads like a chat: who, what, and the commands it runs.
+                      <li key={e.seq} className={`feed-say${e.type === "task.question" ? " feed-ask" : ""}`}>
+                        <button type="button" onClick={() => (e.taskId ? setOpenTask(e.taskId) : e.agentId && setSelected(e.agentId))}>
+                          <Avatar who={{ type: "agent", id: e.agentId ?? "" }} size={22} />
+                          <span className="say-body">
+                            <span className="say-head">
+                              <b>{name(e.agentId)}</b> <span className="muted small">{ago(e.at, now)}</span>
+                            </span>
+                            {e.type === "task.question" ? (
+                              <span className="say-text">❓ {String(e.payload.question ?? "")}</span>
+                            ) : (
+                              String(e.payload.text ?? "")
+                                .split("\n")
+                                .slice(0, 6)
+                                .map((line, i) =>
+                                  line.startsWith("$ ") ? (
+                                    <code key={i} className="say-cmd">
+                                      {line.slice(2)}
+                                    </code>
+                                  ) : (
+                                    <span key={i} className="say-text">
+                                      {plain(line)}
+                                    </span>
+                                  ),
+                                )
+                            )}
+                          </span>
+                        </button>
+                      </li>
+                    ) : (
+                      <li key={e.seq}>
+                        <button type="button" className="feed-row" onClick={() => (e.taskId ? setOpenTask(e.taskId) : e.agentId && setSelected(e.agentId))}>
+                          <span className="muted small">{ago(e.at, now)}</span> {EVENT_TEXT[e.type]!(e, name)}
+                        </button>
+                      </li>
+                    ),
+                  )}
                 {!feed.some((e) => EVENT_TEXT[e.type]) && <li className="muted small">{t("Nothing has happened yet. Click a person to open their desk.")}</li>}
               </ul>
             </section>
@@ -428,7 +471,7 @@ function OrgApp({
         />
       )}
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
-      {showSettings && <SettingsDialog org={snapshot.organization} kernel={snapshot.kernel} owner={!!me.actor.owner} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsDialog org={snapshot.organization} kernel={snapshot.kernel} lead={snapshot.agents.find((a) => a.id === snapshot.leadAgentId)?.displayName} owner={!!me.actor.owner} onClose={() => setShowSettings(false)} />}
       {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
       {entityChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} key={`${orgId}:${entityChat.type}:${entityChat.id}`} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} subject={entityChat} onClose={() => setEntityChat(null)} onKeys={() => { setEntityChat(null); setShowKeys(true); }} onOpenChat={openChat} />}
       {showOwnerChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} onClose={() => setShowOwnerChat(false)} onKeys={() => { setShowOwnerChat(false); setShowKeys(true); }} onOpenChat={openChat} />}

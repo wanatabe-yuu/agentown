@@ -11,13 +11,13 @@ import { actorRef, conflict, newId, notFound, sanitize } from "./util.ts";
  * carries out a decision taken here.
  */
 
-export const PROPOSAL_KINDS = ["capability_call", "config_change", "task_result", "world_change", "permission_change", "runtime_change", "team_change"] as const;
+export const PROPOSAL_KINDS = ["capability_call", "config_change", "task_result", "world_change", "permission_change", "runtime_change", "team_change", "question"] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 export const PROPOSAL_STATUSES = ["pending", "approved", "rejected", "applying", "applied", "failed", "expired", "withdrawn"] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
 /** Who may decide: the owner, or (for finished work) whoever may review that task. */
-export type ApproverRule = { kind: "owner" } | { kind: "task_reviewer"; createdBy: string };
+export type ApproverRule = { kind: "owner" } | { kind: "task_reviewer"; createdBy: string } | { kind: "lead"; agentId: string };
 export interface Evaluation {
   rule: string;
   verdict: "allow" | "require_approval" | "deny";
@@ -141,7 +141,7 @@ export class ProposalEngine {
     const { rows } = await this.db.query<ProposalRow>(
       `SELECT * FROM proposals WHERE org_id=$1
          AND ($2::text IS NULL OR status=$2) AND ($3::text IS NULL OR kind=$3)
-         AND ($4 OR proposer=$5 OR approvers->>'createdBy'=$5)
+         AND ($4 OR proposer=$5 OR approvers->>'createdBy'=$5 OR 'agent:' || (approvers->>'agentId') = $5)
        ORDER BY created_at DESC LIMIT $6`,
       [orgId, filter.status ?? null, filter.kind ?? null, owner, me, Math.min(filter.limit ?? 100, 300)],
     );
@@ -153,6 +153,7 @@ export class ProposalEngine {
 export function canDecide(actor: Actor, p: Pick<ProposalRow, "approvers" | "proposer">): boolean {
   if (actor.kind === "human" && actor.owner) return true;
   const me = actorRef(actor);
+  if (p.approvers.kind === "lead") return actor.kind === "agent" && actor.id === p.approvers.agentId && p.proposer !== me;
   return p.approvers.kind === "task_reviewer" && p.approvers.createdBy === me && p.proposer !== me;
 }
 

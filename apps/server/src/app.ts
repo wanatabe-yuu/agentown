@@ -150,6 +150,12 @@ const S = {
     maxFailures: z.number().int().min(1).max(20).optional(),
     maxSteps: z.number().int().min(1).max(100).optional(),
   }).strict(),
+  ask: z.object({
+    question: z.string().trim().min(1).max(2000),
+    options: z.array(z.string().trim().min(1).max(200)).max(6).optional(),
+    timeoutMinutes: z.number().int().min(5).max(1440).optional(),
+    fallback: z.string().trim().max(1000).optional(),
+  }).strict(),
   finishCampaign: z.object({ outcome: z.enum(["achieved", "failed"]), summary: z.string().trim().min(1).max(4000) }).strict(),
   assign: z.object({ assigneeAgentId: z.string() }),
   cancel: z.object({ reason: z.string().max(500).default("") }).prefault({}),
@@ -246,6 +252,9 @@ export async function buildApp(opts: AppOptions) {
       const { chatId, chatSubject } = p.payload as { chatId: string; chatSubject: ChatSubject };
       return ownerChat.decide(p.org_id, actor, chatId, p.source_id, verdict === "approve", chatSubject);
     },
+  });
+  proposals.register("question", {
+    decide: async (actor, p, verdict, note) => (await instance.org(p.org_id)).answerQuestion(actor, p.id, note, verdict === "reject" && !note),
   });
   proposals.register("task", {
     decide: async (actor, p, verdict, note) => (await instance.org(p.org_id)).reviewTask(actor, String(p.payload.taskId), verdict, note),
@@ -416,7 +425,9 @@ export async function buildApp(opts: AppOptions) {
       r.get("/me", async (req) => svcOf(req).me(actorOf(req)));
       // The organization's structure (owner only), and saving it as a template.
       r.get("/config", async (req) => svcOf(req).getConfig(actorOf(req)));
-      r.put("/kernel", async (req) => changed(await svcOf(req).setKernelSettings(actorOf(req), parse(z.object({ worldEdits: z.enum(["approve", "auto"]) }).strict(), req.body))));
+      r.put("/kernel", async (req) =>
+        changed(await svcOf(req).setKernelSettings(actorOf(req), parse(z.object({ worldEdits: z.enum(["approve", "auto"]).optional(), approver: z.enum(["owner", "lead"]).optional() }).strict(), req.body))),
+      );
       r.put("/language", async (req) => changed(await svcOf(req).setLanguage(actorOf(req), parse(z.object({ language: z.enum(LANGUAGES) }), req.body).language)));
       r.put("/config", async (req) => changed(await instance.updateOrgConfig(svcOf(req), actorOf(req), parse(S.orgConfig, req.body))));
       r.post("/templates", async (req, reply) => {
@@ -524,7 +535,13 @@ export async function buildApp(opts: AppOptions) {
   // Room for a base64 model (upload_asset) or a whole world.
   r.post<{ Params: { id: string } }>("/tools/:id/invoke", { bodyLimit: Math.ceil(MODEL_MAX * 1.4) + 4096 }, async (req, reply) => {
     const body = parse(S.invoke, req.body);
-    const out = await gateway.invoke(svcOf(req), actorOf(req), req.params.id, body.args, body.idempotencyKey);
+    const svc = svcOf(req);
+    const actor = actorOf(req);
+    // Called while the agent works on a task: the proposal remembers it, and the task waits for the decision.
+    const taskId = actor.kind === "agent"
+      ? (await svc.db.query<{ task_id: string }>("SELECT task_id FROM task_runs WHERE agent_id=$1 AND status='running' ORDER BY started_at DESC LIMIT 1", [actor.id])).rows[0]?.task_id ?? null
+      : null;
+    const out = await gateway.invoke(svc, actor, req.params.id, body.args, body.idempotencyKey, { taskId });
     reply.status(out.status === "pending" ? 202 : 200);
     return changed(out);
   });
@@ -621,6 +638,10 @@ export async function buildApp(opts: AppOptions) {
     return out;
   });
   r.get<{ Params: { id: string } }>("/tasks/:id", async (req) => svcOf(req).getTask(actorOf(req), req.params.id));
+  r.post<{ Params: { id: string } }>("/tasks/:id/ask", async (req, reply) => {
+    reply.status(201);
+    return changed(await svcOf(req).askOwner(actorOf(req), req.params.id, parse(S.ask, req.body)));
+  });
   r.get<{ Params: { id: string } }>("/tasks/:id/progress", async (req, reply) => {
     reply.header("cache-control", "no-store");
     return svcOf(req).taskProgress(actorOf(req), req.params.id);

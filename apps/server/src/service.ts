@@ -414,7 +414,7 @@ export class Service {
   }
 
   /** Kernel settings (owner only): how agents' world edits are approved. */
-  async setKernelSettings(actor: Actor, change: { worldEdits: "approve" | "auto" }) {
+  async setKernelSettings(actor: Actor, change: { worldEdits?: "approve" | "auto"; approver?: "owner" | "lead" }) {
     this.requireOrgOwner(actor, "org.kernel");
     return this.withTx(async (ctx) => {
       const { rows } = await ctx.c.query<{ config: Record<string, unknown> }>("SELECT config FROM organizations WHERE id=$1 FOR UPDATE", [this.orgId]);
@@ -429,6 +429,45 @@ export class Service {
       await this.emit(ctx, { type: "org.config", payload: { revision, part: "kernel" } });
       return { kernel, revision };
     });
+  }
+
+  /** The agent at the top of the organization (no manager; the earliest if several): with approver "lead", it decides agents' requests. */
+  async leadAgentId(q: Queryable = this.db): Promise<string | null> {
+    const { rows } = await q.query<{ id: string }>(
+      "SELECT id FROM agents WHERE org_id=$1 AND reports_to IS NULL AND lifecycle_state <> 'retired' ORDER BY created_at, id LIMIT 1",
+      [this.orgId],
+    );
+    return rows[0]?.id ?? null;
+  }
+
+  /** A request waits for the lead: it gets a task to look at it and decide (`agentown decide`). */
+  async requestLeadReview(leadId: string, proposalId: string, proposer: Actor, what: string, args: unknown, fromTask: string | null) {
+    const who = proposer.kind === "agent" ? (await this.getAgentRow(proposer.id)).display_name : "someone";
+    const from = fromTask ? (await this.getTaskRow(fromTask)).title : null;
+    const vi = this.config.organization.language === "vi";
+    await this.createTask(await this.ownerActor(), {
+      title: `${vi ? "Duyệt" : "Review"}: ${what} — ${who}`.slice(0, 200),
+      description: [
+        `${who} asks to run "${what}"${from ? ` while working on "${from}"` : ""}. The owner lets you decide requests like this.`,
+        `Arguments:\n${JSON.stringify(args, null, 2).slice(0, 4000)}`,
+        `Check it makes sense for the organization (look things up with \`agentown tool inspect ...\` if needed), then run \`agentown decide ${proposalId} approve --note "why"\` or \`agentown decide ${proposalId} reject --note "why"\`. Approving runs it; ${who}'s task resumes either way.`,
+      ].join("\n\n"),
+      assigneeAgentId: leadId,
+      requiresReview: false,
+      spec: { kind: "prompt" },
+      idempotencyKey: `review-${proposalId}`,
+    }).catch(async (err) => {
+      // The lead cannot take it (no API key, say): the owner decides after all.
+      console.warn(`[review ${proposalId}]`, (err as Error).message);
+      await this.db.query(`UPDATE proposals SET approvers='{"kind":"owner"}'::jsonb, updated_at=now() WHERE id=$1 AND status='pending'`, [proposalId]);
+    });
+  }
+
+  /** The organization's owner, for work done on their authority (the lead approving under the kernel setting). */
+  async ownerActor(): Promise<Actor> {
+    const { rows } = await this.db.query<{ user_id: string }>("SELECT user_id FROM org_members WHERE org_id=$1 AND is_owner ORDER BY user_id LIMIT 1", [this.orgId]);
+    if (!rows[0]) throw conflict("no_owner", "this organization has no owner");
+    return { kind: "human", id: rows[0].user_id, owner: true };
   }
 
   /** Every asset a world uses must be in this organization's library. */
@@ -1967,19 +2006,32 @@ export class Service {
     const creator = await this.kernel.identity.parseActorRef(c.created_by).catch(() => null);
     const step = tasks.filter((t) => t.campaign_step !== null).length + 1;
     const project = this.config.projects.find((p) => p.id === c.project_id)?.name ?? c.project_id;
-    const history = tasks.slice(-30).map((t) => `- [${t.status}]${t.campaign_step ? ` step ${t.campaign_step}` : ""} ${t.title}${t.summary ? ` — ${t.summary.replace(/\s+/g, " ").slice(0, 300)}` : ""}`);
+    const history = tasks.slice(-30).map((t) => {
+      const why = t.status === "failed" || t.status === "cancelled" ? t.status_reason ?? t.summary : t.summary;
+      return `- [${t.status}]${t.campaign_step ? ` step ${t.campaign_step}` : ""} ${t.title}${why ? ` — ${why.replace(/\s+/g, " ").slice(0, 300)}` : ""}`;
+    });
+    // What went wrong since the last step: the next one deals with it before moving on.
+    const lastStep = [...tasks].reverse().find((t) => t.campaign_step !== null);
+    const broken = tasks.filter((t) => (t.status === "failed" || t.status === "cancelled") && (!lastStep || t.created_at >= lastStep.created_at));
     const description = [
       `You lead the campaign "${c.title}" (id ${c.id}) in the project "${project}".`,
       `Goal: ${c.goal}`,
       `This is step ${steps + 1} of at most ${c.max_steps}. The campaign fails after ${c.max_failures} failed tasks (${Math.max(0, failures)} so far).`,
       history.length ? `Progress so far:\n${history.join("\n")}` : "Nothing has been done yet.",
+      broken.length
+        ? `Not finished last time: ${broken.map((t) => `"${t.title}" (${t.status})`).join(", ")}. Start by checking what each of them left undone (read its summary, files and subtasks) and finish that; only then go further.`
+        : null,
+      steps === 0
+        ? "Before planning, make sure the goal is clear enough to act on (what counts as done, by when, any budget or limits). If something essential is missing, ask with `agentown ask \"...\" --fallback \"what you will assume\"` and stop with BLOCKED: — the campaign waits for the answer, or for the deadline."
+        : null,
       `Decide the next step toward the goal. Do the work yourself in this task, and/or hand parts to others with \`agentown task create --campaign ${c.id} --to AGENT --title T --desc D\` (\`agentown agents\` lists who can help); the next step starts once all of them have finished.`,
+      `Write a short line before each command saying what you are doing; the owner follows it live.`,
       `When the goal is fully met, run \`agentown campaign done ${c.id} --summary "what was achieved"\`. If it cannot be met, run \`agentown campaign fail ${c.id} --summary "why"\`. Otherwise finish this task with a short summary of what you did; the campaign continues with its next step.`,
-    ].join("\n\n");
+    ].filter(Boolean).join("\n\n");
     try {
       if (!creator) throw new Error("the campaign's creator no longer exists");
       await this.createTask(creator, {
-        title: `${c.title} · ${this.config.organization.language === "vi" ? "bước" : "step"} ${step}`,
+        title: `${c.title} · ${this.config.organization.language === "vi" ? "bước" : "step"} ${step}${broken.some((t) => t.campaign_step !== null) ? (this.config.organization.language === "vi" ? " (làm lại)" : " (retry)") : ""}`,
         description,
         acceptanceCriteria: "The step moved the campaign toward its goal, or the campaign was marked done or failed.",
         assigneeAgentId: c.lead_agent_id,
@@ -2327,6 +2379,18 @@ export class Service {
       return `($${n - 3},$${n - 2},$${n - 1},$${n})`;
     });
     await this.db.query(`INSERT INTO agent_logs(agent_id, run_id, stream, line) VALUES ${tuples.join(",")}`, values);
+    // What the agent writes between its commands, so people can follow along like a chat.
+    // Commands show as "$ …", shortened; everything else is the agent talking.
+    const said = batch
+      .filter((l) => l.stream === "agent")
+      .map((l) => redactLine(String(l.line)).trim())
+      .filter(Boolean)
+      .map((l) => (l.startsWith("$ ") ? (l.length > 90 ? `${l.slice(0, 90)}…` : l) : l))
+      .join("\n");
+    if (said) {
+      const run = (await this.db.query<{ task_id: string }>("SELECT task_id FROM task_runs WHERE id=$1", [runId])).rows[0];
+      await this.withTx((ctx) => this.emit(ctx, { type: "agent.said", agentId, taskId: run?.task_id ?? null, runId, payload: { text: said.slice(0, 500) } }));
+    }
   }
 
   async uploadArtifact(actor: Actor, runId: string, generation: number, input: { name: string; contentType: string; content: Buffer }) {
@@ -2372,6 +2436,88 @@ export class Service {
     });
   }
 
+  // ---- waiting on people: an agent asks the person who gave it the work (or needs an approval), stops
+  // with BLOCKED, and the task resumes once they reply — or, for a question, at its deadline, when the
+  // agent is told to decide for itself.
+
+  /** Pending proposals that hold this task, and whether one was settled since the run began. */
+  private async ownerAlreadyReplied(q: Queryable, taskId: string, since: Date): Promise<boolean> {
+    const { rows } = await q.query<{ pending: string; settled: string }>(
+      `SELECT count(*) FILTER (WHERE status='pending') AS pending, count(*) FILTER (WHERE status<>'pending' AND updated_at >= $2) AS settled
+         FROM proposals WHERE org_id=$3 AND payload->>'taskId' = $1 AND kind <> 'task_result'`,
+      [taskId, since, this.orgId],
+    );
+    return Number(rows[0]!.pending) === 0 && Number(rows[0]!.settled) > 0;
+  }
+
+  async askOwner(actor: Actor, taskId: string, input: { question: string; options?: string[]; timeoutMinutes?: number; fallback?: string }) {
+    const agentId = this.requireAgent(actor);
+    return this.withTx(async (ctx) => {
+      const t = await this.getTaskRow(taskId, ctx.c, true);
+      if (t.assignee_agent_id !== agentId || !["in_progress", "assigned"].includes(t.status)) throw conflict("bad_state", "you can only ask about a task you are working on");
+      const minutes = Math.min(1440, Math.max(5, input.timeoutMinutes ?? 30));
+      const deadline = new Date(Date.now() + minutes * 60_000).toISOString();
+      const p = await openProposal(ctx.c, {
+        orgId: this.orgId, kind: "question", title: input.question.slice(0, 300), proposer: actorRef(actor),
+        subject: { type: "task", id: t.id },
+        payload: { taskId: t.id, taskTitle: t.title, question: input.question, options: input.options ?? [], deadline, fallback: input.fallback ?? null },
+        source: { type: "question", id: newId("q") },
+        // The person who gave the work answers (the owner always can).
+        approvers: { kind: "task_reviewer", createdBy: t.created_by },
+        evaluation: [{ rule: "question", verdict: "require_approval", reason: "the agent needs an answer to go on" }],
+      });
+      await this.emit(ctx, { type: "task.question", agentId, taskId: t.id, payload: { title: t.title, question: input.question.slice(0, 300), deadline, proposalId: p.id } });
+      return { questionId: p.id, deadline };
+    });
+  }
+
+  /** A person answers (or the deadline passes): the answer goes into the task and it resumes. */
+  async answerQuestion(actor: Actor | null, proposalId: string, answer: string, declined = false) {
+    const p = (await this.db.query<{ id: string; status: string; payload: Record<string, any>; approvers: { kind: string; createdBy?: string }; source_type: string; source_id: string }>(
+      "SELECT * FROM proposals WHERE id=$1 AND org_id=$2 AND kind='question'", [proposalId, this.orgId])).rows[0];
+    if (!p) throw notFound("question");
+    if (p.status !== "pending") throw conflict("not_pending", "the question was already answered");
+    if (actor && !isOwner(actor) && actorRef(actor) !== p.approvers.createdBy) throw deny("only the person who gave this work (or the owner) answers it");
+    const by = actor ? actorRef(actor) : "system:deadline";
+    const text = declined ? "The owner chose not to answer: decide yourself and say which assumption you made." : answer.trim();
+    await recordProposal(this.db, { type: p.source_type, id: p.source_id }, {
+      status: "applied", decision: { by, verdict: declined ? "reject" : "approve", ...(text ? { note: text.slice(0, 2000) } : {}) }, receipt: { answer: text.slice(0, 2000) },
+    });
+    await this.resumeFromOwner(String(p.payload.taskId), `Question: ${p.payload.question}\nAnswer${actor ? "" : " (no reply before the deadline)"}: ${text}`);
+  }
+
+  /** Questions past their deadline are settled with the agent's own fallback, or leave the choice to it. */
+  async expireQuestions() {
+    const { rows } = await this.db.query<{ id: string; payload: Record<string, any> }>(
+      "SELECT id, payload FROM proposals WHERE org_id=$1 AND kind='question' AND status='pending' AND (payload->>'deadline')::timestamptz < now()",
+      [this.orgId],
+    );
+    for (const r of rows) {
+      const fallback = r.payload.fallback ? `Go with your stated default: ${r.payload.fallback}` : "Nobody answered in time: decide yourself, and say which assumption you made.";
+      await this.answerQuestion(null, r.id, fallback).catch((err) => console.warn(`[question ${r.id}]`, (err as Error).message));
+    }
+  }
+
+  /** Note what the owner said on the task; a task stopped to wait goes back to work once nothing else holds it. */
+  async resumeFromOwner(taskId: string, note: string) {
+    await this.withTx(async (ctx) => {
+      const t = await this.getTaskRow(taskId, ctx.c, true);
+      const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+      await ctx.c.query("UPDATE tasks SET description = description || $2, updated_at=now() WHERE id=$1", [t.id, `\n\n--- From the owner (${stamp} UTC) ---\n${note}`.slice(0, 6000)]);
+      if (t.status !== "blocked") return; // still running: it reads the note when it stops, or right away if it asks again
+      const pending = await ctx.c.query("SELECT 1 FROM proposals WHERE org_id=$2 AND status='pending' AND payload->>'taskId' = $1 AND kind <> 'task_result' LIMIT 1", [t.id, this.orgId]);
+      if (!pending.rows[0]) {
+        await this.nextAttempt(ctx, t.id);
+        await this.setTaskStatus(ctx, t, "assigned", "the owner replied");
+      }
+    });
+  }
+
+  /** Going back to work after waiting is a new attempt (a run per attempt), and does not use up the retries. */
+  private async nextAttempt(ctx: Ctx, taskId: string) {
+    await ctx.c.query("UPDATE tasks SET attempt = attempt + 1, max_attempts = GREATEST(max_attempts, attempt + 1) WHERE id=$1", [taskId]);
+  }
+
   async completeRun(
     actor: Actor,
     runId: string,
@@ -2391,7 +2537,11 @@ export class Service {
       const t = await this.getTaskRow(run.task_id, ctx.c, true);
       if (t.status === "in_progress" && t.assignee_agent_id === agentId) {
         if (input.outcome === "succeeded") await this.setTaskStatus(ctx, t, t.requires_review ? "review" : "done", null, summary);
-        else await this.setTaskStatus(ctx, t, input.outcome, summary ?? input.outcome, summary);
+        else if (input.outcome === "blocked" && (await this.ownerAlreadyReplied(ctx.c, t.id, run.started_at))) {
+          // It stopped to wait, but the answer (or approval) came in while it was still finishing: go on.
+          await this.nextAttempt(ctx, t.id);
+          await this.setTaskStatus(ctx, t, "assigned", "the owner already replied");
+        } else await this.setTaskStatus(ctx, t, input.outcome, summary ?? input.outcome, summary);
       }
       await this.emit(ctx, { type: "run.finished", agentId, taskId: t.id, runId, payload: { outcome: input.outcome, summary, usage: input.usage ?? null } });
       return { taskStatus: t.status };
@@ -2477,6 +2627,7 @@ export class Service {
       recent,
       projects: this.config.projects,
       kernel: this.config.kernel,
+      leadAgentId: await this.leadAgentId(),
       world: this.config.world ?? null,
       objectStates: await this.objectStates(),
       agents,

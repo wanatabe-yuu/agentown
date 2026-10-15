@@ -187,7 +187,9 @@ export interface Snapshot {
   recent?: AgentEvent[];
   projects: Array<{ id: string; name: string }>;
   /** Owner-only kernel settings: whether designers' world edits apply at once or wait for approval. */
-  kernel?: { worldEdits: "approve" | "auto" };
+  kernel?: { worldEdits: "approve" | "auto"; approver?: "owner" | "lead" };
+  /** The agent at the top of the organization (decides agents' requests when the owner chose so). */
+  leadAgentId?: string | null;
   /** Floors, rooms and objects from the organization's template; null = one room per department. */
   world: World | null;
   /** Actions on objects still running (the pet cat purrs for a while). */
@@ -270,12 +272,13 @@ export interface ProviderInfo {
 
 export interface Proposal {
   id: string;
-  kind: "capability_call" | "config_change" | "task_result" | "world_change" | "permission_change" | "runtime_change" | "team_change";
+  kind: "capability_call" | "config_change" | "task_result" | "world_change" | "permission_change" | "runtime_change" | "team_change" | "question";
   title: string;
   proposer: string;
   subject: { type: string; id: string } | null;
   payload: Record<string, any>;
   status: string;
+  approvers?: { kind: string; agentId?: string; createdBy?: string };
   createdAt: string;
   canDecide: boolean;
 }

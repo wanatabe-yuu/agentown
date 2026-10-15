@@ -114,7 +114,13 @@ export const orgConfigSchema = z
      * (org.design) change the world at once ("auto") or each change waits for
      * the owner ("approve"). Callers without org.design always wait for the owner.
      */
-    kernel: z.object({ worldEdits: z.enum(["approve", "auto"]).default("approve") }).prefault({}),
+    kernel: z
+      .object({
+        worldEdits: z.enum(["approve", "auto"]).default("approve"),
+        /** Who decides agents' requests that need approval: the owner, or the agent at the top of the organization (its own run at once). */
+        approver: z.enum(["owner", "lead"]).default("owner"),
+      })
+      .prefault({}),
   })
   .superRefine((cfg, ctx) => {
     const presets = new Set(cfg.runtimeCatalog.map((p) => p.id));

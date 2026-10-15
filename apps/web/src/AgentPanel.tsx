@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar } from "./Avatar.tsx";
 import { t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
@@ -8,13 +8,15 @@ import { ReportText } from "./Markdown.tsx";
 import { t } from "./i18n.ts";
 import type { Agent, AgentDetail, Catalog, Credential, Snapshot, Team, WorkState } from "./types.ts";
 import { ago, describeScope, StatusPill } from "./ui.tsx";
+import { askConfirm } from "./dialogs.tsx";
 
 // xterm is only loaded when someone actually opens a terminal.
 const Terminal = lazy(() => import("./Terminal.tsx").then((m) => ({ default: m.Terminal })));
 // three.js comes with the office; the studio waits for it rather than weighing down the panel.
 const AgentStudio = lazy(() => import("./office3d/AgentStudio.tsx"));
 
-type Tab = "overview" | "tasks" | "logs" | "config" | "permissions" | "terminal";
+export type PanelTab = "overview" | "tasks" | "logs" | "config" | "permissions" | "terminal";
+type Tab = PanelTab;
 const TAB_LABEL: Record<Tab, string> = { overview: "Overview", tasks: "Tasks", logs: "Logs", config: "Config", permissions: "Permissions", terminal: "Terminal" };
 
 interface Props {
@@ -30,6 +32,8 @@ interface Props {
   notify: (msg: string, kind?: "error" | "info") => void;
   /** May change how this agent looks (org.design). */
   canDesign?: boolean;
+  /** Open on this tab (e.g. Config, from a "no API key" bubble); `focus` changes each time it is asked. */
+  openTab?: { tab: Tab; focus: number };
 }
 
 const cpuText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(m % 1000 ? 1 : 0)} CPU` : `${m}m`);
@@ -38,9 +42,15 @@ const memText = (mi: number) => (mi >= 1024 ? `${(mi / 1024).toFixed(mi % 1024 ?
 export function AgentPanel(p: Props) {
   const agent = p.snapshot.agents.find((a) => a.id === p.agentId);
   const [detail, setDetail] = useState<AgentDetail | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
-
-  useEffect(() => setTab("overview"), [p.agentId]);
+  const [tab, setTab] = useState<Tab>(p.openTab?.tab ?? "overview");
+  // A new agent opens on Overview, unless it was opened for a given tab just now (a "no API key" bubble → Config).
+  const askedFocus = useRef(p.openTab?.focus);
+  useEffect(() => {
+    if (p.openTab && p.openTab.focus !== askedFocus.current) {
+      askedFocus.current = p.openTab.focus;
+      setTab(p.openTab.tab);
+    } else if (!p.openTab || Date.now() - p.openTab.focus > 1000) setTab("overview");
+  }, [p.agentId, p.openTab?.focus]);
   useEffect(() => {
     let live = true;
     api<AgentDetail>("GET", `/api/agents/${p.agentId}`)
@@ -138,8 +148,20 @@ export function AgentPanel(p: Props) {
               </div>
               <div>{t("Model")}</div>
               <div>
-                {agent.config.model ?? <span className="muted">{t("default of its runtime")}</span>}
-                <div className="muted small">{detail?.credential ? t("key {name}", { name: detail.credential.name }) : t("no API key")}</div>
+                {detail?.credential ? (
+                  <>
+                    {agent.config.model ?? <span className="muted">{t("default of its runtime")}</span>}
+                    <div className="muted small">{t("key {name}", { name: detail.credential.name })}</div>
+                  </>
+                ) : (
+                  // Without a key it cannot do any work: say so, and point at where to fix it.
+                  <div className="key-missing">
+                    <span className="error small">{t("No API key: {name} cannot take work.", { name: agent.displayName })}</span>
+                    <button type="button" className="small-btn" onClick={() => setTab("config")}>
+                      {t("Set an API key")}
+                    </button>
+                  </div>
+                )}
               </div>
               <div>{t("Reports to")}</div>
               <div>{manager ? `${manager.displayName} · ${manager.jobRole}` : <span className="muted">{t("top of the organization")}</span>}</div>
@@ -147,7 +169,7 @@ export function AgentPanel(p: Props) {
               <div>{reports.length ? reports.map((r) => r.displayName).join(", ") : <span className="muted">{t("no one")}</span>}</div>
             </section>
 
-            {(can["task.create"] || can["runtime.control"]) && (
+            {(can["task.create"] || can["runtime.control"] || can["agent.retire"]) && agent.lifecycleState !== "retired" && (
               <section className="actions">
                 <h3>{t("Actions")}</h3>
                 <div className="btn-row">
@@ -180,6 +202,23 @@ export function AgentPanel(p: Props) {
                         {t("Restart")}
                       </button>
                     </>
+                  )}
+                  {can["agent.retire"] && (
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={async () => {
+                        const ok = await askConfirm(
+                          t("Let {name} go? Their runtime stops, they leave the office and can no longer be given work. Tasks and files they made stay.", { name: agent.displayName }),
+                          { danger: true, okLabel: t("Retire") },
+                        );
+                        if (!ok) return;
+                        await act(t("Retire"), "POST", `/api/agents/${agent.id}/retire`, { purgeWorkspace: false });
+                        p.onClose();
+                      }}
+                    >
+                      {t("Retire")}
+                    </button>
                   )}
                 </div>
               </section>

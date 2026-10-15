@@ -23,6 +23,9 @@ interface Props {
   snapshot: Snapshot;
   workOf: (a: Agent) => WorkState;
   needsOwner: Set<string>;
+  keyMissing?: Set<string>;
+  /** The "no API key" bubble was clicked: open that agent's settings. */
+  onFixKey?: (agentId: string) => void;
   selected: string | null;
   onSelect: (id: string | null) => void;
   /** Someone picked a placed object (furniture, the shop cat…). */
@@ -158,6 +161,10 @@ export default function Office3D(props: Props) {
     const labels = new CSS2DRenderer();
     labels.domElement.className = "office-labels";
     el.appendChild(labels.domElement);
+    labels.domElement.addEventListener("click", (ev) => {
+      const b = (ev.target as HTMLElement).closest<HTMLElement>(".agent-bubble[data-agent]");
+      if (b && latest.current.props.keyMissing?.has(b.dataset.agent!)) latest.current.props.onFixKey?.(b.dataset.agent!);
+    });
 
     const scene = new THREE.Scene();
     const dropEnv = lightRoom(renderer, scene, 0.45);
@@ -247,6 +254,7 @@ export default function Office3D(props: Props) {
           agents: new Map(p.snapshot.agents.map((a) => [a.id, a])),
           workOf: p.workOf,
           needsOwner: p.needsOwner,
+          keyMissing: p.keyMissing,
           selected: p.selected,
           hover: e.hover,
           flights: p.flights,

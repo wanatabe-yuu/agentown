@@ -68,6 +68,9 @@ const driveCampaigns = () => {
   driving ??= (async () => {
     const { rows } = await db.query<{ org_id: string }>("SELECT DISTINCT org_id FROM campaigns WHERE mode='auto' AND status='active'");
     for (const r of rows) await (await instance.org(r.org_id)).driveCampaigns();
+    // Questions nobody answered in time go back to their agents with leave to decide.
+    const asked = await db.query<{ org_id: string }>("SELECT DISTINCT org_id FROM proposals WHERE kind='question' AND status='pending' AND (payload->>'deadline')::timestamptz < now()");
+    for (const r of asked.rows) await (await instance.org(r.org_id)).expireQuestions();
   })()
     .catch((err) => console.warn("[campaigns]", (err as Error).message))
     .finally(() => (driving = null));

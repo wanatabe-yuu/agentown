@@ -7,17 +7,20 @@ const browserLang = (): Lang => (navigator.language?.toLowerCase().startsWith("v
 const nameOf = (id: Lang) => LANGUAGES.find((l) => l.id === id)!.name;
 
 /** Per-person interface language, and the organization's template language (owner only). */
-export function SettingsDialog({ org, kernel, owner, onClose }: { org: { name: string; language: Lang; term?: string }; kernel?: { worldEdits: "approve" | "auto" }; owner: boolean; onClose: () => void }) {
+export function SettingsDialog({ org, kernel, lead, owner, onClose }: { org: { name: string; language: Lang; term?: string }; kernel?: { worldEdits: "approve" | "auto"; approver?: "owner" | "lead" }; lead?: string; owner: boolean; onClose: () => void }) {
   const [worldEdits, setWorldEdits] = useState(kernel?.worldEdits ?? "approve");
+  const [approver, setApprover] = useState(kernel?.approver ?? "owner");
   const [kernelError, setKernelError] = useState("");
-  const saveWorldEdits = async (value: "approve" | "auto") => {
-    const before = worldEdits;
-    setWorldEdits(value);
+  const saveKernel = async (change: { worldEdits?: "approve" | "auto"; approver?: "owner" | "lead" }) => {
+    const before = { worldEdits, approver };
+    if (change.worldEdits) setWorldEdits(change.worldEdits);
+    if (change.approver) setApprover(change.approver);
     setKernelError("");
     try {
-      await api("PUT", "/api/kernel", { worldEdits: value });
+      await api("PUT", "/api/kernel", change);
     } catch (e) {
-      setWorldEdits(before);
+      setWorldEdits(before.worldEdits);
+      setApprover(before.approver);
       setKernelError((e as Error).message);
     }
   };
@@ -81,9 +84,21 @@ export function SettingsDialog({ org, kernel, owner, onClose }: { org: { name: s
         <p className="muted small">
           {t("Agents allowed to design can change rooms, objects and art. Agents without that permission can only propose changes, which always wait for you.")}
         </p>
-        <select id="world-edits" value={worldEdits} disabled={!owner} onChange={(e) => void saveWorldEdits(e.target.value as "approve" | "auto")}>
+        <select id="world-edits" value={worldEdits} disabled={!owner} onChange={(e) => void saveKernel({ worldEdits: e.target.value as "approve" | "auto" })}>
           <option value="approve">{t("Ask me to approve every change")}</option>
           <option value="auto">{t("Designers apply changes directly")}</option>
+        </select>
+      </section>
+      <section className="settings-section">
+        <label htmlFor="approver">
+          <h3>{t("Who approves agents' requests")}</h3>
+        </label>
+        <p className="muted small">
+          {t("Some things agents ask for need an approval (cancelling work, changing the office, settings). You can leave them to the agent at the top of the organization: it decides others' requests in a task of its own, and its own go through at once. Changes to the code always come to you.")}
+        </p>
+        <select id="approver" value={approver} disabled={!owner} onChange={(e) => void saveKernel({ approver: e.target.value as "owner" | "lead" })}>
+          <option value="owner">{t("Me")}</option>
+          <option value="lead">{lead ? t("{name}, the agent at the top", { name: lead }) : t("The agent at the top")}</option>
         </select>
         {!owner && <p className="muted small">{t("Only the owner can change it.")}</p>}
         {kernelError && <p className="error small" role="alert">{kernelError}</p>}

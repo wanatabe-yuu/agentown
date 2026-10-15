@@ -82,6 +82,11 @@ describe("campaigns", () => {
     const c = (await env.call(env.owner, "POST", "/api/campaigns", { projectId: "website", title: "Flaky", goal: "g", mode: "auto", leadAgentId: worker, maxFailures: 2 })).body;
     await finish(worker, "failed", "nope 1");
     await drive();
+    // The next step is told what broke and starts by finishing it.
+    const retry = (await campaign(c.id)).tasks.find((t: any) => t.campaignStep === 2);
+    expect(retry.title).toMatch(/\(retry\)$/);
+    expect(retry.description).toMatch(/Not finished last time: "Flaky · step 1" \(failed\)/);
+    expect(retry.description).toMatch(/nope 1/);
     await finish(worker, "failed", "nope 2");
     await drive();
     const failed = (await campaign(c.id)).campaign;

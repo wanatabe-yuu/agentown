@@ -172,7 +172,7 @@ export class CapabilityGateway {
   }
 
   /** The one door: validate, authorize, maybe propose, execute, audit. */
-  async invoke(service: Service, actor: Actor, id: string, rawArgs: unknown, idempotencyKey?: string) {
+  async invoke(service: Service, actor: Actor, id: string, rawArgs: unknown, idempotencyKey?: string, context: { taskId?: string | null } = {}) {
     const d = this.find(id);
     if (d.executor !== "kernel" || !d.execute) throw badRequest(`${id} runs inside the caller's runtime, not through the server`);
     const parsed = d.input.safeParse(rawArgs ?? {});
@@ -184,6 +184,15 @@ export class CapabilityGateway {
     const owner = actor.kind === "human" && actor.owner;
     const world = WORLD_TOOLS.has(id) ? this.worldGate(service, actor, (await this.permits(service, actor))(d.permission)) : null;
     const needs = world ? world.approval === "always" : d.approval === "always" || (d.approval === "policy" && !!d.requiresApproval?.(parsed.data));
+    // With the kernel setting approver "lead", the agent at the top decides instead of the owner (code changes stay the owner's).
+    const lead = needs && !owner && id !== "propose_patch" && service.config.kernel.approver === "lead" ? await service.leadAgentId() : null;
+    if (lead && actor.kind === "agent" && actor.id === lead) {
+      // Its own requests go through at once, on the owner's authority where its own permission falls short.
+      const runner = world?.runAs === "approver" ? await service.ownerActor() : actor;
+      const result = await this.run(service, runner, d, parsed.data, idempotencyKey);
+      await service.kernel.permissions.audit(service.db, actor, "capability.self_approved", id, true, "approver: lead (kernel setting)");
+      return { status: "applied" as const, result };
+    }
     if (needs && !owner) {
       const rule = world ? (world.runAs === "approver" ? "world:no_permission" : "world:approve") : d.approval === "always" ? "always" : `effect:${d.effect}`;
       const reason = world
@@ -192,10 +201,16 @@ export class CapabilityGateway {
       const p = await openProposal(service.db, {
         orgId: service.orgId, kind: world ? "world_change" : "capability_call", title: `${d.title}`, proposer: actorRef(actor),
         subject: actor.kind === "agent" ? { type: "agent", id: actor.id } : null,
-        payload: { capability: id, args: parsed.data, idempotencyKey: idempotencyKey ?? null, ...(world?.runAs === "approver" ? { runAs: "approver" } : {}) },
-        source: { type: "gateway", id: newId("cg") }, approvers: { kind: "owner" }, exact: true,
-        evaluation: [{ rule, verdict: "require_approval", reason }],
+        payload: {
+          capability: id, args: parsed.data, idempotencyKey: idempotencyKey ?? null,
+          ...(world?.runAs === "approver" ? { runAs: "approver" } : {}),
+          // The task it came from waits for the decision (and is told the outcome).
+          ...(context.taskId ? { taskId: context.taskId } : {}),
+        },
+        source: { type: "gateway", id: newId("cg") }, approvers: lead ? { kind: "lead", agentId: lead } : { kind: "owner" }, exact: true,
+        evaluation: [{ rule, verdict: "require_approval", reason: lead ? `${reason.replace("the owner's", "the lead's").replace("the owner", "the lead")} (kernel setting approver: lead)` : reason }],
       });
+      if (lead) await service.requestLeadReview(lead, p.id, actor, d.title, parsed.data, context.taskId ?? null);
       await service.kernel.permissions.audit(service.db, actor, "capability.propose", id, true, "awaiting approval", { proposalId: p.id });
       return { status: "pending" as const, proposalId: p.id };
     }
@@ -215,21 +230,31 @@ export class CapabilityGateway {
   }
 
   private async decide(actor: Actor, p: ProposalRow, verdict: "approve" | "reject", note: string) {
-    if (!(actor.kind === "human" && actor.owner)) throw deny("only the owner approves these calls");
+    const lead = p.approvers.kind === "lead" && actor.kind === "agent" && actor.id === p.approvers.agentId;
+    if (!(actor.kind === "human" && actor.owner) && !lead) throw deny("only the owner (or, if the owner chose so, the lead agent) approves these calls");
     const service = await this.instance.org(p.org_id);
     const source = { type: p.source_type, id: p.source_id };
     const decision = { by: actorRef(actor), verdict, ...(note ? { note } : {}) };
-    if (verdict === "reject") return recordProposal(service.db, source, { status: "rejected", decision });
+    const tell = async (outcome: string) => {
+      if (p.payload.taskId) await service.resumeFromOwner(String(p.payload.taskId), `Your request "${p.title}" (${String(p.payload.capability)}) was ${outcome}${note ? `: ${note}` : "."}`);
+    };
+    if (verdict === "reject") {
+      await recordProposal(service.db, source, { status: "rejected", decision });
+      return tell("rejected");
+    }
     await recordProposal(service.db, source, { status: "applying", decision });
     // A caller without the permission proposed it: the approving owner carries it out.
-    const runner = p.payload.runAs === "approver" ? actor : await service.kernel.identity.parseActorRef(p.proposer);
+    // The lead approves on the owner's authority: a change the proposer may not make itself runs as the owner.
+    const runner = p.payload.runAs === "approver" ? (lead ? await service.ownerActor() : actor) : await service.kernel.identity.parseActorRef(p.proposer);
     const d = this.find(String(p.payload.capability));
     try {
       const result = await this.run(service, runner, d, d.input.parse(p.payload.args), (p.payload.idempotencyKey as string | null) ?? `proposal-${p.id}`);
       await recordProposal(service.db, source, { status: "applied", receipt: result });
+      await tell("approved and done");
       return result;
     } catch (err) {
       await recordProposal(service.db, source, { status: "failed", error: String((err as Error).message).slice(0, 2000) });
+      await tell(`approved but failed (${String((err as Error).message).slice(0, 300)})`);
       throw err;
     }
   }

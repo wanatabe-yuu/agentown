@@ -10,6 +10,8 @@ export const EVENT_TEXT: Record<string, (e: AgentEvent, name: (id: string | null
   "task.created": (e, n) => t("{from} → {to}: {title}", { from: e.payload.createdBy?.startsWith("agent:") ? n(e.payload.createdBy.slice(6)) : t("A person"), to: n(e.agentId), title: e.payload.title }),
   "task.status": (e) => t("{title}: {from} → {to}", { title: e.payload.title, from: t(String(e.payload.from).replace("_", " ")), to: t(String(e.payload.to).replace("_", " ")) }),
   "run.started": (e, n) => t("{name} started {title}", { name: n(e.agentId), title: e.payload.title }),
+  "agent.said": (e, n) => `${n(e.agentId)}: ${String(e.payload.text ?? "")}`,
+  "task.question": (e, n) => t("{name} asks: {question}", { name: n(e.agentId), question: e.payload.question }),
   "run.finished": (e, n) => t("{name} finished: {outcome}", { name: n(e.agentId), outcome: t(e.payload.outcome) }) + (e.payload.summary ? ` — ${plain(String(e.payload.summary))}` : ""),
   "run.lost": (e, n) => t("{name} lost a run: {why}", { name: n(e.agentId), why: e.payload.why }),
   "artifact.created": (e, n) => t("{name} delivered {file}", { name: n(e.agentId), file: e.payload.name }),

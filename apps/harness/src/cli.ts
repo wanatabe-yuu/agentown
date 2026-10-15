@@ -35,8 +35,13 @@ const HELP = `agentown <command>
                                            checkout) as a patch; the owner reviews and approves,
                                            then the host builds, installs and health-checks it
   proposals [--status pending]             proposals you made or may decide
+  decide ID approve|reject [--note WHY]    decide a request the owner left to you (as the lead)
   team                                     your team's channel (latest messages)
   team say TEXT                            post to your team's channel
+  ask QUESTION [--option A --option B] [--timeout MINUTES] [--fallback WHAT_YOU_WILL_ASSUME]
+                                           ask the person who gave you this task; then stop with
+                                           BLOCKED: — the task resumes with their answer, or at the
+                                           deadline (default 30 min) with leave to decide yourself
   campaign get ID                          a campaign: goal, mode, status and its tasks (JSON)
   campaign done ID --summary S             you lead it and its goal is met: close it as achieved
   campaign fail ID --summary S             you lead it and the goal cannot be met: close it as failed
@@ -126,7 +131,31 @@ async function main() {
           throw new Error("tool arguments must be one JSON object");
         }
       }
-      return out(await api.post(`/api/tools/${encodeURIComponent(sub)}/invoke`, { args }));
+      const r = await api.post(`/api/tools/${encodeURIComponent(sub)}/invoke`, { args });
+      out(r);
+      if (r?.status === "pending" && process.env.AGENTOWN_TASK_ID) {
+        out(`This needs the owner's approval (proposal ${r.proposalId}). If the rest of your work depends on it, stop now with a reply starting "BLOCKED: waiting for approval"; the task resumes with the decision.`);
+      }
+      return;
+    }
+    case "decide": {
+      const verdict = rest[0];
+      if (!sub || (verdict !== "approve" && verdict !== "reject")) throw new Error("usage: agentown decide PROPOSAL_ID approve|reject [--note WHY]");
+      const { one } = parseFlags(rest.slice(1));
+      return out(await api.post(`/api/proposals/${encodeURIComponent(sub)}/decide`, { verdict, note: one("note") ?? "" }));
+    }
+    case "ask": {
+      const { one, flags, pos } = parseFlags([sub ?? "", ...rest].filter(Boolean));
+      const question = pos.join(" ").trim();
+      const task = process.env.AGENTOWN_TASK_ID;
+      if (!question || !task) throw new Error("usage (during a task): agentown ask QUESTION [--option A ...] [--timeout MINUTES] [--fallback TEXT]");
+      const r = await api.post(`/api/tasks/${encodeURIComponent(task)}/ask`, {
+        question,
+        ...(flags.option?.length ? { options: flags.option } : {}),
+        ...(one("timeout") ? { timeoutMinutes: Number(one("timeout")) } : {}),
+        ...(one("fallback") ? { fallback: one("fallback") } : {}),
+      });
+      return out(`Asked (answer due by ${r.deadline}). Stop now: end your reply with a line starting "BLOCKED: waiting for the owner's answer". This task resumes with the answer, or at the deadline with leave to decide yourself.`);
     }
     case "campaign": {
       const id = rest[0];

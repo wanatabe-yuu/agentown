@@ -146,7 +146,7 @@ describe("capability system", () => {
     // ...until the owner lets designers apply directly; only the owner can change that.
     expect((await env.call(lead, "PUT", "/api/kernel", { worldEdits: "auto" })).status).toBe(403);
     expect((await env.call(env.owner, "PUT", "/api/kernel", { worldEdits: "auto" })).status).toBe(200);
-    expect((await env.call(env.owner, "GET", "/api/office/snapshot")).body.kernel).toEqual({ worldEdits: "auto" });
+    expect((await env.call(env.owner, "GET", "/api/office/snapshot")).body.kernel).toMatchObject({ worldEdits: "auto" });
     const direct = await env.call(lead, "POST", "/api/tools/replace_world/invoke", { args: { revision: await rev(), world: world("Designed") } });
     expect(direct.body.status).toBe("applied");
     expect(await roomName()).toBe("Designed");
