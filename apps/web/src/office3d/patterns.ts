@@ -6,8 +6,6 @@ import * as THREE from "three";
  * One canvas covers TILE meters; textures repeat it across the room.
  */
 
-export type FloorStyle = "plain" | "wood" | "tile" | "checker" | "concrete" | "deck";
-export type WallStyle = "plain" | "brick" | "panel" | "stripe";
 export const TILE = 2;
 const PX = 512;
 const cache = new Map<string, HTMLCanvasElement>();

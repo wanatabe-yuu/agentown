@@ -14,6 +14,8 @@ import { chair, character, desk, lookObject, monitor } from "./procedural.ts";
 import { ObjectLife } from "./behave.ts";
 import { pattern } from "./patterns.ts";
 import { type DeskState, deskStates } from "./live.ts";
+// ?debug: what each workstation shows, readable from the console.
+if (typeof location !== "undefined" && new URLSearchParams(location.search).has("debug")) (globalThis as unknown as { deskStates: unknown }).deskStates = deskStates;
 import { agentPortrait, lookPortrait } from "./portrait.ts";
 
 /** A task handed from one agent to another: a sheet of paper flies between their desks. */

@@ -208,7 +208,8 @@ export default function Office3D(props: Props) {
     resize();
 
     let last = performance.now();
-    renderer.setAnimationLoop((now) => {
+    /** One frame at `now` (performance clock) and `clock` (wall clock, which objects' states run on). */
+    const frame = (now: number, clock = Date.now()) => {
       const e = engine.current!;
       const dt = Math.max(0, (now - last) / 1000);
       last = now;
@@ -247,7 +248,7 @@ export default function Office3D(props: Props) {
           flights: p.flights,
           activity: new Map((p.snapshot.objectStates ?? []).map((x) => [x.objectId, x])),
           t: now,
-          clock: Date.now(),
+          clock,
           dt,
           frozen: latest.current.editing,
           flat: latest.current.flat && !latest.current.editing,
@@ -255,7 +256,18 @@ export default function Office3D(props: Props) {
       }
       renderer.render(scene, camera);
       labels.render(scene, camera);
-    });
+    };
+    renderer.setAnimationLoop((now) => frame(now));
+    // ?debug: `office.step(seconds)` runs the same frames by hand (a hidden browser draws none), at 30 per second.
+    if (new URLSearchParams(location.search).has("debug")) {
+      let t = performance.now();
+      let clock = Date.now();
+      (window as unknown as { officeStep: (seconds: number) => void }).officeStep = (seconds) => {
+        t = Math.max(t, performance.now());
+        clock = Math.max(clock, Date.now());
+        for (let k = 0; k < seconds * 30; k++) frame((t += 1000 / 30), (clock += 1000 / 30));
+      };
+    }
 
     // Picking: a click (not a drag) on an agent selects it.
     const ray = new THREE.Raycaster();

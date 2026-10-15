@@ -1,4 +1,4 @@
-import type { Behavior, World } from "@agentown/core/world";
+import type { Behavior, ObjectState as State, World } from "@agentown/core/world";
 import * as THREE from "three";
 
 /**
@@ -116,7 +116,6 @@ export function applyBehavior(an: Animated, sec: number) {
 }
 
 type Kind = World["kinds"][string];
-type State = Kind["states"][number];
 
 /**
  * One placed object living through its states: while a state is on, its

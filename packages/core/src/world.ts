@@ -118,7 +118,6 @@ const actionSchema = z.object({
   seconds: num(1, 3600).default(20),
   gesture: z.enum(GESTURES).default("use"),
 });
-export type ObjectAction = z.infer<typeof actionSchema>;
 
 const objectKindSchema = z.object({
   chat: objectChatSchema.optional(),
