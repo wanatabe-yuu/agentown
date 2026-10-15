@@ -2118,3 +2118,48 @@ input.short {
 .settings-section p { margin: 0; }
 .settings-section select { max-width: 280px; }
 .settings-section .ok { color: var(--good, #3fa37a); }
+
+/* ---- agent studio: the selected agent in 3D at the top of its overview */
+.studio { margin: 0 0 12px; }
+.studio-stage {
+  position: relative;
+  height: 240px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% 35%, var(--surface-2), var(--bg));
+  border: 1px solid var(--border);
+}
+.studio-stage canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+.studio-stage canvas:active { cursor: grabbing; }
+.studio-loading { animation: studio-pulse 1.4s ease-in-out infinite; }
+@keyframes studio-pulse { 50% { opacity: 0.6; } }
+.studio-caption {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  pointer-events: none;
+}
+.studio-activity {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  backdrop-filter: blur(4px);
+}
+.studio-fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; }
+.studio-look { margin-top: 8px; }
+.studio-look summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.look-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 8px 0 10px; }
+.look-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.color-row { display: flex; align-items: center; gap: 8px; }
+.color-row input[type="color"] { width: 44px; height: 32px; padding: 2px; }
+@media (max-width: 700px) { .studio-stage { height: 220px; } }

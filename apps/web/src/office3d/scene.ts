@@ -16,7 +16,7 @@ export interface Flight {
   label: string;
 }
 
-const SCREEN: Record<string, string> = {
+export const SCREEN: Record<string, string> = {
   running: "#4ade80",
   pending: "#facc15",
   restarting: "#fb923c",
@@ -83,6 +83,33 @@ export interface OfficeScene {
   mixers: THREE.AnimationMixer[];
   paper: THREE.Mesh;
   dispose(): void;
+}
+
+/**
+ * How an agent looks: its own override, else its job's character, else the
+ * world's default, else a person in its department's color.
+ */
+export function agentAvatar(a: Pick<Agent, "id" | "jobRole">, world: World | null | undefined, deptColor: string): { avatar: THREE.Group; kind: World["kinds"][string] | undefined } {
+  const own = world?.avatars.byAgent?.[a.id];
+  const kindId = own?.kind ?? world?.avatars.byJobRole[a.jobRole] ?? world?.avatars.default;
+  const kind = kindId ? world!.kinds[kindId] : undefined;
+  const hairs = ["#3b2a20", "#1f2937", "#7c4a1e", "#d4a373"];
+  if (own?.character) return { avatar: character(own.character, own.color ?? deptColor, own.accent ?? hairs[Math.floor(hash(a.id) * 4)]), kind };
+  if (kind && "character" in kind.look) return { avatar: lookObject({ ...kind.look, ...(own?.color ? { color: own.color } : {}), ...(own?.accent ? { accent: own.accent } : {}) }, deptColor), kind };
+  if (kind) return { avatar: lookObject(kind.look, deptColor), kind };
+  return { avatar: character("person", own?.color ?? deptColor, own?.accent ?? hairs[Math.floor(hash(a.id) * 4)]), kind };
+}
+
+/** Motion by work state: busy typing while executing, a slow bob while thinking. */
+export function animateAvatar(avatar: THREE.Object3D, work: string, sec: number, baseY = 0) {
+  const bob = work === "executing" ? Math.abs(Math.sin(sec * 10)) * 0.025 : work === "thinking" ? Math.sin(sec * 2.2) * 0.03 : 0;
+  avatar.position.y = baseY + bob;
+  for (const arm of ["arm-l", "arm-r"]) {
+    const m = avatar.getObjectByName(arm);
+    if (m) m.rotation.x = ((work === "executing" ? 55 + Math.sin(sec * 18 + (arm === "arm-l" ? 0 : 1.6)) * 10 : 35) * Math.PI) / 180;
+  }
+  const tail = avatar.getObjectByName("tail");
+  if (tail) tail.rotation.z = Math.sin(sec * (work === "executing" ? 6 : 1.5)) * 0.4;
 }
 
 function label(className: string, text: string): { el: HTMLDivElement; obj: CSS2DObject } {
@@ -317,9 +344,7 @@ export function buildScene(
     g.add(d, mon, c);
     disposables.push(screen);
 
-    const kindId = world?.avatars.byJobRole[a.jobRole] ?? world?.avatars.default;
-    const kind = kindId ? world!.kinds[kindId] : undefined;
-    const avatar = kind ? lookObject(kind.look, deptColor(a.departmentId)) : character("person", deptColor(a.departmentId), ["#3b2a20", "#1f2937", "#7c4a1e", "#d4a373"][Math.floor(hash(a.id) * 4)]);
+    const { avatar, kind } = agentAvatar(a, world, deptColor(a.departmentId));
     // The agent stands in world space so it can leave its desk; seated, it is at its chair.
     const actor = new THREE.Group();
     actor.position.set(seat.x, seat.y, seat.z + 0.3);
@@ -432,15 +457,7 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
     node.screen.color.set(SCREEN[screen] ?? SCREEN.unknown!);
     node.screen.emissive.set(SCREEN[screen] ?? "#000000");
     node.screen.emissiveIntensity = work === "executing" ? 0.55 + 0.35 * Math.sin(sec * 9) : screen === "running" ? 0.35 : 0.15;
-    // Motion by work state: busy jitter while executing, a slow bob while thinking.
-    const bob = work === "executing" ? Math.abs(Math.sin(sec * 10)) * 0.025 : work === "thinking" ? Math.sin(sec * 2.2) * 0.03 : 0;
-    node.avatar.position.y = (node.roamer && !node.roamer.seated ? -node.roamer.lift : 0) + bob;
-    for (const arm of ["arm-l", "arm-r"]) {
-      const m = node.avatar.getObjectByName(arm);
-      if (m) m.rotation.x = ((work === "executing" ? 55 + Math.sin(sec * 18 + (arm === "arm-l" ? 0 : 1.6)) * 10 : 35) * Math.PI) / 180;
-    }
-    const tail = node.avatar.getObjectByName("tail");
-    if (tail) tail.rotation.z = Math.sin(sec * (work === "executing" ? 6 : 1.5)) * 0.4;
+    animateAvatar(node.avatar, work, sec, node.roamer && !node.roamer.seated ? -node.roamer.lift : 0);
 
     const ringMat = node.ring.material as THREE.MeshBasicMaterial;
     ringMat.opacity = f.selected === node.id ? 0.95 : f.hover === node.id ? 0.45 : 0;

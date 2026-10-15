@@ -10,6 +10,8 @@ import { ago, describeScope, StatusPill } from "./ui.tsx";
 
 // xterm is only loaded when someone actually opens a terminal.
 const Terminal = lazy(() => import("./Terminal.tsx").then((m) => ({ default: m.Terminal })));
+// three.js comes with the office; the studio waits for it rather than weighing down the panel.
+const AgentStudio = lazy(() => import("./office3d/AgentStudio.tsx"));
 
 type Tab = "overview" | "tasks" | "logs" | "config" | "permissions" | "terminal";
 const TAB_LABEL: Record<Tab, string> = { overview: "Overview", tasks: "Tasks", logs: "Logs", config: "Config", permissions: "Permissions", terminal: "Terminal" };
@@ -25,6 +27,8 @@ interface Props {
   onOpenTask: (id: string) => void;
   onNewTask: (assignee: string) => void;
   notify: (msg: string, kind?: "error" | "info") => void;
+  /** May change how this agent looks (org.design). */
+  canDesign?: boolean;
 }
 
 const cpuText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(m % 1000 ? 1 : 0)} CPU` : `${m}m`);
@@ -111,6 +115,17 @@ export function AgentPanel(p: Props) {
       <div className="panel-body">
         {shownTab === "overview" && (
           <>
+            <Suspense fallback={<div className="studio-stage studio-loading" />}>
+              <AgentStudio
+                agent={agent}
+                world={p.snapshot.world}
+                deptColor={dept?.color ?? "#8899aa"}
+                work={work}
+                activity={[p.snapshot.tasks.find((x) => x.assigneeAgentId === agent.id && x.status === "in_progress")?.title, agent.work.detail].filter(Boolean).join(" · ") || null}
+                canDesign={!!p.canDesign}
+                notify={p.notify}
+              />
+            </Suspense>
             <section className="kv">
               <div>{t("Status")}</div>
               <div>

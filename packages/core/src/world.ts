@@ -65,6 +65,15 @@ export type Behavior = z.infer<typeof behaviorSchema>;
 const accessSchema = z.union([z.enum(["all", "own-department", "own-room"]), z.object({ rooms: z.array(idSchema).min(1) }), z.object({ zone: idSchema })]);
 export type Access = z.infer<typeof accessSchema>;
 
+const avatarOverrideSchema = z.object({
+  /** A character kind of this world, or a built-in character. */
+  kind: idSchema.optional(),
+  character: z.enum(CHARACTERS).optional(),
+  color: color.optional(),
+  accent: color.optional(),
+});
+export type AvatarOverride = z.infer<typeof avatarOverrideSchema>;
+
 const objectChatSchema = z.object({ instructions: z.string().max(12000).optional() });
 
 const objectKindSchema = z.object({
@@ -134,7 +143,14 @@ export const worldSchema = z.object({
   kinds: z.record(idSchema, objectKindSchema).default({}),
   objects: z.array(placementSchema).max(2000).default([]),
   /** How agents look: per job title, else the default (a person in the department's color). */
-  avatars: z.object({ default: idSchema.optional(), byJobRole: z.record(z.string(), idSchema).default({}) }).prefault({}),
+  avatars: z
+    .object({
+      default: idSchema.optional(),
+      byJobRole: z.record(z.string(), idSchema).default({}),
+      /** One agent's own look on top of its job's: another character, or other colors. */
+      byAgent: z.record(z.string().max(64), avatarOverrideSchema).default({}),
+    })
+    .prefault({}),
 });
 export type World = z.infer<typeof worldSchema>;
 export type Room = World["floors"][number]["rooms"][number];
@@ -198,6 +214,7 @@ export function checkWorld(world: World, departments: Set<string>, issue: (messa
   };
   avatar(world.avatars.default, "avatars.default");
   for (const [role, id] of Object.entries(world.avatars.byJobRole)) avatar(id, `avatar of ${role}`);
+  for (const [agent, o] of Object.entries(world.avatars.byAgent)) avatar(o.kind, `avatar of agent ${agent}`);
 }
 
 /** Asset ids a world uses (models and textures), to check they exist in the organization. */

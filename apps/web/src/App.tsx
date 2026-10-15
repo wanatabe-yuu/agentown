@@ -319,6 +319,7 @@ function OrgApp({
             onOpenTask={setOpenTask}
             onNewTask={(id) => setNewTaskFor(id)}
             notify={notify}
+            canDesign={!!me.can["org.design"]}
           />
         ) : (
           <aside className="panel side">

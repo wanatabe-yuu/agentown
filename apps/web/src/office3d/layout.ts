@@ -122,7 +122,7 @@ function defaultWorld(departments: Dept[], agents: AgentLite[]): World {
     x += w + 2;
     rowDepth = Math.max(rowDepth, depth);
   });
-  return { floors: [{ id: "main", name: "Office", rooms }], links: [], zones: {}, kinds: {}, objects: [], avatars: { byJobRole: {} } };
+  return { floors: [{ id: "main", name: "Office", rooms }], links: [], zones: {}, kinds: {}, objects: [], avatars: { byJobRole: {}, byAgent: {} } };
 }
 
 export function layoutWorld(world: World | null, departments: Dept[], agentsAll: AgentLite[]): WorldLayout {
