@@ -18,8 +18,11 @@ const HELP = `agentown <command>
                      [--instructions TEXT] [--max-turns N] [--context-limit TOKENS]
                                            configure an agent you are allowed to manage
                                            use "none" to clear credential, model or effort
-  spawn --template T --name N [--manager M] [--key K]
-                                           hire a new agent from an approved template
+  spawn --template T --name N [--manager M] [--team TEAM] [--cpu 100m] [--memory 192Mi] [--key K]
+                                           hire a new agent from an approved template; it joins
+                                           TEAM's runtime and adds the declared cpu/memory to it
+  team                                     your team's channel (latest messages)
+  team say TEXT                            post to your team's channel
   task create --to AGENT --title T [--desc D] [--criteria C] [--project P]
               [--playbook NAME --arg KEY=VALUE ...] [--input TASK_ID ...] [--key K]
                                            create a task (parent = current task)
@@ -85,9 +88,24 @@ async function main() {
         templateId: one("template"),
         displayName: one("name"),
         reportsToAgentId: one("manager") ?? process.env.AGENTOWN_AGENT_ID,
+        ...(one("team") ? { teamId: one("team") } : {}),
+        ...(one("cpu") || one("memory") ? { resources: { ...(one("cpu") ? { cpu: one("cpu") } : {}), ...(one("memory") ? { memory: one("memory") } : {}) } } : {}),
         idempotencyKey: one("key"),
       });
       return out(r.agent.id);
+    }
+    case "team": {
+      const me = await api.get(`/api/agents/${process.env.AGENTOWN_AGENT_ID}`);
+      const path = `/api/teams/${encodeURIComponent(me.teamId)}/messages`;
+      if (sub === "say") {
+        const text = rest.join(" ").trim();
+        if (!text) throw new Error("team say requires a message");
+        return out(await api.post(path, { text }));
+      }
+      if (sub) throw new Error(`unknown team command ${sub}\n${HELP}`);
+      const r = await api.get(path);
+      for (const m of r.messages.slice(-50)) out(`${m.at}\t${m.author.name}${m.system ? " (activity)" : ""}: ${m.text}`);
+      return;
     }
     case "task":
       return task(api, sub, rest);

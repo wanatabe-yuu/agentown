@@ -28,7 +28,10 @@ beforeAll(async () => {
   generation = (await env.db.query("SELECT generation FROM agent_runtimes WHERE agent_id='ceo'")).rows[0].generation;
 });
 afterAll(async () => { await env.close(); await new Promise<void>(r => server.close(() => r())); });
-const call = (extra: Record<string, unknown> = {}, token = env.token("ceo"), gen = generation, path = "anthropic/v1/messages") => env.app.inject({ method: "POST", url: `/api/runtime/llm/${path}`, headers: { authorization: `Bearer ${token}`, "x-agentown-generation": String(gen) }, payload: { model: "claude-haiku-5-5", messages: [{ role: "user", content: "Hi" }], max_tokens: 32, ...extra } });
+const call = async (extra: Record<string, unknown> = {}, token = env.token("ceo"), gen = generation, path = "anthropic/v1/messages") => {
+  if (token.startsWith("test-agent-session:")) token = await env.member(token.slice("test-agent-session:".length));
+  return env.app.inject({ method: "POST", url: `/api/runtime/llm/${path}`, headers: { authorization: `Bearer ${token}`, "x-agentown-generation": String(gen) }, payload: { model: "claude-haiku-5-5", messages: [{ role: "user", content: "Hi" }], max_tokens: 32, ...extra } });
+};
 
 describe("server-only provider credentials", () => {
   it("models work through the broker but the runtime and both public credential views never contain key values or fragments", async () => {
@@ -36,8 +39,12 @@ describe("server-only provider credentials", () => {
     expect(seen.at(-1)!.headers["x-api-key"]).toBe(KEY); expect(seen.at(-1)!.headers.authorization).toBeUndefined();
     const runtime = await env.service.runtimeCredential("ceo"); expect((runtime.llm as any).apiKey).toBeUndefined();
     expect(JSON.stringify(runtime)).not.toContain(KEY);
-    const pod = [...env.driver.pods.values()].find(p => p.agentId === "ceo")!;
-    expect(pod.providerKey).toBeNull(); expect(pod.llmEnv.ANTHROPIC_API_KEY).toBeUndefined(); expect(pod.llmEnv.AGENTOWN_LLM_API_KEY).toBeUndefined();
+    const pod = (await env.teamPod("ceo"))!;
+    expect(JSON.stringify(pod.env)).not.toContain(KEY);
+    // What the team runtime learns about its members carries the connection, never the key.
+    const hello = await env.service.teamHello("exec");
+    expect(hello.members.find((m) => m.id === "ceo")!.llm).toMatchObject({ provider: "custom" });
+    expect(JSON.stringify(hello)).not.toContain(KEY);
     for (const token of [env.owner, env.token("ceo")]) {
       const response = await env.call(token, "GET", "/api/credentials"); expect(response.status).toBe(200);
       const c = response.body.credentials.find((k: any) => k.id === credential); expect(c.keyHint).toBe("Hidden");
@@ -100,7 +107,7 @@ describe("server-only provider credentials", () => {
     expect(seen.at(-1)!.path).toBe("/v1/chat/completions");
     expect(seen.at(-1)!.headers.authorization).toBe(`Bearer ${KEY}`);
     expect(seen.at(-1)!.headers["x-api-key"]).toBeUndefined();
-    expect([...env.driver.pods.values()].find(p => p.agentId === "po")!.providerKey).toBeNull();
+    expect(JSON.stringify(await env.service.teamHello("product"))).not.toContain(KEY);
   });
   it("cannot redirect an existing encrypted key to another endpoint and revocation takes effect without waiting for pod replacement", async () => {
     const c = (await env.call(env.owner, "GET", "/api/credentials")).body.credentials.find((k: any) => k.id === credential);

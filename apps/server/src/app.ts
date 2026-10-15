@@ -13,6 +13,7 @@ import type { Instance, Principal } from "./instance.ts";
 import type { Service } from "./service.ts";
 import { ApiError, badRequest } from "./util.ts";
 import { OwnerChat } from "./owner-chat.ts";
+import { FEED_KINDS, type FeedKind, feed, listTeamMessages, postTeamMessage } from "./conversations.ts";
 import { ownerTools } from "./chat/tools.ts";
 import type { ChatModelFactory } from "./chat/types.ts";
 import { forwardModel } from "./model-broker.ts";
@@ -95,8 +96,19 @@ const S = {
     displayName: z.string().min(1).max(40),
     reportsToAgentId: z.string().nullable(),
     departmentId: z.string().optional(),
+    teamId: z.string().optional(),
+    resources: z.object({ cpu: z.string().max(20).optional(), memory: z.string().max(20).optional() }).optional(),
     idempotencyKey: z.string().max(100).optional(),
     config: agentConfigSchema.optional(),
+  }),
+  setTeam: z.object({ teamId: z.string().min(1).max(60) }),
+  resources: z.object({ cpu: z.string().max(20).optional(), memory: z.string().max(20).optional() }),
+  teamMessage: z.object({ text: z.string().trim().min(1).max(4000) }),
+  feed: z.object({
+    kind: z.enum(FEED_KINDS as [FeedKind, ...FeedKind[]]).optional(),
+    teamId: z.string().max(60).optional(),
+    agentId: z.string().max(60).optional(),
+    limit: z.coerce.number().int().min(1).max(300).optional(),
   }),
   updateAgent: z.object({ displayName: z.string().min(1).max(40).optional(), reportsToAgentId: z.string().nullable().optional() }),
   retire: z.object({ purgeWorkspace: z.boolean().default(false) }).prefault({}),
@@ -237,6 +249,21 @@ export async function buildApp(opts: AppOptions) {
   // ---- instance level: who am I, which organizations, browser session
   app.get("/healthz", async () => ({ ok: true }));
   app.get("/api/me", async (req) => instance.me(principalOf(req)));
+
+  // ---- team runtimes: list their members and start a session (own token) for each.
+  const runtimeOf = (req: FastifyRequest) => {
+    const p = principalOf(req);
+    if (p.kind !== "runtime") throw new ApiError(403, "forbidden", "team runtime token required");
+    return p;
+  };
+  app.get("/api/runtime/team", async (req) => {
+    const p = runtimeOf(req);
+    return (await instance.org(p.orgId)).teamHello(p.teamId);
+  });
+  app.post<{ Params: { id: string } }>("/api/runtime/team/members/:id/session", async (req) => {
+    const p = runtimeOf(req);
+    return (await instance.org(p.orgId)).memberSession(p.teamId, req.params.id);
+  });
   app.post("/api/session", async (req, reply) => {
     const { token } = parse(S.session, req.body);
     const p = await instance.authenticate(token);
@@ -414,6 +441,24 @@ export async function buildApp(opts: AppOptions) {
     return changed(out);
   });
   r.get<{ Params: { id: string } }>("/agents/:id", async (req) => svcOf(req).getAgent(actorOf(req), req.params.id));
+  r.put<{ Params: { id: string } }>("/agents/:id/team", async (req) =>
+    changed(await svcOf(req).setTeam(actorOf(req), req.params.id, parse(S.setTeam, req.body).teamId)),
+  );
+  r.put<{ Params: { id: string } }>("/agents/:id/resources", async (req) =>
+    changed(await svcOf(req).setResources(actorOf(req), req.params.id, parse(S.resources, req.body))),
+  );
+  r.get("/teams", async (req) => ({ teams: await svcOf(req).listTeams(actorOf(req)) }));
+  r.get<{ Params: { id: string }; Querystring: { after?: string } }>("/teams/:id/messages", async (req) =>
+    listTeamMessages(svcOf(req), actorOf(req), req.params.id, Number(req.query.after ?? 0)),
+  );
+  r.post<{ Params: { id: string } }>("/teams/:id/messages", async (req, reply) => {
+    reply.status(201);
+    return changed(await postTeamMessage(svcOf(req), actorOf(req), req.params.id, parse(S.teamMessage, req.body).text));
+  });
+  r.get<{ Querystring: { kind?: string; teamId?: string; agentId?: string; limit?: string } }>("/feed", async (req) => {
+    const q = parse(S.feed, req.query);
+    return feed(svcOf(req), actorOf(req), q);
+  });
   r.patch<{ Params: { id: string } }>("/agents/:id", async (req) =>
     changed(await svcOf(req).updateAgent(actorOf(req), req.params.id, parse(S.updateAgent, req.body))),
   );

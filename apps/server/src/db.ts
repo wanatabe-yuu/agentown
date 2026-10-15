@@ -405,6 +405,37 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS config_snapshot jsonb;
    ALTER TABLE agents ADD COLUMN IF NOT EXISTS context_limit int CHECK (context_limit IS NULL OR context_limit BETWEEN 8192 AND 1000000);
    CREATE INDEX IF NOT EXISTS agent_events_config ON agent_events(org_id,(payload->>'by'),at) WHERE type='agent.configured';`,
+  // Teams: one shared runtime per team; members declare the share they add to it.
+  `ALTER TABLE agents ADD COLUMN IF NOT EXISTS team_id text;
+   ALTER TABLE agents ADD COLUMN IF NOT EXISTS cpu_millis int CHECK (cpu_millis IS NULL OR cpu_millis BETWEEN 10 AND 64000);
+   ALTER TABLE agents ADD COLUMN IF NOT EXISTS memory_mib int CHECK (memory_mib IS NULL OR memory_mib BETWEEN 32 AND 262144);
+   ALTER TABLE agent_runtimes ADD COLUMN IF NOT EXISTS legacy_pod boolean NOT NULL DEFAULT true;
+   CREATE TABLE IF NOT EXISTS team_runtimes (
+     org_id text NOT NULL REFERENCES organizations(id),
+     team_id text NOT NULL,
+     runtime_id text NOT NULL,
+     preset_id text NOT NULL,
+     generation int NOT NULL DEFAULT 1,
+     namespace text NOT NULL,
+     storage_ref text NOT NULL,
+     workload_ref text,
+     observed_state text NOT NULL DEFAULT 'none',
+     observed_detail text,
+     observed_at timestamptz,
+     ready_generation int,
+     applied_resources jsonb,
+     PRIMARY KEY (org_id, team_id)
+   );
+   CREATE TABLE IF NOT EXISTS team_messages (
+     id bigserial PRIMARY KEY,
+     org_id text NOT NULL REFERENCES organizations(id),
+     team_id text NOT NULL,
+     author_kind text NOT NULL CHECK (author_kind IN ('human','agent')),
+     author_id text NOT NULL,
+     text text NOT NULL CHECK (length(text) BETWEEN 1 AND 4000),
+     at timestamptz NOT NULL DEFAULT now()
+   );
+   CREATE INDEX IF NOT EXISTS team_messages_team ON team_messages(org_id, team_id, id);`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

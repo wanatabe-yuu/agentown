@@ -4,40 +4,37 @@ import { EventBus } from "../src/bus.ts";
 import { createPool, migrate } from "../src/db.ts";
 import { RuntimeController } from "../src/runtime/controller.ts";
 import type { ExecStreams, PodInfo, RuntimeDriver, RuntimeSpec } from "../src/runtime/driver.ts";
-import { llmEnv, podName } from "../src/runtime/driver.ts";
+import { podName } from "../src/runtime/driver.ts";
 import type { ModelLister } from "../src/providers.ts";
 import { SecretBox } from "../src/secrets.ts";
 import { Instance } from "../src/instance.ts";
 import type { ChatModelFactory } from "../src/chat/types.ts";
 
-/** In-memory driver: pods become Ready immediately. Records issued tokens so tests can act as runtimes. */
+/** In-memory driver: pods become Ready immediately. Records issued runtime tokens. */
 export class FakeDriver implements RuntimeDriver {
   readonly kind = "fake";
-  pods = new Map<
-    string,
-    PodInfo & { agentId: string; namespace: string; providerKey: string | null; providerWorkspaceId: string | null; llmEnv: Record<string, string> }
-  >();
+  pods = new Map<string, PodInfo & { runtimeId: string; teamId: string; namespace: string; resources: { cpu: string; memory: string }; env: Record<string, string> }>();
   tokens = new Map<string, string>();
   identities = new Set<string>();
 
-  async listPods(namespace: string, agentId: string) {
-    return [...this.pods.values()].filter((p) => p.agentId === agentId && p.namespace === namespace);
+  async listPods(namespace: string, runtimeId: string) {
+    return [...this.pods.values()].filter((p) => p.runtimeId === runtimeId && p.namespace === namespace);
   }
   async ensureIdentity(spec: RuntimeSpec, issueToken: () => Promise<string>) {
-    if (!this.identities.has(spec.agentId)) {
-      this.tokens.set(spec.agentId, await issueToken());
-      this.identities.add(spec.agentId);
+    if (!this.identities.has(spec.runtimeId)) {
+      this.tokens.set(spec.runtimeId, await issueToken());
+      this.identities.add(spec.runtimeId);
     }
   }
   async createPod(spec: RuntimeSpec) {
-    const name = podName(spec.agentId, spec.generation);
+    const name = podName(spec.runtimeId, spec.generation);
     this.pods.set(name, {
       name,
-      agentId: spec.agentId,
+      runtimeId: spec.runtimeId,
+      teamId: spec.teamId,
       namespace: spec.namespace,
-      providerKey: (spec.llm as any)?.apiKey ?? null,
-      providerWorkspaceId: spec.llm?.workspaceId ?? null,
-      llmEnv: spec.llm ? { ...llmEnv(spec.llm, spec.apiUrl).secret, ...llmEnv(spec.llm, spec.apiUrl).plain } : {},
+      resources: spec.resources,
+      env: { AGENTOWN_TEAM_ID: spec.teamId, AGENTOWN_HARNESS: spec.preset.harness },
       generation: spec.generation,
       phase: "Running",
       ready: true,
@@ -51,13 +48,15 @@ export class FakeDriver implements RuntimeDriver {
   async deletePod(_ns: string, name: string) {
     this.pods.delete(name);
   }
-  async teardown(_ns: string, agentId: string) {
-    this.identities.delete(agentId);
+  async teardown(_ns: string, runtimeId: string) {
+    this.identities.delete(runtimeId);
   }
   async exec(_ns: string, _pod: string, _cmd: string[], _s: ExecStreams) {
     return { close: () => {} };
   }
 }
+
+const AGENT_TOKEN = "test-agent-session:";
 
 export async function setup(chatModelFactory?: ChatModelFactory) {
   const url = process.env.DATABASE_URL_TEST ?? "postgres://agentown:agentown@127.0.0.1:5432/agentown_test";
@@ -90,10 +89,16 @@ export async function setup(chatModelFactory?: ChatModelFactory) {
     await controller.reconcileAll();
   };
   await settle();
+  const memberTokens = new Map<string, string>();
+  const member = async (agentId: string) => {
+    if (!memberTokens.has(agentId)) memberTokens.set(agentId, await service.issueToken(db, "agent", agentId, "test session", false));
+    return memberTokens.get(agentId)!;
+  };
 
   // People act inside an organization: tests written against /api/… run in the default one.
   const INSTANCE_ROUTES = /^\/api\/(session|orgs\/|admin\/|admin$|templates|instance\/)/;
   const call = async (token: string, method: string, url: string, body?: unknown) => {
+    if (token.startsWith(AGENT_TOKEN)) token = await member(token.slice(AGENT_TOKEN.length));
     // Prompt tasks need an agent with an API key; tests about task flow use a model-free playbook unless they say otherwise.
     if (method === "POST" && /^\/api\/(orgs\/[^/]+\/)?tasks$/.test(url) && body && !(body as { spec?: unknown }).spec) body = { ...(body as object), spec: { kind: "playbook", playbook: "noop", args: {} } };
     const res = await app.inject({
@@ -120,10 +125,16 @@ export async function setup(chatModelFactory?: ChatModelFactory) {
     recheckTerminals,
     ownerChat,
     owner: ownerToken!,
-    token: (agentId: string) => {
-      const t = driver.tokens.get(agentId);
-      if (!t) throw new Error(`no token for ${agentId}`);
-      return t;
+    /**
+     * An agent's session token, as its team runtime would get it (one per agent per test).
+     * `call` resolves it; for raw app.inject use `await env.member(id)`.
+     */
+    token: (agentId: string) => `${AGENT_TOKEN}${agentId}`,
+    member,
+    /** The runtime pod of an agent's team. */
+    teamPod: async (agentId: string) => {
+      const { rows } = await db.query("SELECT r.runtime_id, r.generation FROM team_runtimes r JOIN agents a ON a.org_id=r.org_id AND COALESCE(a.team_id, a.department_id)=r.team_id WHERE a.id=$1", [agentId]);
+      return rows[0] ? driver.pods.get(podName(rows[0].runtime_id, rows[0].generation)) : undefined;
     },
     call,
     async close() {

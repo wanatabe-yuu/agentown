@@ -23,7 +23,7 @@ runtimeCatalog:
     imagePullPolicy: Never
     harness: script
     workspace: { size: 256Mi }
-    resources: { cpu: 250m, memory: 256Mi }
+    resources: { cpu: 100m, memory: 128Mi }
   # LLM harness. Each agent picks an API credential (added by the owner in the
   # UI) and a model that key can use; the credential's provider picks the
   # adapter: Anthropic Messages API, or OpenAI-compatible Chat Completions
@@ -34,9 +34,11 @@ runtimeCatalog:
     imagePullPolicy: Never
     harness: claude
     model: claude-opus-5-5
-    workspace: { size: 512Mi }
-    # Every agent runs this now; the harness mostly waits on the provider's API.
-    resources: { cpu: 250m, memory: 256Mi }
+    # One runtime per team: a shared workspace, the supervisor's base share, and
+    # what each member adds unless the person hiring it declares otherwise.
+    workspace: { size: 2Gi }
+    resources: { cpu: 100m, memory: 128Mi }
+    member: { cpu: 100m, memory: 192Mi }
   # Same runtime, but the agent gets a node of its own (see scripts/add-node.sh).
   - id: claude-dedicated-v1
     image: agentown/harness:0.4.0

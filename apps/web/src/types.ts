@@ -6,6 +6,9 @@ export interface Agent {
   displayName: string;
   jobRole: string;
   departmentId: string;
+  teamId: string;
+  /** This member's share of its team runtime, in millicores / MiB. */
+  resources: { cpu: number; memory: number; declared: boolean };
   templateId: string;
   reportsToAgentId: string | null;
   lifecycleState: "provisioning" | "active" | "retired";
@@ -155,12 +158,46 @@ export interface Snapshot {
   organization: { id: string; name: string };
   me: { kind: string; id: string };
   departments: Department[];
+  teams: Team[];
   projects: Array<{ id: string; name: string }>;
   /** Floors, rooms and objects from the organization's template; null = one room per department. */
   world: World | null;
   agents: Agent[];
   tasks: Task[];
   serverTime: string;
+}
+
+/** A team works in one department and shares one runtime. */
+export interface Team {
+  id: string;
+  name: string;
+  departmentId: string;
+  /** The department's default team (not listed in the organization's structure). */
+  implicit: boolean;
+  memberIds: string[];
+  runtime: { presetId: string; generation: number; state: string; detail: string | null; ready: boolean; resources: { cpu: number; memory: number } | null } | null;
+}
+
+export interface TeamMessage {
+  id: string;
+  at: string;
+  author: { kind: "human" | "agent"; id: string; name: string };
+  text: string;
+  system: boolean;
+}
+
+export type FeedKind = "self" | "tool" | "proposal" | "event";
+
+export interface FeedItem {
+  id: string;
+  at: string;
+  kind: FeedKind;
+  agentId: string | null;
+  teamId: string | null;
+  title: string;
+  text: string;
+  status?: string;
+  taskId?: string | null;
 }
 
 export interface AgentEvent {
@@ -175,7 +212,7 @@ export interface AgentEvent {
 
 export interface Catalog {
   templates: Array<{ id: string; jobRole: string; runtimePreset: string; policyProfile: string }>;
-  presets: Array<{ id: string; harness: string; image: string; placement?: string }>;
+  presets: Array<{ id: string; harness: string; image: string; placement?: string; resources?: { cpu: string; memory: string }; member?: { cpu: string; memory: string } }>;
   departments: Department[];
   projects: Array<{ id: string; name: string }>;
   providers?: ProviderInfo[];

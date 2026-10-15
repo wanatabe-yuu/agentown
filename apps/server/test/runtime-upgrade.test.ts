@@ -64,9 +64,10 @@ describe("legacy script runtime upgrade", () => {
     const service = await inst.org("agentown");
     const a = await service.getAgentRow(id);
     const rt = await service.getRuntimeRow(id);
-    await driver.createPod({ agentId: id, generation: rt.generation, namespace: rt.namespace,
-      preset: inst.runtimeCatalog.find((p) => p.id === rt.preset_id)!, apiUrl: "http://test",
-      storageRef: rt.storage_ref!, displayName: a.display_name, jobRole: a.job_role, llm: null });
+    // A runtime from before teams: one pod per agent, labelled with the agent id.
+    const preset = inst.runtimeCatalog.find((p) => p.id === rt.preset_id)!;
+    await driver.createPod({ runtimeId: id, teamId: a.department_id, generation: rt.generation, namespace: rt.namespace,
+      preset, resources: preset.resources, apiUrl: "http://test", storageRef: rt.storage_ref!, displayName: a.display_name });
   }
 
   it("queues old script runtimes without changing their generation or depending on the catalog", async () => {
@@ -108,8 +109,11 @@ describe("legacy script runtime upgrade", () => {
 
     const controller = new RuntimeController(inst, driver, { apiUrlForRuntimes: "http://test" });
     await controller.reconcileAll();
-    expect([...driver.pods.values()].filter((p) => p.agentId === "idle").map((p) => p.generation)).toEqual([4]);
-    expect([...driver.pods.values()].filter((p) => p.agentId === "busy").map((p) => p.generation)).toEqual([3]);
+    await controller.reconcileAll();
+    // Idle agents' old per-agent pods go; the busy one keeps its pod until its run ends. All of eng shares one team runtime.
+    expect([...driver.pods.values()].filter((p) => ["idle", "dedicated"].includes(p.runtimeId))).toEqual([]);
+    expect([...driver.pods.values()].filter((p) => p.runtimeId === "busy").map((p) => p.generation)).toEqual([3]);
+    expect([...driver.pods.values()].filter((p) => p.runtimeId.startsWith("team-eng-")).map((p) => p.env.AGENTOWN_HARNESS)).toEqual(["claude"]);
     expect(await service.claim({ kind: "agent", id: "busy" }, 3)).toMatchObject({ resumed: true, run: { id: "run" }, config: { harness: "script" } });
     await service.completeRun({ kind: "agent", id: "busy" }, "run", 3, { outcome: "succeeded" });
     // Queue another task: the old harness must wait for the migration before claiming it.
@@ -118,11 +122,12 @@ describe("legacy script runtime upgrade", () => {
     await controller.reconcileAll();
     await controller.reconcileAll();
     expect(await service.getRuntimeRow("busy")).toMatchObject({ preset_id: "claude-v1", generation: 4, ready_generation: 4, pending_preset_id: null, storage_ref: "workspace-busy" });
-    expect([...driver.pods.values()].filter((p) => p.agentId === "busy").map((p) => p.generation)).toEqual([4]);
+    expect([...driver.pods.values()].filter((p) => p.runtimeId === "busy")).toEqual([]);
     expect(await service.claim({ kind: "agent", id: "busy" }, 4)).toMatchObject({ task: { id: "next" }, config: { harness: "claude" } });
     await expect(service.claim({ kind: "agent", id: "busy" }, 3)).rejects.toMatchObject({ code: "stale_runtime" });
     expect((await db.query("SELECT status,attempt FROM task_runs WHERE id='run'")).rows[0]).toEqual({ status: "succeeded", attempt: 1 });
-    expect((await db.query("SELECT preset_id,generation FROM agent_runtimes WHERE agent_id='dedicated'")).rows[0]).toEqual({ preset_id: "claude-dedicated-v1", generation: 3 });
+    // A member runs in its team's runtime and takes its preset (isolation = a team of its own).
+    expect((await db.query("SELECT preset_id,generation FROM agent_runtimes WHERE agent_id='dedicated'")).rows[0]).toEqual({ preset_id: "claude-v1", generation: 3 });
     await migrate(db);
     await inst.bootstrap();
     await instance().bootstrap();
@@ -186,6 +191,6 @@ describe("legacy script runtime upgrade", () => {
     expect((await db.query("SELECT preset_id FROM agent_runtimes WHERE agent_id='idle'")).rows[0].preset_id).toBe("claude-v1");
     const controller = new RuntimeController(inst, driver, { apiUrlForRuntimes: "http://test" });
     await controller.reconcileAll();
-    expect([...driver.pods.values()].some((p) => p.agentId === "idle" && p.generation === 4)).toBe(true);
+    expect([...driver.pods.values()].some((p) => p.runtimeId.startsWith("team-eng-"))).toBe(true);
   });
 });

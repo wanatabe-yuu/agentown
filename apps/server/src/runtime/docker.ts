@@ -3,11 +3,11 @@ import http from "node:http";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import type { ExecStreams, PodInfo, RuntimeDriver, RuntimeSpec } from "./driver.ts";
-import { llmEnv, podName } from "./driver.ts";
+import { podName } from "./driver.ts";
 
 /**
- * Docker Engine driver: one container per agent runtime generation, one named
- * volume per agent workspace, one bridge network per department with
+ * Docker Engine driver: one container per team runtime generation, one named
+ * volume per team workspace, one bridge network per department with
  * inter-container communication disabled.
  *
  * This is the single-machine / development runtime. It has no cluster-side
@@ -62,8 +62,8 @@ export class DockerDriver implements RuntimeDriver {
     return namespace; // agentown-<department>
   }
 
-  async listPods(namespace: string, agentId: string): Promise<PodInfo[]> {
-    const filters = encodeURIComponent(JSON.stringify({ label: [`agentown.io/agent=${agentId}`, `agentown.io/namespace=${namespace}`] }));
+  async listPods(namespace: string, runtimeId: string): Promise<PodInfo[]> {
+    const filters = encodeURIComponent(JSON.stringify({ label: [`agentown.io/agent=${runtimeId}`, `agentown.io/namespace=${namespace}`] }));
     const { body } = await this.call<any[]>("GET", `/containers/json?all=1&filters=${filters}`);
     const out: PodInfo[] = [];
     for (const c of body) {
@@ -90,12 +90,12 @@ export class DockerDriver implements RuntimeDriver {
     return out;
   }
 
-  private secretPath(agentId: string) {
-    return join(this.secretDir, `${agentId}.token`);
+  private secretPath(runtimeId: string) {
+    return join(this.secretDir, `${runtimeId}.token`);
   }
 
   async ensureIdentity(spec: RuntimeSpec, issueToken: () => Promise<string>): Promise<void> {
-    const labels = { "app.kubernetes.io/managed-by": "agentown", "agentown.io/agent": spec.agentId };
+    const labels = { "app.kubernetes.io/managed-by": "agentown", "agentown.io/agent": spec.runtimeId };
     const net = this.networkName(spec.namespace);
     const { status } = await this.call("GET", `/networks/${net}`, undefined, [404]);
     if (status === 404) {
@@ -114,44 +114,40 @@ export class DockerDriver implements RuntimeDriver {
       );
     }
     await this.call("POST", "/volumes/create", { Name: spec.storageRef, Labels: labels });
-    if (!existsSync(this.secretPath(spec.agentId))) {
+    if (!existsSync(this.secretPath(spec.runtimeId))) {
       const token = await issueToken();
-      writeFileSync(this.secretPath(spec.agentId), token, { mode: 0o600 });
-      chmodSync(this.secretPath(spec.agentId), 0o600);
+      writeFileSync(this.secretPath(spec.runtimeId), token, { mode: 0o600 });
+      chmodSync(this.secretPath(spec.runtimeId), 0o600);
     }
   }
 
   async createPod(spec: RuntimeSpec): Promise<string> {
-    const name = podName(spec.agentId, spec.generation);
-    const token = readFileSync(this.secretPath(spec.agentId), "utf8").trim();
+    const name = podName(spec.runtimeId, spec.generation);
+    const token = readFileSync(this.secretPath(spec.runtimeId), "utf8").trim();
     const env = [
       `AGENTOWN_API_URL=${spec.apiUrl}`,
-      `AGENTOWN_AGENT_ID=${spec.agentId}`,
-      `AGENTOWN_GENERATION=${spec.generation}`,
+      `AGENTOWN_TEAM_ID=${spec.teamId}`,
+      `AGENTOWN_TEAM_GENERATION=${spec.generation}`,
       `AGENTOWN_HARNESS=${spec.preset.harness}`,
       `AGENTOWN_DISPLAY_NAME=${spec.displayName}`,
-      `AGENTOWN_JOB_ROLE=${spec.jobRole}`,
       `AGENTOWN_TOKEN=${token}`,
       "HOME=/workspace/home",
     ];
     if (spec.preset.model) env.push(`AGENTOWN_MODEL=${spec.preset.model}`);
-    if (spec.llm) {
-      const { plain } = llmEnv(spec.llm, spec.apiUrl);
-      for (const [k, v] of Object.entries(plain)) env.push(`${k}=${v}`);
-    }
-    const cpu = parseCpu(spec.preset.resources.cpu);
-    const mem = parseMemory(spec.preset.resources.memory);
+    const cpu = parseCpu(spec.resources.cpu);
+    const mem = parseMemory(spec.resources.memory);
     const { status } = await this.call(
       "POST",
       `/containers/create?name=${name}`,
       {
         Image: spec.preset.image,
         User: "1000:1000",
-        Hostname: spec.agentId,
+        Hostname: spec.runtimeId,
         Env: env,
         Labels: {
           "app.kubernetes.io/managed-by": "agentown",
-          "agentown.io/agent": spec.agentId,
+          "agentown.io/agent": spec.runtimeId,
+          "agentown.io/team": spec.teamId,
           "agentown.io/generation": String(spec.generation),
           "agentown.io/namespace": spec.namespace,
           "agentown.io/preset": spec.preset.id,
@@ -183,9 +179,9 @@ export class DockerDriver implements RuntimeDriver {
     await this.call("DELETE", `/containers/${name}?force=1`, undefined, [404, 409]);
   }
 
-  async teardown(_namespace: string, agentId: string, purgeWorkspace: boolean): Promise<void> {
-    rmSync(this.secretPath(agentId), { force: true });
-    if (purgeWorkspace) await this.call("DELETE", `/volumes/agent-${agentId}-workspace`, undefined, [404, 409]);
+  async teardown(_namespace: string, runtimeId: string, purgeWorkspace: boolean): Promise<void> {
+    rmSync(this.secretPath(runtimeId), { force: true });
+    if (purgeWorkspace) await this.call("DELETE", `/volumes/agent-${runtimeId}-workspace`, undefined, [404, 409]);
   }
 
   async exec(_namespace: string, pod: string, command: string[], streams: ExecStreams) {

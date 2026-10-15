@@ -16,7 +16,7 @@ const key = "sk-test-cli-small-1234";
 async function cli(agentId: string, ...args: string[]) {
   try {
     const result = await exec(process.execPath, ["--import", "tsx", cliPath, ...args], {
-      env: { ...process.env, AGENTOWN_API_URL: baseUrl, AGENTOWN_TOKEN: env.token(agentId), AGENTOWN_AGENT_ID: agentId },
+      env: { ...process.env, AGENTOWN_API_URL: baseUrl, AGENTOWN_TOKEN: await env.member(agentId), AGENTOWN_AGENT_ID: agentId },
     });
     return { ...result, code: 0 };
   } catch (err) {
@@ -80,7 +80,8 @@ describe("agent configuration CLI", () => {
     expect((await env.db.query("SELECT count(*)::int AS n FROM audit_events WHERE actor='agent:ceo' AND action='agent.configure' AND allowed")).rows[0].n).toBe(4);
     await env.settle();
     await env.settle();
-    expect([...env.driver.pods.values()].filter((p) => ["ceo", "po", "lead-eng", "lead-ops", workerId].includes(p.agentId)).every((p) => p.providerKey === null && p.llmEnv.AGENTOWN_LLM_BROKER === "1")).toBe(true);
+    const members = (await Promise.all(["exec", "product", "eng", "ops"].map((t) => env.service.teamHello(t)))).flatMap((h) => h.members);
+    expect(members.filter((m) => ["ceo", "po", "lead-eng", "lead-ops", workerId].includes(m.id)).every((m) => m.llm !== null && !("apiKey" in m.llm))).toBe(true);
   });
 
   it("saves context budgets with a server receipt and refuses stale form revisions", async () => {

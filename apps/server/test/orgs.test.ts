@@ -46,7 +46,7 @@ describe("organization routing", () => {
   });
 
   it("agent runtimes keep calling /api/… and stay in their own organization", async () => {
-    const t = env.token("lead-eng");
+    const t = await env.member("lead-eng");
     const plain = await env.app.inject({ method: "GET", url: "/api/agents", headers: { authorization: `Bearer ${t}` } });
     expect(plain.statusCode).toBe(200);
     const other = await env.app.inject({ method: "GET", url: "/api/orgs/elsewhere/agents", headers: { authorization: `Bearer ${t}` } });

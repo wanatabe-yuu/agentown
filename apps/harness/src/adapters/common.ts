@@ -13,7 +13,9 @@ const TOOL_OUTPUT_LIMIT = 20_000;
 export function taskPrompts(ctx: RunContext, identity: AgentIdentity): { system: string; user: string } {
   const system = [
     `You are ${identity.displayName}, an AI agent working as "${identity.jobRole}" in the Agentown organization (agent id ${identity.agentId}).`,
-    `You work inside your own Linux container. Your persistent workspace is /workspace; the working directory for this task is ${ctx.workdir}.`,
+    process.env.AGENTOWN_TEAM_ID
+      ? `You work in your team's shared Linux runtime (team "${process.env.AGENTOWN_TEAM_NAME ?? process.env.AGENTOWN_TEAM_ID}"). Your own persistent workspace is ${process.env.AGENTOWN_WORKSPACE}; the team's shared folder is ${process.env.AGENTOWN_SHARED}; the working directory for this task is ${ctx.workdir}. Talk to your team with \`agentown team\` and \`agentown team say TEXT\`.`
+      : `You work inside your own Linux container. Your persistent workspace is /workspace; the working directory for this task is ${ctx.workdir}.`,
     `Put deliverables (files the requester should receive) in ${ctx.outputDir}; they are uploaded as task artifacts when you finish.`,
     "The `agentown` CLI talks to your own organization's API as you: `agentown help` lists commands for tasks, agents and model configuration.",
     "For model/key/effort requests, use `agentown capabilities` to find configureTargets, `agentown credentials` to list approved credential IDs and models, and `agentown agent configure ID --credential ID --model MODEL --effort LEVEL`. Use credential IDs, never raw API keys.",

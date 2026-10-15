@@ -32,7 +32,11 @@ export interface OrgTemplate {
 }
 
 /** Who a token belongs to, before any organization is chosen. */
-export type Principal = { kind: "human"; id: string; admin: boolean } | { kind: "agent"; id: string; orgId: string };
+export type Principal =
+  | { kind: "human"; id: string; admin: boolean }
+  | { kind: "agent"; id: string; orgId: string }
+  /** A team's shared runtime. It only lists its members and starts sessions for them; members act with their own tokens. */
+  | { kind: "runtime"; id: string; orgId: string; teamId: string };
 
 /**
  * The install: accounts, tokens and the list of organizations. Everything inside
@@ -101,6 +105,10 @@ export class Instance {
       if (r.is_admin === null || r.disabled_at) return null;
       return { kind: "human", id: r.principal_id, admin: r.is_admin };
     }
+    if (r.principal_kind === "runtime") {
+      const [orgId, teamId] = r.principal_id.split("/") as [string, string];
+      return { kind: "runtime", id: r.principal_id, orgId, teamId };
+    }
     return r.org_id ? { kind: "agent", id: r.principal_id, orgId: r.org_id } : null;
   }
 
@@ -137,6 +145,7 @@ export class Instance {
    * Anything else is "not found", so org ids are not probeable.
    */
   async resolve(p: Principal, orgId: string | undefined): Promise<{ service: Service; actor: Actor }> {
+    if (p.kind === "runtime") throw deny("a team runtime acts through its members' session tokens");
     if (p.kind === "agent") {
       if (orgId && orgId !== p.orgId) throw notFound("organization");
       return { service: await this.org(p.orgId), actor: { kind: "agent", id: p.id } };
@@ -152,7 +161,7 @@ export class Instance {
 
   /** The signed-in person and the organizations they can open. */
   async me(p: Principal) {
-    if (p.kind === "agent") return { user: null, orgs: [{ id: p.orgId }] };
+    if (p.kind !== "human") return { user: null, orgs: [{ id: p.orgId }] };
     const user = (await this.db.query("SELECT id, display_name FROM users WHERE id=$1", [p.id])).rows[0];
     const { rows } = await this.db.query<{ id: string; name: string; is_owner: boolean }>(
       `SELECT o.id, o.name, m.is_owner FROM org_members m JOIN organizations o ON o.id = m.org_id

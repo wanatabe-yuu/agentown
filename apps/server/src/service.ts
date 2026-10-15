@@ -35,6 +35,11 @@ import {
   USER_SCOPE_KINDS,
   canTransition,
   isTerminal,
+  cpuMillis,
+  memoryMib,
+  teamsOf,
+  type RuntimePreset,
+  type TeamConfig,
 } from "@agentown/core";
 import type pg from "pg";
 import { z } from "zod";
@@ -87,6 +92,34 @@ export interface AgentRow {
   max_turns: number;
   context_limit: number | null;
   config_revision: number;
+  /** null = the department's default team. */
+  team_id: string | null;
+  /** Declared share of the team runtime; null = the preset's member default. */
+  cpu_millis: number | null;
+  memory_mib: number | null;
+}
+
+/** Resource share in millicores / MiB. */
+export interface Share {
+  cpu: number;
+  memory: number;
+}
+
+/** The one runtime a team shares. */
+export interface TeamRuntimeRow {
+  org_id: string;
+  team_id: string;
+  runtime_id: string;
+  preset_id: string;
+  generation: number;
+  namespace: string;
+  storage_ref: string;
+  workload_ref: string | null;
+  observed_state: string;
+  observed_detail: string | null;
+  observed_at: Date | null;
+  ready_generation: number | null;
+  applied_resources: Share | null;
 }
 
 interface CredentialRow {
@@ -121,6 +154,8 @@ export interface RuntimeRow {
   observed_at: Date | null;
   ready_generation: number | null;
   applied_secret_rev: string | null;
+  /** Still has a per-agent pod from before team runtimes. */
+  legacy_pod: boolean;
 }
 
 export interface TaskRow {
@@ -389,6 +424,7 @@ export class Service {
           reportsTo: a.reportsTo ? ids.get(a.reportsTo)! : null,
           createdBy: "owner:config",
           spawnKey: null,
+          teamId: a.team ?? null,
         });
       }
     });
@@ -428,6 +464,9 @@ export class Service {
       const departments = new Set(next.departments.map((d) => d.id));
       const staffed = await ctx.c.query<{ d: string }>("SELECT DISTINCT department_id AS d FROM agents WHERE org_id=$1 AND lifecycle_state <> 'retired'", [this.orgId]);
       for (const { d } of staffed.rows) if (!departments.has(d)) throw badRequest(`department ${d} still has agents: move or retire them first`);
+      const teams = new Map(teamsOf(next).map((t) => [t.id, t.department]));
+      const inTeams = await ctx.c.query<{ t: string; d: string }>("SELECT DISTINCT team_id AS t, department_id AS d FROM agents WHERE org_id=$1 AND team_id IS NOT NULL AND lifecycle_state <> 'retired'", [this.orgId]);
+      for (const { t, d } of inTeams.rows) if (teams.get(t) !== d) throw badRequest(`team ${t} still has agents: move or retire them first`);
       const projects = new Set(next.projects.map((p) => p.id));
       const open = await ctx.c.query<{ p: string }>(
         "SELECT DISTINCT project_id AS p FROM tasks WHERE org_id=$1 AND project_id IS NOT NULL AND status NOT IN ('done','cancelled','failed')",
@@ -613,15 +652,20 @@ export class Service {
       createdBy: string;
       spawnKey: string | null;
       config?: Partial<AgentConfig>;
+      teamId?: string | null;
+      share?: Partial<Share>;
     },
   ): Promise<void> {
-    const { template, preset, profile } = this.template(a.templateId);
+    const { template, preset: templatePreset, profile } = this.template(a.templateId);
+    const team = this.resolveTeam(a.departmentId, a.teamId ?? null);
+    const preset = this.config.runtimeCatalog.find((p) => p.id === team.runtimePreset) ?? templatePreset;
     const cfg = a.config ?? {};
     const seat = await ctx.c.query<{ n: string }>("SELECT count(*) AS n FROM agents WHERE org_id = $1 AND department_id = $2", [this.orgId, a.departmentId]);
     await ctx.c.query(
       `INSERT INTO agents(id, department_id, display_name, job_role, template_id, reports_to, lifecycle_state,
-         desired_runtime, created_by, spawn_key, seat, credential_id, model, effort, instructions, max_turns, context_limit, org_id)
-       VALUES ($1,$2,$3,$4,$5,$6,'provisioning','running',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         desired_runtime, created_by, spawn_key, seat, credential_id, model, effort, instructions, max_turns, context_limit, org_id,
+         team_id, cpu_millis, memory_mib)
+       VALUES ($1,$2,$3,$4,$5,$6,'provisioning','running',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
       [
         a.id,
         a.departmentId,
@@ -639,11 +683,15 @@ export class Service {
         cfg.maxTurns ?? 40,
         cfg.contextLimit ?? null,
         this.orgId,
+        team.id === a.departmentId ? null : team.id,
+        a.share?.cpu ?? null,
+        a.share?.memory ?? null,
       ],
     );
+    // Members live in their team's runtime; this row is the member's own generation (fencing) and status mirror.
     await ctx.c.query(
-      `INSERT INTO agent_runtimes(agent_id, preset_id, namespace, storage_ref) VALUES ($1,$2,$3,$4)`,
-      [a.id, preset.id, this.runtimeNamespace ?? namespaceFor(a.departmentId), `agent-${a.id}-workspace`],
+      `INSERT INTO agent_runtimes(agent_id, preset_id, namespace, storage_ref, legacy_pod) VALUES ($1,$2,$3,$4,false)`,
+      [a.id, preset.id, this.teamNamespace(team), `members/${a.id}`],
     );
     // Template grants were approved by the owner when they authored the config;
     // the spawner can only pick templates its own agent.spawn grant lists.
@@ -671,6 +719,242 @@ export class Service {
     });
   }
 
+  // ---------------------------------------------------------------- teams
+
+  /** The team an agent works in: its own, or its department's default team. */
+  resolveTeam(departmentId: string, teamId: string | null): TeamConfig {
+    const teams = teamsOf(this.config);
+    const t = (teamId && teams.find((x) => x.id === teamId && x.department === departmentId)) || teams.find((x) => x.id === departmentId);
+    if (!t) throw badRequest(`department ${departmentId} has no team`);
+    return t;
+  }
+
+  teamOf(a: Pick<AgentRow, "department_id" | "team_id">): TeamConfig {
+    return this.resolveTeam(a.department_id, a.team_id);
+  }
+
+  teamNamespace(t: TeamConfig): string {
+    return this.runtimeNamespace ?? namespaceFor(t.department);
+  }
+
+  /** A member's declared share of its team runtime. */
+  memberShare(a: Pick<AgentRow, "cpu_millis" | "memory_mib">, preset: RuntimePreset): Share {
+    return { cpu: a.cpu_millis ?? cpuMillis(preset.member.cpu), memory: a.memory_mib ?? memoryMib(preset.member.memory) };
+  }
+
+  /**
+   * What each team runtime should be, for the controller: its members, preset and
+   * size (preset base + every member that wants to run). Ensures the team's row.
+   */
+  async teamPlans(): Promise<Array<{ team: TeamConfig; runtime: TeamRuntimeRow; preset: RuntimePreset; members: AgentRow[]; resources: Share; wanted: boolean }>> {
+    const { rows: agents } = await this.db.query<AgentRow>("SELECT * FROM agents WHERE org_id=$1 ORDER BY created_at", [this.orgId]);
+    const { rows: rts } = await this.db.query<RuntimeRow>("SELECT r.* FROM agent_runtimes r JOIN agents a ON a.id=r.agent_id WHERE a.org_id=$1", [this.orgId]);
+    const presetOf = new Map(rts.map((r) => [r.agent_id, r.preset_id]));
+    const plans = [];
+    for (const team of teamsOf(this.config)) {
+      const members = agents.filter((a) => this.teamOf(a).id === team.id && a.lifecycle_state !== "retired");
+      const { rows: existing } = await this.db.query<TeamRuntimeRow>("SELECT * FROM team_runtimes WHERE org_id=$1 AND team_id=$2", [this.orgId, team.id]);
+      if (!members.length && !existing[0]) continue;
+      // The team's preset; else, deterministically, the most capable shared preset its members were hired with.
+      const memberPresets = new Set(members.map((a) => presetOf.get(a.id)));
+      const fromMembers = [...this.config.runtimeCatalog].sort((a, b) => rank(a) - rank(b)).find((p) => memberPresets.has(p.id));
+      const preset = this.config.runtimeCatalog.find((p) => p.id === team.runtimePreset)
+        ?? fromMembers
+        ?? this.config.runtimeCatalog.find((p) => p.id === existing[0]?.preset_id)
+        ?? this.config.runtimeCatalog[0]!;
+      const runtime = existing[0] ?? (await this.db.query<TeamRuntimeRow>(
+        `INSERT INTO team_runtimes(org_id, team_id, runtime_id, preset_id, namespace, storage_ref) VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (org_id, team_id) DO UPDATE SET org_id=EXCLUDED.org_id RETURNING *`,
+        // Unique across organizations that share department namespaces (orgs from before multi-org).
+        [this.orgId, team.id, `team-${team.id}-${sha256(this.orgId).slice(0, 6)}`, preset.id, this.teamNamespace(team), `team-${team.id}-${sha256(this.orgId).slice(0, 6)}-workspace`],
+      )).rows[0]!;
+      const running = members.filter((a) => a.desired_runtime === "running");
+      const resources = running.reduce((s, a) => {
+        const m = this.memberShare(a, preset);
+        return { cpu: s.cpu + m.cpu, memory: s.memory + m.memory };
+      }, { cpu: cpuMillis(preset.resources.cpu), memory: memoryMib(preset.resources.memory) });
+      plans.push({ team, runtime, preset, members, resources, wanted: running.length > 0 });
+    }
+    return plans;
+  }
+
+  /** The team runtime's preset, recorded when a runtime of that preset is created. */
+  async setTeamPreset(teamId: string, presetId: string) {
+    await this.db.query("UPDATE team_runtimes SET preset_id=$3 WHERE org_id=$1 AND team_id=$2", [this.orgId, teamId, presetId]);
+  }
+
+  /** Members run on their team's preset, so their harness matches (queued upgrades apply first). */
+  async syncMemberPresets(members: AgentRow[], presetId: string) {
+    const ids = members.map((a) => a.id);
+    if (ids.length) await this.db.query("UPDATE agent_runtimes SET preset_id=$2 WHERE agent_id = ANY($1) AND pending_preset_id IS NULL AND preset_id <> $2", [ids, presetId]);
+  }
+
+  /** A new runtime generation for the whole team: every member's runs on the old one are lost and requeued. */
+  async bumpTeamGeneration(teamId: string, reason: string): Promise<number> {
+    return this.withTx(async (ctx) => {
+      const { rows } = await ctx.c.query<{ generation: number }>(
+        "UPDATE team_runtimes SET generation=generation+1, ready_generation=NULL WHERE org_id=$1 AND team_id=$2 RETURNING generation",
+        [this.orgId, teamId],
+      );
+      const { rows: members } = await ctx.c.query<AgentRow>("SELECT * FROM agents WHERE org_id=$1 AND lifecycle_state<>'retired'", [this.orgId]);
+      for (const a of members) if (this.teamOf(a).id === teamId) await this.bumpGeneration(ctx, a.id, reason);
+      return rows[0]!.generation;
+    });
+  }
+
+  async teamHasRunningRun(teamId: string): Promise<boolean> {
+    const { rows } = await this.db.query<AgentRow>(
+      "SELECT a.* FROM agents a JOIN task_runs r ON r.agent_id=a.id WHERE a.org_id=$1 AND r.status='running'",
+      [this.orgId],
+    );
+    return rows.some((a) => this.teamOf(a).id === teamId);
+  }
+
+  /** Controller report for a team runtime; mirrored onto each member so per-agent views keep working. */
+  async recordTeamObservation(plan: { team: TeamConfig; members: AgentRow[] }, obs: { state: string; detail: string | null; workloadRef: string | null; generation: number; ready: boolean; resources?: Share }) {
+    const { rowCount } = await this.db.query(
+      `UPDATE team_runtimes SET observed_state=$3, observed_detail=$4, workload_ref=$5, observed_at=now(),
+         ready_generation=CASE WHEN $6 THEN generation ELSE NULL END,
+         applied_resources=COALESCE($7::jsonb, applied_resources)
+       WHERE org_id=$1 AND team_id=$2 AND generation=$8`,
+      [this.orgId, plan.team.id, obs.state, obs.detail, obs.workloadRef, obs.ready, obs.resources ? JSON.stringify(obs.resources) : null, obs.generation],
+    );
+    if (!rowCount) return; // stale observation
+    for (const a of plan.members) {
+      const rt = await this.getRuntimeRow(a.id);
+      const memberState = a.desired_runtime === "running" ? obs.state : "stopped";
+      await this.recordObservation(a.id, { state: memberState, detail: memberState === "stopped" ? null : obs.detail, workloadRef: obs.workloadRef, generation: rt.generation, ready: obs.ready && a.desired_runtime === "running" });
+    }
+  }
+
+  /** Runtime token for a team (the runtime then acts as each member with x-agentown-member). */
+  async issueTeamToken(teamId: string): Promise<string> {
+    const principal = `${this.orgId}/${teamId}`;
+    await this.db.query("UPDATE tokens SET revoked_at=now() WHERE principal_kind='runtime' AND principal_id=$1 AND revoked_at IS NULL", [principal]);
+    const token = `art_${newSecret()}`;
+    await this.db.query("INSERT INTO tokens(hash, principal_kind, principal_id, label) VALUES ($1,'runtime',$2,'team runtime')", [sha256(token), principal]);
+    await this.audit(this.db, "system:controller", "token.issue", principal, true, "team runtime credential (re)created");
+    return token;
+  }
+
+  /** Mark a member's per-agent pod as gone (it now runs inside its team runtime). */
+  async markLegacyPodRemoved(agentId: string) {
+    await this.db.query("UPDATE agent_runtimes SET legacy_pod=false WHERE agent_id=$1", [agentId]);
+  }
+
+  /** Member connection changed (key/provider): only that member restarts, and only between runs. */
+  async refreshMemberConnection(a: AgentRow): Promise<boolean> {
+    const rt = await this.getRuntimeRow(a.id);
+    const want = await this.desiredSecretRev(a);
+    if (want === rt.applied_secret_rev) return false;
+    if (rt.applied_secret_rev !== null && await this.hasRunningRun(a.id)) return false;
+    await this.withTx(async (ctx) => {
+      if (rt.applied_secret_rev !== null) await this.bumpGeneration(ctx, a.id, "API credential changed");
+      await ctx.c.query("UPDATE agent_runtimes SET applied_secret_rev=$2 WHERE agent_id=$1", [a.id, want]);
+    });
+    return rt.applied_secret_rev !== null;
+  }
+
+  /**
+   * A member session for a team runtime: a fresh token for that member (the
+   * previous one is revoked), so each member acts with exactly its own grants.
+   */
+  async memberSession(teamId: string, agentId: string) {
+    const a = await this.getAgentRow(agentId);
+    if (this.teamOf(a).id !== teamId || a.lifecycle_state === "retired" || a.desired_runtime !== "running") throw deny("not a running member of this team");
+    const rt = await this.getRuntimeRow(agentId);
+    const token = await this.issueToken(this.db, "agent", agentId, `team ${teamId} session`, true);
+    return { token, generation: rt.generation };
+  }
+
+  /** What a team runtime needs to start its members: identity, generation and non-secret model connection. */
+  async teamHello(teamId: string) {
+    const team = teamsOf(this.config).find((t) => t.id === teamId);
+    if (!team) throw notFound("team");
+    const { rows } = await this.db.query<{ generation: number }>("SELECT generation FROM team_runtimes WHERE org_id=$1 AND team_id=$2", [this.orgId, teamId]);
+    const { rows: agents } = await this.db.query<AgentRow>(
+      "SELECT * FROM agents WHERE org_id=$1 AND lifecycle_state<>'retired' AND desired_runtime='running' ORDER BY created_at",
+      [this.orgId],
+    );
+    const members = [];
+    for (const a of agents) {
+      if (this.teamOf(a).id !== teamId) continue;
+      const rt = await this.getRuntimeRow(a.id);
+      const preset = this.config.runtimeCatalog.find((p) => p.id === rt.preset_id);
+      members.push({
+        id: a.id,
+        displayName: a.display_name,
+        jobRole: a.job_role,
+        generation: rt.generation,
+        harness: preset?.harness ?? "script",
+        model: preset?.model ?? null,
+        llm: (await this.runtimeCredential(a.id)).llm,
+      });
+    }
+    return { team: { id: team.id, name: team.name, department: team.department }, generation: rows[0]?.generation ?? 0, members };
+  }
+
+  /** Move an agent to another team (same department unless the owner does it). Its runtime moves with it. */
+  async setTeam(actor: Actor, id: string, teamId: string) {
+    await this.withTx(async (ctx) => {
+      const agent = await this.getAgentRow(id, ctx.c, true);
+      if (agent.lifecycle_state === "retired") throw conflict("retired", "agent is retired");
+      await this.require(actor, "agent.update", { agentId: id }, { q: ctx.c, auditAs: "agent.team", detail: { teamId } });
+      const team = teamsOf(this.config).find((t) => t.id === teamId);
+      if (!team) throw badRequest(`unknown team ${teamId}`);
+      if (team.department !== agent.department_id && !isOwner(actor)) throw deny("only the owner can move an agent to another department's team");
+      if (this.teamOf(agent).id === team.id) return;
+      if ((await ctx.c.query("SELECT 1 FROM task_runs WHERE agent_id=$1 AND status='running'", [id])).rowCount) {
+        throw conflict("busy", "the agent is working on a task; move it when the task ends");
+      }
+      await ctx.c.query("UPDATE agents SET team_id=$2, department_id=$3 WHERE id=$1", [id, team.id === team.department ? null : team.id, team.department]);
+      await ctx.c.query("UPDATE agent_runtimes SET namespace=$2 WHERE agent_id=$1", [id, this.teamNamespace(team)]);
+      // The old team's runtime held this member's session: end it.
+      await ctx.c.query("UPDATE tokens SET revoked_at=now() WHERE principal_kind='agent' AND principal_id=$1 AND revoked_at IS NULL", [id]);
+      await this.bumpGeneration(ctx, id, `moved to team ${team.id}`);
+      await this.bumpRevision(ctx.c);
+      await this.emit(ctx, { type: "agent.team", agentId: id, payload: { teamId: team.id, departmentId: team.department } });
+    });
+    return this.presentAgentById(id);
+  }
+
+  /** Change the share an agent adds to its team runtime. The team resizes when it is next idle. */
+  async setResources(actor: Actor, id: string, input: { cpu?: string; memory?: string }) {
+    const share = parseShare(input);
+    await this.withTx(async (ctx) => {
+      await this.getAgentRow(id, ctx.c);
+      await this.require(actor, "runtime.control", { agentId: id }, { q: ctx.c, auditAs: "runtime.resources", detail: input });
+      await ctx.c.query("UPDATE agents SET cpu_millis=COALESCE($2, cpu_millis), memory_mib=COALESCE($3, memory_mib) WHERE id=$1", [id, share.cpu ?? null, share.memory ?? null]);
+      await this.emit(ctx, { type: "agent.resources", agentId: id, payload: input });
+    });
+    return this.presentAgentById(id);
+  }
+
+  /** Each team with its members and runtime, as the people UI shows it. */
+  async listTeams(actor: Actor) {
+    const agents = await this.listAgents(actor);
+    const { rows } = await this.db.query<TeamRuntimeRow>("SELECT * FROM team_runtimes WHERE org_id=$1", [this.orgId]);
+    const rt = new Map(rows.map((r) => [r.team_id, r]));
+    return teamsOf(this.config).map((t) => {
+      const r = rt.get(t.id);
+      return {
+        id: t.id,
+        name: t.name,
+        departmentId: t.department,
+        implicit: !(this.config.teams ?? []).some((x) => x.id === t.id),
+        memberIds: agents.filter((a) => a.teamId === t.id && a.lifecycleState !== "retired").map((a) => a.id),
+        runtime: r ? {
+          presetId: r.preset_id,
+          generation: r.generation,
+          state: r.observed_state,
+          detail: r.observed_detail,
+          ready: r.observed_state === "running" && r.ready_generation === r.generation,
+          resources: r.applied_resources,
+        } : null,
+      };
+    });
+  }
+
   // ---------------------------------------------------------------- agents
 
   async getAgentRow(id: string, q: Queryable = this.db, lock = false): Promise<AgentRow> {
@@ -695,10 +979,14 @@ export class Service {
       displayName: string;
       reportsToAgentId: string | null;
       departmentId?: string;
+      teamId?: string;
+      /** Share this member adds to its team runtime ("250m", "256Mi"); preset default when omitted. */
+      resources?: { cpu?: string; memory?: string };
       idempotencyKey?: string;
       config?: Partial<AgentConfig>;
     },
   ): Promise<{ agent: ReturnType<Service["presentAgent"]>; existing: boolean }> {
+    const share = parseShare(input.resources);
     this.template(input.templateId);
     const spawnKey = input.idempotencyKey ? `${actorRef(actor)}:${input.idempotencyKey}` : null;
     if (spawnKey) {
@@ -715,6 +1003,12 @@ export class Service {
     const id = await this.withTx(async (ctx) => {
       const policy = await this.loadPolicy(ctx.c);
       let departmentId = input.departmentId;
+      if (input.teamId) {
+        const team = teamsOf(this.config).find((t) => t.id === input.teamId);
+        if (!team) throw badRequest(`unknown team ${input.teamId}`);
+        if (departmentId && departmentId !== team.department) throw badRequest(`team ${team.id} belongs to department ${team.department}`);
+        departmentId = team.department;
+      }
       if (input.reportsToAgentId) {
         const manager = await this.getAgentRow(input.reportsToAgentId, ctx.c);
         if (manager.lifecycle_state === "retired") throw conflict("manager_retired", "manager is retired");
@@ -742,6 +1036,8 @@ export class Service {
         createdBy: actorRef(actor),
         spawnKey,
         config,
+        teamId: input.teamId ?? null,
+        share,
       });
       return id;
     });
@@ -766,6 +1062,11 @@ export class Service {
       displayName: a.display_name,
       jobRole: a.job_role,
       departmentId: a.department_id,
+      teamId: this.teamOf(a).id,
+      resources: (() => {
+        const preset = this.config.runtimeCatalog.find((p) => p.id === r?.preset_id) ?? this.config.runtimeCatalog[0]!;
+        return { ...this.memberShare(a, preset), declared: a.cpu_millis !== null || a.memory_mib !== null };
+      })(),
       templateId: a.template_id,
       reportsToAgentId: a.reports_to,
       lifecycleState: a.lifecycle_state,
@@ -1952,12 +2253,13 @@ export class Service {
     // Event sequence numbers are global; the cursor is the newest one this org has.
     const { rows } = await this.db.query<{ seq: string | null }>("SELECT max(seq) AS seq FROM agent_events WHERE org_id=$1", [this.orgId]);
     const cursor = Number(rows[0]?.seq ?? 0);
-    const [agents, tasks] = await Promise.all([this.listAgents(actor), this.listTasks(actor)]);
+    const [agents, tasks, teams] = await Promise.all([this.listAgents(actor), this.listTasks(actor), this.listTeams(actor)]);
     return {
       cursor,
       organization: this.config.organization,
       me: actor,
       departments: this.config.departments,
+      teams,
       projects: this.config.projects,
       world: this.config.world ?? null,
       agents,
@@ -2004,7 +2306,7 @@ export class Service {
     void actor;
     return {
       templates: this.config.agentTemplates,
-      presets: this.config.runtimeCatalog.map((p) => ({ id: p.id, version: p.version, harness: p.harness, image: p.image, resources: p.resources, placement: p.placement, model: p.model ?? null })),
+      presets: this.config.runtimeCatalog.map((p) => ({ id: p.id, version: p.version, harness: p.harness, image: p.image, resources: p.resources, member: p.member, placement: p.placement, model: p.model ?? null })),
       departments: this.config.departments,
       projects: this.config.projects,
       providers: PROVIDER_INFO,
@@ -2309,6 +2611,25 @@ export class Service {
 
 function capConstraints(c: { templates?: string[]; repos?: string[] }): GrantConstraints {
   return { ...(c.templates ? { templates: c.templates } : {}), ...(c.repos ? { repos: c.repos } : {}) };
+}
+
+/** LLM harness before script, shared before dedicated: a team runtime must run every member's work. */
+function rank(p: RuntimePreset): number {
+  return (p.harness === "claude" ? 0 : 2) + (p.placement === "shared" ? 0 : 1);
+}
+
+/** A declared runtime share ("250m", "256Mi") in millicores / MiB, bounded. */
+function parseShare(input?: { cpu?: string; memory?: string }): Partial<Share> {
+  const out: Partial<Share> = {};
+  try {
+    if (input?.cpu) out.cpu = cpuMillis(input.cpu);
+    if (input?.memory) out.memory = memoryMib(input.memory);
+  } catch (err) {
+    throw badRequest((err as Error).message);
+  }
+  if (out.cpu !== undefined && (out.cpu < 10 || out.cpu > 64000)) throw badRequest("cpu must be between 10m and 64");
+  if (out.memory !== undefined && (out.memory < 32 || out.memory > 262144)) throw badRequest("memory must be between 32Mi and 256Gi");
+  return out;
 }
 
 function emptyConfig(): AgentConfig {

@@ -1896,3 +1896,132 @@ input.short {
 .run-report summary, .run-usage summary { cursor: pointer; min-height: 36px; align-content: center; }
 .run-report { max-width: 100%; } .run-usage pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 700px) { .report-markdown { font-size: 14px; } .report-table-scroll { -webkit-overflow-scrolling: touch; } }
+
+/* ---- conversations: yours, your teams', and everything else */
+.conversations .conv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.conversations .conv-head h3 {
+  margin: 0;
+}
+.conversations .conv-head select {
+  height: 30px;
+  min-width: 96px;
+}
+.conv-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow: auto;
+}
+.conv-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  min-height: 44px;
+}
+.conv-row:hover {
+  background: var(--surface-3);
+}
+.conv-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.conv-main > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conv-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+}
+.conv-avatar.team {
+  border-radius: 8px;
+}
+.conv-avatar.object {
+  background: var(--surface-3);
+  color: var(--muted);
+}
+.team-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(60vh, 520px);
+  overflow: auto;
+  padding: 8px 0;
+}
+.team-msg {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.team-msg.human {
+  background: var(--accent-soft);
+}
+.team-msg.system {
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+.team-msg-author {
+  font-weight: 600;
+}
+.team-msg-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.team-composer {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.team-composer input {
+  flex: 1;
+  min-width: 0;
+}
+.other-feed .feed-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+}
+.other-feed .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .team-msg {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

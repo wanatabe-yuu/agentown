@@ -48,8 +48,13 @@ const runtimePresetSchema = z.object({
    */
   placement: z.enum(["shared", "dedicated-node"]).default("shared"),
   workspace: z.object({ size: z.string().default("1Gi") }).prefault({}),
+  /** Base share of a team runtime (supervisor); the team adds each member's declared share on top. */
   resources: z
     .object({ cpu: z.string().default("500m"), memory: z.string().default("512Mi") })
+    .prefault({}),
+  /** Default share a new member declares when the person adding it does not say. */
+  member: z
+    .object({ cpu: z.string().default("100m"), memory: z.string().default("192Mi") })
     .prefault({}),
 });
 export type RuntimePreset = z.infer<typeof runtimePresetSchema>;
@@ -67,14 +72,29 @@ const bootstrapAgentSchema = z.object({
   displayName: z.string(),
   template: idSchema,
   department: idSchema,
+  team: idSchema.optional(),
   reportsTo: idSchema.nullable().default(null),
 });
+
+/**
+ * A team works inside one department and shares one runtime. Every department
+ * without a team of its own id has an implicit team with the department's id.
+ */
+const teamSchema = z.object({
+  id: idSchema,
+  name: z.string().min(1).max(60),
+  department: idSchema,
+  /** Runtime preset of the team's shared runtime; defaults to its members' preset. */
+  runtimePreset: idSchema.optional(),
+});
+export type TeamConfig = z.infer<typeof teamSchema>;
 
 export const orgConfigSchema = z
   .object({
     organization: z.object({ id: idSchema, name: z.string() }),
     departments: z.array(z.object({ id: idSchema, name: z.string(), color: z.string().default("#8aa") })).min(1),
     projects: z.array(z.object({ id: idSchema, name: z.string() })).default([]),
+    teams: z.array(teamSchema).default([]),
     runtimeCatalog: z.array(runtimePresetSchema).min(1),
     policyProfiles: z.record(z.string(), z.array(capabilitySchema)),
     agentTemplates: z.array(templateSchema).min(1),
@@ -125,8 +145,18 @@ export const orgConfigSchema = z
         if (c.action === "user.manage") ctx.addIssue({ code: "custom", message: `role ${name}: user.manage is given by the owner, not by a role` });
       }
     }
+    const teamIds = new Set<string>();
+    for (const t of cfg.teams) {
+      if (!departments.has(t.department)) ctx.addIssue({ code: "custom", message: `team ${t.id}: unknown department ${t.department}` });
+      if (t.runtimePreset && !presets.has(t.runtimePreset)) ctx.addIssue({ code: "custom", message: `team ${t.id}: unknown runtimePreset ${t.runtimePreset}` });
+      if (departments.has(t.id) && t.id !== t.department) ctx.addIssue({ code: "custom", message: `team ${t.id}: id is the default team of department ${t.id}` });
+      if (teamIds.has(t.id)) ctx.addIssue({ code: "custom", message: `duplicate team id ${t.id}` });
+      teamIds.add(t.id);
+    }
+    const teamDept = new Map(teamsOf(cfg).map((t) => [t.id, t.department]));
     const keys = new Set<string>();
     for (const a of cfg.bootstrap.agents) {
+      if (a.team && teamDept.get(a.team) !== a.department) ctx.addIssue({ code: "custom", message: `agent ${a.key}: team ${a.team} is not in department ${a.department}` });
       if (!templates.has(a.template)) ctx.addIssue({ code: "custom", message: `agent ${a.key}: unknown template` });
       if (!departments.has(a.department)) ctx.addIssue({ code: "custom", message: `agent ${a.key}: unknown department` });
       if (a.reportsTo && !keys.has(a.reportsTo)) ctx.addIssue({ code: "custom", message: `agent ${a.key}: reportsTo must reference an earlier agent` });
@@ -135,6 +165,28 @@ export const orgConfigSchema = z
   });
 
 export type OrgConfig = z.infer<typeof orgConfigSchema>;
+
+/** All teams: the configured ones plus each department's implicit default team. */
+export function teamsOf(cfg: Pick<OrgConfig, "teams" | "departments">): TeamConfig[] {
+  const explicit = cfg.teams ?? [];
+  const ids = new Set(explicit.map((t) => t.id));
+  return [...explicit, ...cfg.departments.filter((d) => !ids.has(d.id)).map((d) => ({ id: d.id, name: d.name, department: d.id }))];
+}
+
+/** CPU quantity ("250m", "1", "0.5") in millicores. */
+export function cpuMillis(q: string): number {
+  const m = /^(\d+(?:\.\d+)?)(m?)$/.exec(q.trim());
+  if (!m) throw new Error(`invalid cpu quantity ${q}`);
+  return Math.round(m[2] ? Number(m[1]) : Number(m[1]) * 1000);
+}
+
+/** Memory quantity ("256Mi", "2Gi", "512M") in MiB. */
+export function memoryMib(q: string): number {
+  const m = /^(\d+(?:\.\d+)?)(Ki|Mi|Gi|K|M|G)?$/.exec(q.trim());
+  if (!m) throw new Error(`invalid memory quantity ${q}`);
+  const f: Record<string, number> = { Ki: 1 / 1024, Mi: 1, Gi: 1024, K: 1000 / 1048576, M: 1e6 / 1048576, G: 1e9 / 1048576, "": 1 / 1048576 };
+  return Math.ceil(Number(m[1]) * f[m[2] ?? ""]!);
+}
 
 export function parseOrgConfig(text: string): OrgConfig {
   return orgConfigSchema.parse(parseYaml(text));

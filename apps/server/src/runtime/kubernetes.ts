@@ -1,6 +1,6 @@
 import * as k8s from "@kubernetes/client-node";
 import type { ExecStreams, PodInfo, RuntimeDriver, RuntimeSpec } from "./driver.ts";
-import { llmEnv, NamespaceNotReady, podName } from "./driver.ts";
+import { NamespaceNotReady, podName } from "./driver.ts";
 
 const MANAGED_BY = { "app.kubernetes.io/managed-by": "agentown" };
 const CONTAINER = "harness";
@@ -45,10 +45,10 @@ export class KubernetesDriver implements RuntimeDriver {
     this.execApi = new k8s.Exec(kc);
   }
 
-  async listPods(namespace: string, agentId: string): Promise<PodInfo[]> {
+  async listPods(namespace: string, runtimeId: string): Promise<PodInfo[]> {
     let list;
     try {
-      list = await this.core.listNamespacedPod({ namespace, labelSelector: `agentown.io/agent=${agentId}` });
+      list = await this.core.listNamespacedPod({ namespace, labelSelector: `agentown.io/agent=${runtimeId}` });
     } catch (err) {
       // The controller holds Roles only in provisioned namespaces: 403 means "not provisioned yet".
       const code = (err as { code?: number; statusCode?: number }).code ?? (err as { statusCode?: number }).statusCode;
@@ -75,13 +75,13 @@ export class KubernetesDriver implements RuntimeDriver {
   }
 
   async ensureIdentity(spec: RuntimeSpec, issueToken: () => Promise<string>): Promise<void> {
-    const { namespace, agentId } = spec;
-    const labels = { ...MANAGED_BY, "agentown.io/agent": agentId };
+    const { namespace, runtimeId } = spec;
+    const labels = { ...MANAGED_BY, "agentown.io/agent": runtimeId, "agentown.io/team": spec.teamId };
     await createIfMissing(() =>
       this.core.createNamespacedServiceAccount({
         namespace,
         body: {
-          metadata: { name: `agent-${agentId}`, labels },
+          metadata: { name: `agent-${runtimeId}`, labels },
           // The runtime talks to the Agentown API with its own token, never to the Kubernetes API.
           automountServiceAccountToken: false,
         },
@@ -99,7 +99,7 @@ export class KubernetesDriver implements RuntimeDriver {
         },
       }),
     );
-    const secretName = `agent-${agentId}-credentials`;
+    const secretName = `agent-${runtimeId}-credentials`;
     try {
       await this.core.readNamespacedSecret({ name: secretName, namespace });
     } catch (err) {
@@ -113,25 +113,17 @@ export class KubernetesDriver implements RuntimeDriver {
   }
 
   async createPod(spec: RuntimeSpec): Promise<string> {
-    const name = podName(spec.agentId, spec.generation);
+    const name = podName(spec.runtimeId, spec.generation);
     const env: k8s.V1EnvVar[] = [
       { name: "AGENTOWN_API_URL", value: spec.apiUrl },
-      { name: "AGENTOWN_AGENT_ID", value: spec.agentId },
-      { name: "AGENTOWN_GENERATION", value: String(spec.generation) },
+      { name: "AGENTOWN_TEAM_ID", value: spec.teamId },
+      { name: "AGENTOWN_TEAM_GENERATION", value: String(spec.generation) },
       { name: "AGENTOWN_HARNESS", value: spec.preset.harness },
       { name: "AGENTOWN_DISPLAY_NAME", value: spec.displayName },
-      { name: "AGENTOWN_JOB_ROLE", value: spec.jobRole },
-      { name: "AGENTOWN_TOKEN", valueFrom: { secretKeyRef: { name: `agent-${spec.agentId}-credentials`, key: "token" } } },
+      { name: "AGENTOWN_TOKEN", valueFrom: { secretKeyRef: { name: `agent-${spec.runtimeId}-credentials`, key: "token" } } },
       { name: "HOME", value: "/workspace/home" },
     ];
     if (spec.preset.model) env.push({ name: "AGENTOWN_MODEL", value: spec.preset.model });
-    // Remove legacy per-agent provider Secrets. New runtimes use the server broker.
-    const providerSecret = `agent-${spec.agentId}-provider`;
-    await ignore404(this.core.deleteNamespacedSecret({ name: providerSecret, namespace: spec.namespace }));
-    if (spec.llm) {
-      const { plain } = llmEnv(spec.llm, spec.apiUrl);
-      for (const [name, value] of Object.entries(plain)) env.push({ name, value });
-    }
     const dedicated = spec.preset.placement === "dedicated-node";
     await createIfMissing(() =>
       this.core.createNamespacedPod({
@@ -141,17 +133,18 @@ export class KubernetesDriver implements RuntimeDriver {
             name,
             labels: {
               ...MANAGED_BY,
-              "agentown.io/agent": spec.agentId,
+              "agentown.io/agent": spec.runtimeId,
+              "agentown.io/team": spec.teamId,
               "agentown.io/generation": String(spec.generation),
               "agentown.io/preset": spec.preset.id,
               "agentown.io/placement": spec.preset.placement,
             },
           },
           spec: {
-            serviceAccountName: `agent-${spec.agentId}`,
+            serviceAccountName: `agent-${spec.runtimeId}`,
             automountServiceAccountToken: false,
             enableServiceLinks: false,
-            hostname: spec.agentId,
+            hostname: spec.runtimeId,
             restartPolicy: "Always",
             // dedicated-node: only on the dedicated pool, and never two dedicated agents on one node.
             ...(dedicated
@@ -186,8 +179,8 @@ export class KubernetesDriver implements RuntimeDriver {
                 imagePullPolicy: spec.preset.imagePullPolicy,
                 env,
                 resources: {
-                  requests: { cpu: spec.preset.resources.cpu, memory: spec.preset.resources.memory },
-                  limits: { cpu: spec.preset.resources.cpu, memory: spec.preset.resources.memory },
+                  requests: { cpu: spec.resources.cpu, memory: spec.resources.memory },
+                  limits: { cpu: spec.resources.cpu, memory: spec.resources.memory },
                 },
                 securityContext: {
                   allowPrivilegeEscalation: false,
@@ -215,12 +208,12 @@ export class KubernetesDriver implements RuntimeDriver {
     await ignore404(this.core.deleteNamespacedPod({ name, namespace, gracePeriodSeconds: 5 }));
   }
 
-  async teardown(namespace: string, agentId: string, purgeWorkspace: boolean): Promise<void> {
-    await ignore404(this.core.deleteNamespacedSecret({ name: `agent-${agentId}-credentials`, namespace }));
-    await ignore404(this.core.deleteNamespacedSecret({ name: `agent-${agentId}-provider`, namespace }));
-    await ignore404(this.core.deleteNamespacedServiceAccount({ name: `agent-${agentId}`, namespace }));
+  async teardown(namespace: string, runtimeId: string, purgeWorkspace: boolean): Promise<void> {
+    await ignore404(this.core.deleteNamespacedSecret({ name: `agent-${runtimeId}-credentials`, namespace }));
+    await ignore404(this.core.deleteNamespacedSecret({ name: `agent-${runtimeId}-provider`, namespace }));
+    await ignore404(this.core.deleteNamespacedServiceAccount({ name: `agent-${runtimeId}`, namespace }));
     if (purgeWorkspace) {
-      await ignore404(this.core.deleteNamespacedPersistentVolumeClaim({ name: `agent-${agentId}-workspace`, namespace }));
+      await ignore404(this.core.deleteNamespacedPersistentVolumeClaim({ name: `agent-${runtimeId}-workspace`, namespace }));
     }
   }
 

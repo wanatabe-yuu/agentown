@@ -6,6 +6,7 @@ import { CredentialsDialog } from "./Credentials.tsx";
 import { OrgEditor } from "./OrgEditor.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
 import { OwnerChatDialog, type ChatTarget } from "./OwnerChat.tsx";
+import { ConversationsSection } from "./Conversations.tsx";
 import { UsersDialog } from "./Users.tsx";
 import { HttpError, api, setOrg } from "./api.ts";
 import type { Flight } from "./office3d/scene.ts";
@@ -142,7 +143,8 @@ function OrgApp({
   const [selected, setSelected] = useState<string | null>(null);
   const [openTask, setOpenTask] = useState<string | null>(null);
   const [newTaskFor, setNewTaskFor] = useState<string | null | undefined>(undefined);
-  const [view, setView] = useState<"office" | "table">(() => (window.innerWidth < 700 ? "table" : "office"));
+  // The 3D office is the default everywhere (it falls back to a flat view without WebGL).
+  const [view, setView] = useState<"office" | "table">("office");
   const [showAudit, setShowAudit] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [showOwnerChat, setShowOwnerChat] = useState(false);
@@ -335,6 +337,7 @@ function OrgApp({
                 </ul>
               )}
             </section>
+            <ConversationsSection snapshot={snapshot} now={now} onOpenTask={setOpenTask} onChat={me.actor.owner ? setEntityChat : undefined} />
             <section className="feed-section">
               <h3>Activity</h3>
               <ul className="feed">
@@ -410,6 +413,7 @@ function AgentTable({ snapshot, workOf, now, onSelect, selected, onChat, onObjec
             <th>Agent</th>
             <th>Role</th>
             <th>Department</th>
+            <th>Team</th>
             <th>Reports to</th>
             <th>Work</th>
             <th>Runtime</th>
@@ -426,6 +430,7 @@ function AgentTable({ snapshot, workOf, now, onSelect, selected, onChat, onObjec
                 </td>
                 <td>{a.jobRole}</td>
                 <td>{snapshot.departments.find((d) => d.id === a.departmentId)?.name}</td>
+                <td data-label="Team">{snapshot.teams.find((t) => t.id === a.teamId)?.name ?? a.teamId} <span className="muted small">{a.resources.cpu}m · {a.resources.memory}Mi</span></td>
                 <td>{name(a.reportsToAgentId)}</td>
                 <td data-label="Work">
                   <StatusPill state={workOf(a)} /> <span className="muted small">{a.work.detail}</span>

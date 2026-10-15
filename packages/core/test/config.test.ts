@@ -23,6 +23,6 @@ describe("runtime preset defaults", () => {
     const config = parseOrgConfig(stringify(raw));
     const script = config.runtimeCatalog.find((p) => p.id === "script-v1")!;
     expect(script.workspace.size).toBe("256Mi");
-    expect(script.resources).toEqual({ cpu: "250m", memory: "256Mi" });
+    expect(script.resources).toEqual({ cpu: "100m", memory: "128Mi" });
   });
 });

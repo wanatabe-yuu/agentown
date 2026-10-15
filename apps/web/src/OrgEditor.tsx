@@ -8,7 +8,7 @@ type Notify = (msg: string, kind?: "error" | "info") => void;
 type Doc = Record<string, any>;
 /** A capability as written in the document: scope is a shorthand string or { departments | agents | projects: [...] }. */
 type Cap = { action: string; scope: string | Record<string, string[]>; templates?: string[]; delegable?: boolean };
-type Tab = "departments" | "projects" | "jobs" | "profiles" | "roles" | "templates";
+type Tab = "departments" | "teams" | "projects" | "jobs" | "profiles" | "roles" | "templates";
 
 // Mirrors ACTIONS in packages/core (code.* needs a repo list and is left to the YAML file).
 const AGENT_ACTIONS = ["org.view", "task.view", "task.create", "task.assign", "task.review", "agent.spawn", "agent.update", "agent.retire", "agent.configure", "runtime.control", "runtime.logs", "runtime.exec", "permission.delegate"];
@@ -92,7 +92,7 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
   return (
     <Modal title={`Organization: ${snapshot.organization.name}`} onClose={() => (!dirty || confirm("Discard unsaved changes?")) && onClose()} wide>
       <nav className="tabs" role="tablist">
-        {(["departments", "projects", "jobs", "profiles", "roles", "templates"] as Tab[]).map((t) => (
+        {(["departments", "teams", "projects", "jobs", "profiles", "roles", "templates"] as Tab[]).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
             {t === "jobs" ? "agent jobs" : t === "profiles" ? "agent permissions" : t === "roles" ? "role presets" : t}
           </button>
@@ -122,6 +122,27 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
             <input key="c" type="color" value={row.color ?? "#8899aa"} onChange={(e) => edit((d) => (d.departments[i].color = e.target.value))} aria-label="Department color" />,
           ]}
           note="A department's id is fixed once saved (it names namespaces, scopes and seats). A department with agents cannot be removed."
+        />
+      )}
+
+      {tab === "teams" && (
+        <RowsTable
+          headers={["Id", "Name", "Department", "Runtime"]}
+          rows={doc.teams ?? []}
+          onAdd={() => edit((d) => (d.teams ??= []).push({ id: "", name: "", department: departments[0]?.id ?? "" }))}
+          onRemove={(i) => edit((d) => d.teams.splice(i, 1))}
+          render={(row, i) => [
+            <IdInput key="id" value={row.id} onChange={(v) => edit((d) => (d.teams[i].id = v))} />,
+            <input key="n" value={row.name} onChange={(e) => edit((d) => (d.teams[i].name = e.target.value))} aria-label="Team name" />,
+            <select key="d" value={row.department} onChange={(e) => edit((d) => (d.teams[i].department = e.target.value))} aria-label="Team department">
+              {departments.map((dep) => <option key={dep.id} value={dep.id}>{dep.name || dep.id}</option>)}
+            </select>,
+            <select key="p" value={row.runtimePreset ?? ""} onChange={(e) => edit((d) => { if (e.target.value) d.teams[i].runtimePreset = e.target.value; else delete d.teams[i].runtimePreset; })} aria-label="Team runtime preset">
+              <option value="">members' preset</option>
+              {(catalog?.presets ?? []).map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}
+            </select>,
+          ]}
+          note="Each team shares one runtime, sized by the base of its preset plus every member's declared share. A department without a team of its own id keeps a default team with the department's id; a team with people cannot be removed."
         />
       )}
 

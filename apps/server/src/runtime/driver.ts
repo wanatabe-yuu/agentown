@@ -1,18 +1,24 @@
 import { apiProtocol, type ApiProtocol, type AuthHeader, type RuntimePreset } from "@agentown/core";
 import type { Duplex, Readable, Writable } from "node:stream";
 
-/** Everything the controller needs to materialize one agent runtime generation. */
+/**
+ * Everything the controller needs to materialize one runtime generation. A
+ * runtime is shared by a team; its members (and their model connections) are
+ * learned by the runtime itself from the server, so they can change without a
+ * new runtime.
+ */
 export interface RuntimeSpec {
-  agentId: string;
+  /** Workload identity (a DNS label), e.g. "team-roastery". */
+  runtimeId: string;
+  teamId: string;
   generation: number;
   namespace: string;
   preset: RuntimePreset;
+  /** Size of this generation: the preset's base plus every member's declared share. */
+  resources: { cpu: string; memory: string };
   apiUrl: string;
   storageRef: string;
   displayName: string;
-  jobRole: string;
-  /** Non-secret model connection metadata (null = none). Keys stay on the server. */
-  llm: RuntimeLlm | null;
 }
 
 /** The LLM credential an agent's runtime holds. */
@@ -60,13 +66,13 @@ export interface ExecStreams {
  */
 export interface RuntimeDriver {
   readonly kind: string;
-  listPods(namespace: string, agentId: string): Promise<PodInfo[]>;
-  /** Idempotently create the per-agent ServiceAccount, workspace volume and credential Secret. */
+  listPods(namespace: string, runtimeId: string): Promise<PodInfo[]>;
+  /** Idempotently create the runtime's ServiceAccount, workspace volume and credential Secret. */
   ensureIdentity(spec: RuntimeSpec, issueToken: () => Promise<string>): Promise<void>;
   createPod(spec: RuntimeSpec): Promise<string>;
   deletePod(namespace: string, name: string): Promise<void>;
   /** Remove credential + identity; workspace only when purgeWorkspace. */
-  teardown(namespace: string, agentId: string, purgeWorkspace: boolean): Promise<void>;
+  teardown(namespace: string, runtimeId: string, purgeWorkspace: boolean): Promise<void>;
   exec(namespace: string, pod: string, command: string[], streams: ExecStreams): Promise<{ close: () => void }>;
 }
 
@@ -77,8 +83,12 @@ export class NamespaceNotReady extends Error {
   }
 }
 
-export function podName(agentId: string, generation: number): string {
-  return `agent-${agentId}-g${generation}`;
+export function podName(runtimeId: string, generation: number): string {
+  return `agent-${runtimeId}-g${generation}`;
+}
+
+export function quantity(share: { cpu: number; memory: number }): { cpu: string; memory: string } {
+  return { cpu: `${share.cpu}m`, memory: `${share.memory}Mi` };
 }
 
 export type { Duplex };

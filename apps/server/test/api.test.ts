@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setup } from "./helpers.ts";
+import { llmEnv } from "../src/runtime/driver.ts";
 
 type Env = Awaited<ReturnType<typeof setup>>;
 let env: Env;
@@ -245,7 +246,7 @@ describe("tasks and runs", () => {
     const artifact = await env.app.inject({
       method: "GET",
       url: `/api/artifacts/${seen.body.artifacts.find((a: any) => a.name === "index.html").id}`,
-      headers: { authorization: `Bearer ${env.token(qaId)}` },
+      headers: { authorization: `Bearer ${await env.member(qaId)}` },
     });
     expect(artifact.body).toBe("<h1>Hello</h1>");
     expect(artifact.headers["content-security-policy"]).toBe("sandbox");
@@ -283,7 +284,9 @@ describe("tasks and runs", () => {
     await env.settle();
     const g2 = await gen(qaId);
     expect(g2).toBe(g1 + 1);
-    expect([...env.driver.pods.keys()].filter((p) => p.startsWith(`agent-${qaId}-`))).toEqual([`agent-${qaId}-g${g2}`]);
+    // Restarting one member does not replace its team's shared runtime.
+    const qaTeam = env.service.teamOf(await env.service.getAgentRow(qaId)).id;
+    expect([...env.driver.pods.values()].filter((p) => p.teamId === qaTeam)).toHaveLength(1);
 
     // The old runtime can no longer act.
     const stale = await env.call(t, "POST", `/api/runs/${claim.body.run.id}/complete`, { generation: g1, outcome: "succeeded" });
@@ -406,7 +409,14 @@ describe("per-agent credentials and model config", () => {
   let opsOnlyId: string;
   let bot: string;
 
-  const podOf = (agentId: string) => [...env.driver.pods.values()].find((p) => p.agentId === agentId)!;
+  /** What an agent's team runtime gets for it: its generation and non-secret model connection (env as the supervisor builds it). */
+  const memberOf = async (agentId: string) => {
+    const a = await env.service.getAgentRow(agentId);
+    const hello = await env.service.teamHello(env.service.teamOf(a).id);
+    const m = hello.members.find((x) => x.id === agentId);
+    const rt = await env.service.getRuntimeRow(agentId);
+    return { generation: rt.generation, llm: m?.llm ?? null, llmEnv: m?.llm ? llmEnv(m.llm, "http://test").plain : ({} as Record<string, string>), providerKey: null, providerWorkspaceId: m?.llm?.workspaceId ?? null };
+  };
 
   beforeAll(async () => {
     const r = await spawnUnder(env.token("lead-eng"), "engineer-claude-v1", "Claudia", "lead-eng", "claude-1");
@@ -456,15 +466,15 @@ describe("per-agent credentials and model config", () => {
   });
 
   it("the controller replaces the idle runtime with broker access and no provider key", async () => {
-    const before = podOf(bot);
+    const before = (await memberOf(bot));
     expect(before.providerKey).toBeNull();
     await env.settle();
     await env.settle();
-    const after = podOf(bot);
+    const after = (await memberOf(bot));
     expect(after.generation).toBe(before.generation + 1);
     expect(after.providerKey).toBeNull();
     // Other agents never receive it.
-    for (const p of env.driver.pods.values()) if (p.agentId !== bot) expect(p.providerKey).toBeNull();
+    for (const p of env.driver.pods.values()) expect(JSON.stringify(p.env)).not.toContain(KEY);
   });
 
   it("claims carry the agent's model settings, not the key", async () => {
@@ -480,12 +490,12 @@ describe("per-agent credentials and model config", () => {
     const sw = await env.call(env.token("lead-eng"), "PUT", `/api/agents/${bot}/config`, { credentialId: opsAll.body.id });
     expect(sw.body.config.model).toBeNull(); // old model is not on the new key
     await env.settle();
-    expect(podOf(bot).generation).toBe(g);
+    expect((await memberOf(bot)).generation).toBe(g);
     await env.call(env.token(bot), "POST", `/api/runs/${c.body.run.id}/complete`, { generation: g, outcome: "succeeded" });
     await env.settle();
     await env.settle();
-    expect(podOf(bot).generation).toBe(g + 1);
-    expect(podOf(bot).providerKey).toBeNull();
+    expect((await memberOf(bot)).generation).toBe(g + 1);
+    expect((await memberOf(bot)).providerKey).toBeNull();
   });
 
   it("revoking a key pulls it from the runtime", async () => {
@@ -494,7 +504,7 @@ describe("per-agent credentials and model config", () => {
     expect((await env.call(env.owner, "DELETE", `/api/credentials/${rows[0].credential_id}`)).status).toBe(204);
     await env.settle();
     await env.settle();
-    expect(podOf(bot).providerKey).toBeNull();
+    expect((await memberOf(bot)).providerKey).toBeNull();
     expect((await env.call(env.token("lead-eng"), "PUT", `/api/agents/${bot}/config`, { credentialId: rows[0].credential_id })).status).toBe(409);
   });
 
@@ -507,7 +517,7 @@ describe("per-agent credentials and model config", () => {
     });
     expect(r.status).toBe(202);
     await env.settle();
-    expect(podOf(r.body.agent.id).providerKey).toBeNull();
+    expect((await memberOf(r.body.agent.id)).providerKey).toBeNull();
   });
 
   it("an organization-level key needs a workspace ID, which reaches the runtime with the key", async () => {
@@ -528,8 +538,8 @@ describe("per-agent credentials and model config", () => {
     expect((await env.call(env.token("lead-eng"), "PUT", `/api/agents/${ws}/config`, { credentialId: r.body.id })).status).toBe(200);
     await env.settle();
     await env.settle();
-    expect(podOf(ws)).toMatchObject({ providerKey: null, providerWorkspaceId: "wrkspc_01AbC" });
-    expect(podOf(bot).providerWorkspaceId).toBeNull();
+    expect((await memberOf(ws))).toMatchObject({ providerKey: null, providerWorkspaceId: "wrkspc_01AbC" });
+    expect((await memberOf(bot)).providerWorkspaceId).toBeNull();
   });
 
   it("custom Anthropic gateways persist auth metadata, validate it, refresh models and reach the Claude runtime", async () => {
@@ -551,10 +561,10 @@ describe("per-agent credentials and model config", () => {
     const id = spawned.body.agent.id; await env.settle();
     expect((await env.call(env.token("lead-eng"), "PUT", `/api/agents/${id}/config`, { credentialId: created.body.id, model: "claude-haiku-5-5" })).status).toBe(200);
     await env.settle(); await env.settle();
-    expect(podOf(id).llmEnv).toMatchObject({ AGENTOWN_LLM_BROKER: "1", AGENTOWN_LLM_PROTOCOL: "anthropic" });
-    expect(JSON.stringify(podOf(id).llmEnv)).not.toContain(gateway.apiKey);
-    expect(podOf(id).llmEnv.ANTHROPIC_BASE_URL).toContain("/api/runtime/llm/anthropic");
-    expect(podOf(id).llmEnv.AGENTOWN_LLM_API_KEY).toBeUndefined();
+    expect((await memberOf(id)).llmEnv).toMatchObject({ AGENTOWN_LLM_BROKER: "1", AGENTOWN_LLM_PROTOCOL: "anthropic" });
+    expect(JSON.stringify((await memberOf(id)).llmEnv)).not.toContain(gateway.apiKey);
+    expect((await memberOf(id)).llmEnv.ANTHROPIC_BASE_URL).toContain("/api/runtime/llm/anthropic");
+    expect((await memberOf(id)).llmEnv.AGENTOWN_LLM_API_KEY).toBeUndefined();
     const sealed = (await env.db.query("SELECT ciphertext FROM credentials WHERE id=$1", [created.body.id])).rows[0].ciphertext;
     const connection = { revision: created.body.revision, baseUrl: gateway.baseUrl, protocol: "anthropic", authHeader: { name: "x-gateway-key", scheme: "raw" } };
     expect((await env.call(env.token("ceo"), "PUT", `/api/credentials/${created.body.id}/connection`, connection)).status).toBe(403);
@@ -565,7 +575,7 @@ describe("per-agent credentials and model config", () => {
     expect((await env.db.query("SELECT ciphertext FROM credentials WHERE id=$1", [created.body.id])).rows[0].ciphertext).toEqual(sealed);
     expect((await env.call(env.owner, "PUT", `/api/credentials/${created.body.id}/connection`, connection)).status).toBe(409);
     await env.settle(); await env.settle();
-    expect(podOf(id).llmEnv.AGENTOWN_LLM_AUTH_HEADER).toBeUndefined();
+    expect((await memberOf(id)).llmEnv.AGENTOWN_LLM_AUTH_HEADER).toBeUndefined();
   });
   it("OpenAI-compatible providers: preset endpoints, custom base URLs, and what reaches the runtime", async () => {
     const add = (body: Record<string, unknown>) => env.call(env.owner, "POST", "/api/credentials", body);
@@ -596,7 +606,7 @@ describe("per-agent credentials and model config", () => {
     expect((await env.call(t, "PUT", `/api/agents/${agent}/config`, { credentialId: oai.body.id, model: "openai-mini" })).status).toBe(200);
     await env.settle();
     await env.settle();
-    expect(podOf(agent).llmEnv).toEqual({
+    expect((await memberOf(agent)).llmEnv).toEqual({
       AGENTOWN_LLM_PROVIDER: "openai",
       AGENTOWN_LLM_PROTOCOL: "openai",
       AGENTOWN_LLM_BROKER: "1",
@@ -607,7 +617,7 @@ describe("per-agent credentials and model config", () => {
     expect((await env.call(t, "PUT", `/api/agents/${agent}/config`, { credentialId: local.body.id, model: "llama3.3" })).status).toBe(200);
     await env.settle();
     await env.settle();
-    expect(podOf(agent).llmEnv).toMatchObject({ AGENTOWN_LLM_PROVIDER: "custom", AGENTOWN_LLM_PROTOCOL: "openai", AGENTOWN_LLM_BROKER: "1" });
+    expect((await memberOf(agent)).llmEnv).toMatchObject({ AGENTOWN_LLM_PROVIDER: "custom", AGENTOWN_LLM_PROTOCOL: "openai", AGENTOWN_LLM_BROKER: "1" });
     const g = await gen(agent);
     await env.call(env.token(agent), "POST", "/api/runtime/heartbeat", { generation: g, state: "idle" });
     await env.call(t, "POST", "/api/tasks", { title: "think locally", assigneeAgentId: agent, spec: { kind: "prompt" } });

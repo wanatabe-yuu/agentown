@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { api } from "./api.ts";
 import { requestId } from "./requestId.ts";
 import { AgentConfigForm } from "./Credentials.tsx";
-import type { Agent, AgentDetail, Catalog, Credential, Snapshot, WorkState } from "./types.ts";
+import type { Agent, AgentDetail, Catalog, Credential, Snapshot, Team, WorkState } from "./types.ts";
 import { ago, describeScope, StatusPill } from "./ui.tsx";
 
 // xterm is only loaded when someone actually opens a terminal.
@@ -104,6 +104,10 @@ export function AgentPanel(p: Props) {
                   {agent.runtime?.workloadRef ?? "no workload"} · observed {ago(agent.runtime?.observedAt ?? null, p.now)}
                 </div>
               </div>
+              <div>Team</div>
+              <div>
+                <TeamRow agent={agent} snapshot={p.snapshot} canMove={!!can["agent.update"]} canResize={!!can["runtime.control"]} notify={p.notify} />
+              </div>
               <div>Lifecycle</div>
               <div>
                 {agent.lifecycleState} · intake {agent.acceptingWork ? "open" : "paused"} · desired {agent.desiredRuntime}
@@ -158,7 +162,7 @@ export function AgentPanel(p: Props) {
             )}
 
             {detail?.id === agent.id && detail.spawnTemplates.length > 0 && p.catalog && (
-              <SpawnForm manager={agent} catalog={p.catalog} templates={detail.spawnTemplates} notify={p.notify} />
+              <SpawnForm manager={agent} catalog={p.catalog} teams={p.snapshot.teams} templates={detail.spawnTemplates} notify={p.notify} />
             )}
           </>
         )}
@@ -215,10 +219,67 @@ export function AgentPanel(p: Props) {
   );
 }
 
-function SpawnForm({ manager, catalog: full, templates: allowed, notify }: { manager: Agent; catalog: Catalog; templates: string[]; notify: Props["notify"] }) {
+/** The member's team, its shared runtime, and the share of it this member declared. */
+function TeamRow({ agent, snapshot, canMove, canResize, notify }: { agent: Agent; snapshot: Snapshot; canMove: boolean; canResize: boolean; notify: Props["notify"] }) {
+  const team = snapshot.teams.find((t) => t.id === agent.teamId);
+  const [editing, setEditing] = useState(false);
+  const [cpu, setCpu] = useState(`${agent.resources.cpu}m`);
+  const [memory, setMemory] = useState(`${agent.resources.memory}Mi`);
+  const choices = snapshot.teams.filter((t) => t.departmentId === agent.departmentId);
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api("PUT", `/api/agents/${agent.id}/resources`, { cpu, memory });
+      notify(`${agent.displayName}: ${cpu} / ${memory}; the team runtime resizes when it is idle`, "info");
+      setEditing(false);
+    } catch (err) {
+      notify(`Resources: ${(err as Error).message}`, "error");
+    }
+  };
+  const move = async (teamId: string) => {
+    try {
+      await api("PUT", `/api/agents/${agent.id}/team`, { teamId });
+      notify(`${agent.displayName} moved to ${snapshot.teams.find((t) => t.id === teamId)?.name}`, "info");
+    } catch (err) {
+      notify(`Move: ${(err as Error).message}`, "error");
+    }
+  };
+  return (
+    <>
+      {canMove && choices.length > 1 ? (
+        <select value={agent.teamId} onChange={(e) => void move(e.target.value)} aria-label="Team">
+          {choices.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      ) : (
+        <b>{team?.name ?? agent.teamId}</b>
+      )}{" "}
+      {team?.runtime && <span className="muted small">runtime <StatusPill state={team.runtime.state} /> g{team.runtime.generation}{team.runtime.resources ? ` · ${team.runtime.resources.cpu}m / ${team.runtime.resources.memory}Mi for ${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}` : ""}</span>}
+      {team?.runtime?.detail && <div className="muted small">{team.runtime.detail}</div>}
+      <div className="muted small">
+        Share: {agent.resources.cpu}m CPU · {agent.resources.memory}Mi{agent.resources.declared ? "" : " (default)"}
+        {canResize && !editing && <> · <button type="button" className="link" onClick={() => setEditing(true)}>change</button></>}
+      </div>
+      {editing && (
+        <form className="form-row" onSubmit={save}>
+          <input value={cpu} onChange={(e) => setCpu(e.target.value)} aria-label="CPU (e.g. 250m)" size={7} />
+          <input value={memory} onChange={(e) => setMemory(e.target.value)} aria-label="Memory (e.g. 256Mi)" size={7} />
+          <button type="submit">Save</button>
+          <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+        </form>
+      )}
+    </>
+  );
+}
+
+function SpawnForm({ manager, catalog: full, teams, templates: allowed, notify }: { manager: Agent; catalog: Catalog; teams: Team[]; templates: string[]; notify: Props["notify"] }) {
   const catalog = { ...full, templates: full.templates.filter((t) => allowed.includes(t.id)) };
   const [template, setTemplate] = useState(catalog.templates.find((t) => t.jobRole === "engineer")?.id ?? catalog.templates[0]!.id);
   const [name, setName] = useState("");
+  const choices = teams.filter((t) => t.departmentId === manager.departmentId);
+  const [teamId, setTeamId] = useState(manager.teamId);
+  const memberDefault = full.presets.find((p) => p.id === full.templates.find((t) => t.id === template)?.runtimePreset)?.member;
+  const [cpu, setCpu] = useState(memberDefault?.cpu ?? "100m");
+  const [memory, setMemory] = useState(memberDefault?.memory ?? "192Mi");
   const [creds, setCreds] = useState<Credential[]>([]);
   const [credentialId, setCredentialId] = useState("");
   const [model, setModel] = useState("");
@@ -237,6 +298,8 @@ function SpawnForm({ manager, catalog: full, templates: allowed, notify }: { man
         templateId: template,
         displayName: name || "New hire",
         reportsToAgentId: manager.id,
+        teamId,
+        resources: { cpu, memory },
         idempotencyKey: `ui-${requestId()}`,
         ...(usesModel && credentialId ? { config: { credentialId, model: model || null } } : {}),
       });
@@ -261,6 +324,14 @@ function SpawnForm({ manager, catalog: full, templates: allowed, notify }: { man
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" maxLength={40} aria-label="Display name" />
         <button type="submit">Spawn</button>
       </div>
+      <div className="form-row">
+        <select value={teamId} onChange={(e) => setTeamId(e.target.value)} aria-label="Team">
+          {choices.map((t) => <option key={t.id} value={t.id}>team: {t.name}</option>)}
+        </select>
+        <input value={cpu} onChange={(e) => setCpu(e.target.value)} required aria-label="CPU this member adds (e.g. 100m)" title="CPU this member adds to its team runtime" size={7} />
+        <input value={memory} onChange={(e) => setMemory(e.target.value)} required aria-label="Memory this member adds (e.g. 192Mi)" title="Memory this member adds to its team runtime" size={7} />
+      </div>
+      <p className="muted small">The new member joins the team's shared runtime right away; the runtime grows by this share when the team is next idle.</p>
       {usesModel && (
         <div className="form-row">
           <select value={credentialId} onChange={(e) => { setCredentialId(e.target.value); setModel(""); }} aria-label="API key">

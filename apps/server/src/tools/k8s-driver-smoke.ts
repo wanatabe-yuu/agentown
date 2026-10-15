@@ -13,16 +13,16 @@ const config = parseOrgConfig(readFileSync(resolve(import.meta.dirname, "../../.
 const driver = new KubernetesDriver(process.env.AGENTOWN_KUBECONFIG);
 const agentId = `smoke-${Date.now().toString(36)}`;
 const spec = {
-  agentId,
+  runtimeId: agentId,
+  teamId: "smoke",
   generation: 1,
   namespace: "agentown-eng",
-  // Exercise the hardest shape: dedicated-node placement + a per-agent provider Secret.
+  // Exercise the hardest shape: dedicated-node placement.
   preset: config.runtimeCatalog.find((p) => p.placement === "dedicated-node") ?? config.runtimeCatalog[0]!,
+  resources: { cpu: "300m", memory: "320Mi" },
   apiUrl: "http://127.0.0.1:8080",
   storageRef: `agent-${agentId}-workspace`,
   displayName: "Smoke",
-  jobRole: "engineer",
-  llm: { provider: "anthropic", workspaceId: "wrkspc_smoke", baseUrl: null },
 };
 let issued = 0;
 await driver.ensureIdentity(spec, async () => {
