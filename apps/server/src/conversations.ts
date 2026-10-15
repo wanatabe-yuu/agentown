@@ -1,4 +1,4 @@
-import { type Actor, authorize, teamsOf } from "@agentown/core";
+import { type Actor, authorize } from "@agentown/core";
 import type { AgentRow, Service } from "./service.ts";
 import { canDecide } from "./proposals.ts";
 import { badRequest, deny, notFound, redactLine } from "./util.ts";
@@ -31,16 +31,16 @@ const EVENT_TYPES = ["task.created", "task.assigned", "task.status", "run.starte
 
 async function teamMembers(svc: Service, teamId: string): Promise<AgentRow[]> {
   const { rows } = await svc.db.query<AgentRow>("SELECT * FROM agents WHERE org_id=$1 AND lifecycle_state <> 'retired' ORDER BY created_at", [svc.orgId]);
-  return rows.filter((a) => svc.teamOf(a).id === teamId);
+  return rows.filter((a) => svc.kernel.rules.teamOf(a).id === teamId);
 }
 
 /** Who may read/post in a team's channel: its members, the owner, and anyone who can see one of its members. */
 async function requireTeamAccess(svc: Service, actor: Actor, teamId: string) {
-  if (!teamsOf(svc.config).some((t) => t.id === teamId)) throw notFound("team");
+  if (!svc.kernel.rules.team(teamId)) throw notFound("team");
   const members = await teamMembers(svc, teamId);
   if (actor.kind === "agent" && members.some((m) => m.id === actor.id)) return members;
   if (actor.kind === "human" && actor.owner) return members;
-  const policy = await svc.loadPolicy();
+  const policy = await svc.kernel.permissions.load();
   if (members.some((m) => authorize(actor, "org.view", { agentId: m.id }, policy).allowed)) return members;
   throw deny("not part of this team");
 }
@@ -99,9 +99,9 @@ export async function postTeamMessage(svc: Service, actor: Actor, teamId: string
 
 /** Everything else: reasoning, tool calls, proposals and events, newest first, limited to what the caller may see. */
 export async function feed(svc: Service, actor: Actor, opts: { kind?: FeedKind; teamId?: string; agentId?: string; limit?: number }) {
-  const policy = await svc.loadPolicy();
+  const policy = await svc.kernel.permissions.load();
   const { rows: agents } = await svc.db.query<AgentRow>("SELECT * FROM agents WHERE org_id=$1", [svc.orgId]);
-  const teamOf = new Map(agents.map((a) => [a.id, svc.teamOf(a).id]));
+  const teamOf = new Map(agents.map((a) => [a.id, svc.kernel.rules.teamOf(a).id]));
   const visible = agents.filter((a) => authorize(actor, "org.view", { agentId: a.id }, policy).allowed);
   const logsOk = new Set(visible.filter((a) => authorize(actor, "runtime.logs", { agentId: a.id }, policy).allowed).map((a) => a.id));
   const inScope = (id: string | null) => !!id && (!opts.agentId || id === opts.agentId) && (!opts.teamId || teamOf.get(id) === opts.teamId);

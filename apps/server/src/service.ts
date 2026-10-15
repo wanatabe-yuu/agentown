@@ -19,7 +19,6 @@ import {
   apiProtocol,
   defaultAuthHeader,
   authHeaderSchema,
-  OrgGraph,
   worldAssets,
   type World,
   PLAYBOOK_ARG_NAME,
@@ -47,8 +46,11 @@ import { AssetRejected, type AssetKind, ORG_QUOTA, sniffAsset } from "./assets.t
 import type { AgentEventRow, EventBus } from "./bus.ts";
 import { type Db, type Queryable, tx } from "./db.ts";
 import { type ModelLister, normalizeBaseUrl, PROVIDER_INFO, PROVIDERS, type Provider, providerBaseUrl, providerInfo, WORKSPACE_ID_PATTERN } from "./providers.ts";
-import type { RuntimeLlm } from "./runtime/driver.ts";
 import { openProposal, recordProposal } from "./proposals.ts";
+import { type CredentialRow, type GrantRow, Kernel, type LoadedPolicy, MEMBERS_SQL, type ModelConnection, parseShare, type Share, toGrant } from "./kernel/index.ts";
+import type { Permissions } from "./kernel/permissions.ts";
+
+export type { LoadedPolicy, Share };
 import type { SecretBox } from "./secrets.ts";
 import {
   ApiError,
@@ -101,10 +103,6 @@ export interface AgentRow {
 }
 
 /** Resource share in millicores / MiB. */
-export interface Share {
-  cpu: number;
-  memory: number;
-}
 
 /** The one runtime a team shares. */
 export interface TeamRuntimeRow {
@@ -123,24 +121,6 @@ export interface TeamRuntimeRow {
   applied_resources: Share | null;
 }
 
-interface CredentialRow {
-  id: string;
-  name: string;
-  provider: Provider;
-  ciphertext: Buffer;
-  key_hint: string;
-  workspace_id: string | null;
-  base_url: string | null;
-  api_protocol: ApiProtocol | null;
-  auth_header: AuthHeader | null;
-  models: string[];
-  departments: string[] | null;
-  revision: number;
-  created_by: string;
-  created_at: Date;
-  models_refreshed_at: Date;
-  revoked_at: Date | null;
-}
 
 export interface RuntimeRow {
   agent_id: string;
@@ -180,19 +160,6 @@ export interface TaskRow {
   updated_at: Date;
 }
 
-interface GrantRow {
-  id: string;
-  principal_id: string;
-  action: Action;
-  scope: Scope;
-  constraints: GrantConstraints;
-  delegable: boolean;
-  issuer: string;
-  parent_grant_id: string | null;
-  expires_at: Date | null;
-  revoked_at: Date | null;
-  revision: number;
-}
 
 interface Ctx {
   c: pg.PoolClient;
@@ -207,9 +174,6 @@ interface EventInput {
   payload?: Record<string, unknown>;
 }
 
-export interface LoadedPolicy extends PolicyContext {
-  revision: number;
-}
 
 export function namespaceFor(departmentId: string): string {
   return `agentown-${departmentId}`;
@@ -231,27 +195,8 @@ export interface UserRow {
   created_at: Date;
 }
 
-/** Members of $1; disabled when either the membership or the whole account is. */
-const MEMBERS_SQL = `
-  SELECT u.id, u.display_name, m.role_id, m.is_owner, COALESCE(m.disabled_at, u.disabled_at) AS disabled_at, m.created_by, m.created_at
-    FROM org_members m JOIN users u ON u.id = m.user_id
-   WHERE m.org_id = $1`;
 
-function toGrant(r: GrantRow): Grant {
-  return {
-    id: r.id,
-    principalId: r.principal_id,
-    action: r.action,
-    scope: r.scope,
-    constraints: r.constraints ?? {},
-    delegable: r.delegable,
-    issuer: r.issuer,
-    parentGrantId: r.parent_grant_id,
-    expiresAt: r.expires_at ? r.expires_at.toISOString() : null,
-    revokedAt: r.revoked_at ? r.revoked_at.toISOString() : null,
-    revision: r.revision,
-  };
-}
+
 
 /**
  * Organization service: every mutation goes through here, is authorized against
@@ -269,7 +214,12 @@ export class Service {
     readonly orgId: string,
     /** Kubernetes namespace for this org's new runtimes; null = one per department (orgs from before multi-org). */
     readonly runtimeNamespace: string | null = null,
-  ) {}
+  ) {
+    this.kernel = new Kernel(db, config, orgId, secrets);
+  }
+
+  /** Rules, identity, resources and permissions of this organization. */
+  readonly kernel: Kernel;
 
   // ---------------------------------------------------------------- plumbing
 
@@ -298,109 +248,33 @@ export class Service {
     });
   }
 
-  async audit(
-    q: Queryable,
-    actor: Actor | string,
-    action: string,
-    target: string | null,
-    allowed: boolean,
-    reason: string,
-    detail: Record<string, unknown> = {},
-    revision?: number,
-  ): Promise<void> {
-    await q.query(
-      `INSERT INTO audit_events(org_id, actor, action, target, allowed, reason, policy_revision, detail)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [
-        this.orgId,
-        typeof actor === "string" ? actor : actorRef(actor),
-        action,
-        target,
-        allowed,
-        reason,
-        revision ?? null,
-        JSON.stringify(sanitize(detail)),
-      ],
-    );
+  audit(...args: Parameters<Permissions["audit"]>): Promise<void> {
+    return this.kernel.permissions.audit(...args);
   }
 
-  private async bumpRevision(q: Queryable): Promise<void> {
-    await q.query("UPDATE organizations SET policy_revision = policy_revision + 1 WHERE id=$1", [this.orgId]);
+  private bumpRevision(q: Queryable): Promise<void> {
+    return this.kernel.permissions.bumpRevision(q);
   }
 
-  async loadPolicy(q: Queryable = this.db): Promise<LoadedPolicy> {
-    // Sequential on purpose: q may be a single transaction client.
-    const agents = await q.query<{ id: string; department_id: string; reports_to: string | null; lifecycle_state: AgentNode["lifecycleState"] }>(
-      "SELECT id, department_id, reports_to, lifecycle_state FROM agents WHERE org_id=$1",
-      [this.orgId],
-    );
-    const grants = await q.query<GrantRow>("SELECT * FROM grants WHERE org_id=$1 AND revoked_at IS NULL", [this.orgId]);
-    const org = await q.query<{ policy_revision: string }>("SELECT policy_revision FROM organizations WHERE id=$1", [this.orgId]);
-    return {
-      graph: new OrgGraph(
-        agents.rows.map((a) => ({
-          id: a.id,
-          departmentId: a.department_id,
-          reportsToAgentId: a.reports_to,
-          lifecycleState: a.lifecycle_state,
-        })),
-      ),
-      grants: grants.rows.map(toGrant),
-      revision: Number(org.rows[0]?.policy_revision ?? 0),
-    };
+  loadPolicy(q: Queryable = this.db): Promise<LoadedPolicy> {
+    return this.kernel.permissions.load(q);
   }
 
   /** Authorize or throw 403. Every decision on a mutating action is audited, denials included. */
-  async require(
-    actor: Actor,
-    action: Action,
-    target: Target,
-    opts: { policy?: LoadedPolicy; q?: Queryable; auditAs?: string; detail?: Record<string, unknown> } = {},
-  ): Promise<LoadedPolicy> {
-    const policy = opts.policy ?? (await this.loadPolicy(opts.q));
-    const d = authorize(actor, action, target, policy);
-    const mutating = !action.endsWith(".view") && action !== "runtime.logs";
-    if (mutating || !d.allowed) {
-      // Denials are written outside the caller's transaction, which is about to roll back.
-      await this.audit(
-        d.allowed ? (opts.q ?? this.db) : this.db,
-        actor,
-        opts.auditAs ?? action,
-        target.agentId ?? target.projectId ?? null,
-        d.allowed,
-        d.reason,
-        { ...opts.detail, templateId: target.templateId },
-        policy.revision,
-      );
-    }
-    if (!d.allowed) throw deny(`${action} denied: ${d.reason}`);
-    return policy;
+  /** Authorize or throw 403; audited by the kernel. */
+  require(...args: Parameters<Permissions["require"]>): Promise<LoadedPolicy> {
+    return this.kernel.permissions.require(...args);
   }
 
   // ---------------------------------------------------------------- tokens
 
-  async issueToken(q: Queryable, kind: "human" | "agent", principalId: string, label: string, rotate: boolean): Promise<string> {
-    if (rotate) {
-      await q.query("UPDATE tokens SET revoked_at = now() WHERE principal_kind=$1 AND principal_id=$2 AND revoked_at IS NULL", [
-        kind,
-        principalId,
-      ]);
-    }
-    const token = `${kind === "human" ? "aho" : "aag"}_${newSecret()}`;
-    await q.query("INSERT INTO tokens(hash, principal_kind, principal_id, label) VALUES ($1,$2,$3,$4)", [
-      sha256(token),
-      kind,
-      principalId,
-      label,
-    ]);
-    return token;
+  issueToken(q: Queryable, kind: "human" | "agent", principalId: string, label: string, rotate: boolean): Promise<string> {
+    return this.kernel.identity.issueToken(q, kind, principalId, label, rotate);
   }
 
   /** Called by the runtime controller when it (re)creates an agent's credential Secret. */
-  async issueAgentToken(agentId: string): Promise<string> {
-    const token = await this.issueToken(this.db, "agent", agentId, "runtime", true);
-    await this.audit(this.db, "system:controller", "token.issue", agentId, true, "runtime credential (re)created");
-    return token;
+  issueAgentToken(agentId: string): Promise<string> {
+    return this.kernel.identity.issueAgentToken(agentId);
   }
 
   // ---------------------------------------------------------------- bootstrap
@@ -724,14 +598,11 @@ export class Service {
 
   /** The team an agent works in: its own, or its department's default team. */
   resolveTeam(departmentId: string, teamId: string | null): TeamConfig {
-    const teams = teamsOf(this.config);
-    const t = (teamId && teams.find((x) => x.id === teamId && x.department === departmentId)) || teams.find((x) => x.id === departmentId);
-    if (!t) throw badRequest(`department ${departmentId} has no team`);
-    return t;
+    return this.kernel.rules.resolveTeam(departmentId, teamId);
   }
 
   teamOf(a: Pick<AgentRow, "department_id" | "team_id">): TeamConfig {
-    return this.resolveTeam(a.department_id, a.team_id);
+    return this.kernel.rules.teamOf(a);
   }
 
   teamNamespace(t: TeamConfig): string {
@@ -740,7 +611,7 @@ export class Service {
 
   /** A member's declared share of its team runtime. */
   memberShare(a: Pick<AgentRow, "cpu_millis" | "memory_mib">, preset: RuntimePreset): Share {
-    return { cpu: a.cpu_millis ?? cpuMillis(preset.member.cpu), memory: a.memory_mib ?? memoryMib(preset.member.memory) };
+    return this.kernel.resources.memberShare(a, preset);
   }
 
   /**
@@ -829,13 +700,8 @@ export class Service {
   }
 
   /** Runtime token for a team (the runtime then acts as each member with x-agentown-member). */
-  async issueTeamToken(teamId: string): Promise<string> {
-    const principal = `${this.orgId}/${teamId}`;
-    await this.db.query("UPDATE tokens SET revoked_at=now() WHERE principal_kind='runtime' AND principal_id=$1 AND revoked_at IS NULL", [principal]);
-    const token = `art_${newSecret()}`;
-    await this.db.query("INSERT INTO tokens(hash, principal_kind, principal_id, label) VALUES ($1,'runtime',$2,'team runtime')", [sha256(token), principal]);
-    await this.audit(this.db, "system:controller", "token.issue", principal, true, "team runtime credential (re)created");
-    return token;
+  issueTeamToken(teamId: string): Promise<string> {
+    return this.kernel.identity.issueRuntimeToken(teamId);
   }
 
   /** Mark a member's per-agent pod as gone (it now runs inside its team runtime). */
@@ -1287,10 +1153,8 @@ export class Service {
     };
   }
 
-  private async getCredentialRow(id: string, q: Queryable = this.db): Promise<CredentialRow> {
-    const { rows } = await q.query<CredentialRow>("SELECT * FROM credentials WHERE id=$1 AND org_id=$2", [id, this.orgId]);
-    if (!rows[0]) throw notFound("credential");
-    return rows[0];
+  private getCredentialRow(id: string, q: Queryable = this.db): Promise<CredentialRow> {
+    return this.kernel.resources.credential(id, q);
   }
 
   /** Server-only provider target; never return this from an HTTP route or tool. */
@@ -1298,7 +1162,7 @@ export class Service {
     this.requireOrgOwner(actor, "owner.chat");
     const c = await this.getCredentialRow(id);
     if (c.revoked_at) throw conflict("revoked", "credential is revoked");
-    return { provider: c.provider, apiKey: this.secrets.open(c.ciphertext), workspaceId: c.workspace_id,
+    return { provider: c.provider, apiKey: this.kernel.resources.openKey(c), workspaceId: c.workspace_id,
       baseUrl: providerBaseUrl(c.provider, c.base_url), protocol: apiProtocol(c.provider, c.api_protocol),
       authHeader: c.auth_header ?? defaultAuthHeader(apiProtocol(c.provider, c.api_protocol)), revision: c.revision, models: c.models };
   }
@@ -1392,7 +1256,7 @@ export class Service {
           id,
           input.name.slice(0, 60),
           input.provider,
-          this.secrets.seal(apiKey),
+          this.kernel.resources.sealKey(apiKey),
           apiKey ? "stored" : "",
           workspaceId,
           baseUrl,
@@ -1413,7 +1277,7 @@ export class Service {
     await this.requireCredentialManage(actor, "credential.refresh", id);
     const cred = await this.getCredentialRow(id);
     if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
-    const models = await this.discoverModels(cred.provider, this.secrets.open(cred.ciphertext), cred.workspace_id, cred.base_url,
+    const models = await this.discoverModels(cred.provider, this.kernel.resources.openKey(cred), cred.workspace_id, cred.base_url,
       apiProtocol(cred.provider, cred.api_protocol), cred.auth_header ?? defaultAuthHeader(apiProtocol(cred.provider, cred.api_protocol)));
     await this.db.query("UPDATE credentials SET models=$2, models_refreshed_at=now() WHERE id=$1 AND org_id=$3", [id, models, this.orgId]);
     return this.presentCredential(await this.getCredentialRow(id));
@@ -1433,7 +1297,7 @@ export class Service {
     if (!auth.success) throw badRequest("Invalid authentication header.");
     const workspaceId = input.workspaceId?.trim() || null;
     if (workspaceId && (input.protocol !== "anthropic" || !WORKSPACE_ID_PATTERN.test(workspaceId))) throw badRequest("A workspace ID needs Anthropic protocol and must look like wrkspc_….");
-    const models = await this.discoverModels("custom", this.secrets.open(cred.ciphertext), workspaceId, baseUrl, input.protocol, auth.data);
+    const models = await this.discoverModels("custom", this.kernel.resources.openKey(cred), workspaceId, baseUrl, input.protocol, auth.data);
     return this.withTx(async ctx => {
       const updated = await ctx.c.query(`UPDATE credentials SET base_url=$2,api_protocol=$3,auth_header=$4,workspace_id=$5,models=$6,models_refreshed_at=now(),revision=revision+1
         WHERE id=$1 AND org_id=$7 AND revision=$8 AND revoked_at IS NULL RETURNING id`, [id, baseUrl, input.protocol, JSON.stringify(auth.data), workspaceId, models, this.orgId, input.revision]);
@@ -1515,20 +1379,12 @@ export class Service {
   }
 
   /** Controller-side: non-secret broker routing metadata, tagged with a revision. */
-  async runtimeCredential(agentId: string): Promise<{ rev: string; llm: RuntimeLlm | null }> {
+  async runtimeCredential(agentId: string): Promise<{ rev: string; llm: ModelConnection | null }> {
     const a = await this.getAgentRow(agentId);
     if (!a.credential_id) return { rev: "none", llm: null };
     const cred = await this.getCredentialRow(a.credential_id);
     if (cred.revoked_at) return { rev: `${cred.id}:revoked`, llm: null };
-    return {
-      rev: `broker-v1:${cred.id}:${cred.revision}`,
-      llm: {
-        provider: cred.provider,
-        workspaceId: cred.workspace_id,
-        baseUrl: providerBaseUrl(cred.provider, cred.base_url),
-        ...(cred.provider === "custom" ? { protocol: apiProtocol(cred.provider, cred.api_protocol), authHeader: cred.auth_header ?? defaultAuthHeader(apiProtocol(cred.provider, cred.api_protocol)) } : {}),
-      },
-    };
+    return { rev: `broker-v1:${cred.id}:${cred.revision}`, llm: this.kernel.resources.connection(cred) };
   }
 
   /** Private server target for the caller's current generation; never a public response. */
@@ -1547,15 +1403,13 @@ export class Service {
     const cred = await this.getCredentialRow(credentialId);
     if (cred.revoked_at) throw conflict("revoked", "credential is revoked");
     if (cred.departments && !cred.departments.includes(agent.department_id)) throw deny("Runtime credential is not available to this department.");
-    return { provider: cred.provider, apiKey: this.secrets.open(cred.ciphertext), workspaceId: cred.workspace_id,
+    return { provider: cred.provider, apiKey: this.kernel.resources.openKey(cred), workspaceId: cred.workspace_id,
       baseUrl: providerBaseUrl(cred.provider, cred.base_url), protocol: apiProtocol(cred.provider, cred.api_protocol),
       authHeader: cred.auth_header ?? defaultAuthHeader(apiProtocol(cred.provider, cred.api_protocol)), models: cred.models, model: snapshot ? snapshot.model : agent.model, contextLimit: snapshot ? snapshot.contextLimit : agent.context_limit };
   }
 
-  async desiredSecretRev(a: AgentRow, q: Queryable = this.db): Promise<string> {
-    if (!a.credential_id) return "none";
-    const cred = await this.getCredentialRow(a.credential_id, q);
-    return cred.revoked_at ? `${cred.id}:revoked` : `broker-v1:${cred.id}:${cred.revision}`;
+  desiredSecretRev(a: AgentRow, q: Queryable = this.db): Promise<string> {
+    return this.kernel.resources.credentialRevision(a.credential_id, q);
   }
 
   async markSecretApplied(agentId: string, generation: number, rev: string) {
@@ -2340,9 +2194,8 @@ export class Service {
 
   // ---------------------------------------------------------------- people
 
-  async userActive(id: string, q: Queryable = this.db): Promise<boolean> {
-    const { rows } = await q.query(`${MEMBERS_SQL} AND u.id = $2`, [this.orgId, id]);
-    return !!rows[0] && !rows[0].disabled_at;
+  userActive(id: string, q: Queryable = this.db): Promise<boolean> {
+    return this.kernel.identity.userActive(id, q);
   }
 
   /** Who am I and what may I do at the organization level: drives which controls the UI shows. */
@@ -2588,11 +2441,8 @@ export class Service {
   }
 
   /** Rebuild an actor from its audit reference; a person's owner flag is read from their current membership. */
-  async parseActorRef(ref: string): Promise<Actor> {
-    const [kind, id] = ref.split(":") as [string, string];
-    if (kind !== "human") return { kind: "agent", id };
-    const { rows } = await this.db.query("SELECT is_owner FROM org_members WHERE org_id=$1 AND user_id=$2", [this.orgId, id]);
-    return { kind: "human", id, owner: !!rows[0]?.is_owner };
+  parseActorRef(ref: string): Promise<Actor> {
+    return this.kernel.identity.parseActorRef(ref);
   }
 
   private async terminalStillAllowed(actor: Actor, agentId: string, generation: number, q: Queryable): Promise<string | null> {
@@ -2644,18 +2494,6 @@ function rank(p: RuntimePreset): number {
 }
 
 /** A declared runtime share ("250m", "256Mi") in millicores / MiB, bounded. */
-function parseShare(input?: { cpu?: string; memory?: string }): Partial<Share> {
-  const out: Partial<Share> = {};
-  try {
-    if (input?.cpu) out.cpu = cpuMillis(input.cpu);
-    if (input?.memory) out.memory = memoryMib(input.memory);
-  } catch (err) {
-    throw badRequest((err as Error).message);
-  }
-  if (out.cpu !== undefined && (out.cpu < 10 || out.cpu > 64000)) throw badRequest("cpu must be between 10m and 64");
-  if (out.memory !== undefined && (out.memory < 32 || out.memory > 262144)) throw badRequest("memory must be between 32Mi and 256Gi");
-  return out;
-}
 
 function emptyConfig(): AgentConfig {
   return { credentialId: null, model: null, effort: null, instructions: "", maxTurns: 40, contextLimit: null };

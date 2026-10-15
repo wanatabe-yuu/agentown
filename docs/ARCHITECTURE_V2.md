@@ -1,6 +1,6 @@
 # Agentown v2 — Kiến trúc Team Runtime
 
-Trạng thái: **đã triển khai** Team runtime, Hội thoại, Proposal Engine và Capability System (mục 0). World Kernel (P0) vẫn là thiết kế: quyền, danh tính và tài nguyên hiện vẫn nằm trong `Service`.
+Trạng thái: **đã triển khai đủ 5 khối** (mục 0): World Kernel, Team runtime, Capability System, Proposal Engine, World Interface (3D + Hội thoại).
 
 ## 0. Đã triển khai
 
@@ -17,6 +17,7 @@ Trạng thái: **đã triển khai** Team runtime, Hội thoại, Proposal Engin
 | Proposal Engine | Bảng `proposals` (migration 19): kind, proposer, subject, payload, `source` (bản ghi gốc, duy nhất), status, evaluation, approvers, decisions, receipt. Phần code sở hữu thay đổi tự mở và đóng proposal: hành động chat chờ duyệt (`chat_action`), kết quả chờ review (`task`), đổi cấu hình (`agent_config`, ghi luôn trạng thái applied kèm receipt), gọi qua gateway (`gateway`). Quyết định qua `POST /proposals/:id/decide`; handler của từng nguồn kiểm quyền và thực hiện, nên duyệt ở chat, ở review hay ở hộp Đề xuất đều cho cùng một kết quả. | `apps/server/src/proposals.ts` |
 | Capability System | **Registry**: 17 tool tổ chức (cùng thao tác Service mà UI dùng), `team_say`, `bash` (runtime-local). **Discovery**: `GET /tools` chỉ trả tool mà người gọi có quyền, kèm JSON Schema. **Gateway**: `POST /tools/:id/invoke` validate → kiểm quyền → hỏi quy tắc duyệt → chạy → audit. Lệnh quan trọng của người không phải owner thành proposal `pending` (HTTP 202); owner duyệt thì lệnh chạy với quyền của người đề xuất. Agent dùng `agentown tools` / `agentown tool ID '{…}'` / `agentown proposals`. Không phụ thuộc runtime nào. | `apps/server/src/capabilities.ts` |
 | Duyệt trong UI | Khác → Đề xuất đọc từ `proposals`, có nút Duyệt / Từ chối cho người được quyết định. | `apps/web/src/Conversations.tsx` |
+| World Kernel | `apps/server/src/kernel/`: **Rules** (department, team, template), **Identity** (token người/agent/runtime, principal, membership), **Resources** (credential: niêm phong, mở chỉ cho broker; preset; phần CPU/RAM của member), **Permissions** (grant, graph, `require`/authorize, audit). `Service` giữ nghiệp vụ (task, run, chat…) và ủy quyền sang `service.kernel`; Capability System và hội thoại gọi thẳng kernel. Kernel không import tầng nào phía trên. `Service` không còn import gì từ `runtime/`. | `apps/server/test/boundaries.test.ts` khoá các ranh giới này |
 | Cập nhật image | `node server/tools/roll-runtimes.mjs` thay runtime của mọi team đang rảnh (team đang bận được bỏ qua). | `apps/server/src/tools/roll-runtimes.ts` |
 
 Giới hạn hiện tại:

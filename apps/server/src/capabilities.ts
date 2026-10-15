@@ -1,4 +1,4 @@
-import { type Action, type Actor, authorize } from "@agentown/core";
+import type { Action, Actor } from "@agentown/core";
 import { z } from "zod";
 import { needsApproval } from "./chat/tools.ts";
 import type { ChatTool, ToolContext } from "./chat/types.ts";
@@ -119,15 +119,14 @@ export class CapabilityGateway {
 
   /** Discovery: what this caller may use, with input schemas. */
   async discover(service: Service, actor: Actor) {
-    const policy = await service.loadPolicy();
-    const { rows } = await service.db.query<{ id: string }>("SELECT id FROM agents WHERE org_id=$1 AND lifecycle_state <> 'retired'", [service.orgId]);
+    const { permissions, rules } = service.kernel;
+    const policy = await permissions.load();
+    const where = { agentIds: [...policy.graph.agents.values()].filter((a) => a.lifecycleState !== "retired").map((a) => a.id), templateIds: rules.config.agentTemplates.map((t) => t.id) };
     const has = (perm: CapabilityDescriptor["permission"]) => {
       if (perm === null) return true;
       if (actor.kind === "human" && actor.owner) return true;
       if (perm === "owner") return false;
-      // Hiring is checked per job template; anything else per agent (or org-wide).
-      const targets = perm === "agent.spawn" ? service.config.agentTemplates.map((t) => ({ templateId: t.id })) : [{}];
-      return targets.some((t) => authorize(actor, perm, t, policy).allowed || rows.some((a) => authorize(actor, perm, { ...t, agentId: a.id }, policy).allowed));
+      return permissions.allowedAnywhere(actor, perm, policy, where);
     };
     return this.registry
       .filter((d) => has(d.permission))
@@ -144,7 +143,7 @@ export class CapabilityGateway {
     const parsed = d.input.safeParse(rawArgs ?? {});
     if (!parsed.success) throw badRequest(z.prettifyError(parsed.error));
     if (!(await this.discover(service, actor)).some((c) => c.id === id)) {
-      await service.audit(service.db, actor, "capability.invoke", id, false, "capability not available to caller");
+      await service.kernel.permissions.audit(service.db, actor, "capability.invoke", id, false, "capability not available to caller");
       throw deny(`${id} is not available to you`);
     }
     const owner = actor.kind === "human" && actor.owner;
@@ -157,7 +156,7 @@ export class CapabilityGateway {
         source: { type: "gateway", id: newId("cg") }, approvers: { kind: "owner" },
         evaluation: [{ rule: d.approval === "always" ? "always" : `effect:${d.effect}`, verdict: "require_approval", reason: "this call changes the organization and needs the owner's approval" }],
       });
-      await service.audit(service.db, actor, "capability.propose", id, true, "awaiting approval", { proposalId: p.id });
+      await service.kernel.permissions.audit(service.db, actor, "capability.propose", id, true, "awaiting approval", { proposalId: p.id });
       return { status: "pending" as const, proposalId: p.id };
     }
     const result = await this.run(service, actor, d, parsed.data, idempotencyKey);
@@ -167,10 +166,10 @@ export class CapabilityGateway {
   private async run(service: Service, actor: Actor, d: CapabilityDescriptor, args: unknown, idempotencyKey?: string) {
     try {
       const result = await d.execute!({ instance: this.instance, service, actor, idempotencyKey: idempotencyKey ?? `gw-${newId("k")}` }, args);
-      await service.audit(service.db, actor, "capability.invoke", d.id, true, d.effect);
+      await service.kernel.permissions.audit(service.db, actor, "capability.invoke", d.id, true, d.effect);
       return result ?? { ok: true };
     } catch (err) {
-      if (!(err instanceof ApiError && err.status === 403)) await service.audit(service.db, actor, "capability.invoke", d.id, false, String((err as Error).message).slice(0, 200));
+      if (!(err instanceof ApiError && err.status === 403)) await service.kernel.permissions.audit(service.db, actor, "capability.invoke", d.id, false, String((err as Error).message).slice(0, 200));
       throw err;
     }
   }
@@ -182,7 +181,7 @@ export class CapabilityGateway {
     const decision = { by: actorRef(actor), verdict, ...(note ? { note } : {}) };
     if (verdict === "reject") return recordProposal(service.db, source, { status: "rejected", decision });
     await recordProposal(service.db, source, { status: "applying", decision });
-    const proposer = await service.parseActorRef(p.proposer);
+    const proposer = await service.kernel.identity.parseActorRef(p.proposer);
     const d = this.find(String(p.payload.capability));
     try {
       const result = await this.run(service, proposer, d, d.input.parse(p.payload.args), (p.payload.idempotencyKey as string | null) ?? `proposal-${p.id}`);
