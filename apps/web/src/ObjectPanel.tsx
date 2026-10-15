@@ -7,6 +7,7 @@ import type { Agent, Snapshot, WorkState } from "./types.ts";
 import { Avatar } from "./Avatar.tsx";
 import { uploadAsset } from "./Assets.tsx";
 import { StatusPill } from "./ui.tsx";
+import { deskStates } from "./office3d/live.ts";
 
 const ObjectStudio = lazy(() => import("./office3d/ObjectStudio.tsx"));
 
@@ -62,10 +63,12 @@ const DESK: Record<string, string> = { off: "Off", sleep: "Asleep", on: "On", wo
  * while they work, sleeps when they walk off and is off while they are offline.
  */
 function WorkstationPanel(p: PanelProps & { agentId: string }) {
+  useTick(1000);
   const agent = p.snapshot.agents.find((a) => a.id === p.agentId);
   if (!agent) return null;
   const work = p.workOf(agent);
-  const state = work === "offline" ? "off" : work === "executing" || work === "thinking" ? "working" : "on";
+  // As the office shows it (whether they sit at it); before the office has drawn it, from their work alone.
+  const state = deskStates.get(agent.id) ?? (work === "offline" ? "off" : work === "executing" || work === "thinking" ? "working" : "on");
   const room = p.snapshot.departments.find((d) => d.id === agent.departmentId)?.name;
   return (
     <aside className="panel agent-panel object-panel" aria-label={t("Workstation of {name}", { name: agent.displayName })}>

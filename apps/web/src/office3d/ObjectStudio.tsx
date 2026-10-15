@@ -7,7 +7,8 @@ import { loadModels } from "./assets.ts";
 import { lightRoom } from "./env.ts";
 import { ObjectLife } from "./behave.ts";
 import { chair, desk, lookObject, monitor } from "./procedural.ts";
-import { animateAvatar, type DeskState, paintScreen, swingLegs } from "./scene.ts";
+import type { DeskState } from "./live.ts";
+import { animateAvatar, paintScreen, swingLegs } from "./scene.ts";
 
 type Kind = World["kinds"][string];
 type State = Kind["states"][number];
@@ -171,7 +172,6 @@ export default function ObjectStudio(p: {
       const c = chair();
       c.position.z = 0.35;
       g.add(d, mon, c);
-      g.rotation.y = Math.PI;
       s.holder.add(g);
       s.holder.userData.screen = screen;
       s.fit();

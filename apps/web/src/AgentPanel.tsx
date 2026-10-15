@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Avatar } from "./Avatar.tsx";
 import { t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import { requestId } from "./requestId.ts";
@@ -82,9 +83,7 @@ export function AgentPanel(p: Props) {
   return (
     <aside className="panel agent-panel" aria-label={agent.displayName}>
       <header className="panel-head">
-        <div className="avatar" style={{ background: dept?.color }} aria-hidden>
-          {agent.displayName.slice(0, 1)}
-        </div>
+        <Avatar who={{ type: "agent", id: agent.id }} size={40} />
         <div className="panel-title">
           <h2>{agent.displayName}</h2>
           <div className="muted">

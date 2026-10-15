@@ -1,4 +1,4 @@
-import { objectState, type World } from "@agentown/core/world";
+import { canTalk, objectState, type World } from "@agentown/core/world";
 import * as THREE from "three";
 import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Agent, Department, ObjectActivity, WorkState } from "../types.ts";
@@ -10,6 +10,7 @@ import { orgPath } from "../api.ts";
 import { chair, character, desk, lookObject, monitor } from "./procedural.ts";
 import { ObjectLife } from "./behave.ts";
 import { pattern } from "./patterns.ts";
+import { type DeskState, deskStates } from "./live.ts";
 import { agentPortrait, lookPortrait } from "./portrait.ts";
 
 /** A task handed from one agent to another: a sheet of paper flies between their desks. */
@@ -99,8 +100,7 @@ export interface PlacedLife {
   badge: THREE.Sprite;
 }
 
-/** What a workstation shows: off (its person is offline), asleep (nobody at it), on, working. */
-export type DeskState = "off" | "sleep" | "on" | "working";
+export type { DeskState } from "./live.ts";
 
 
 export interface OfficeScene {
@@ -306,7 +306,7 @@ function roomMesh(room: PlacedRoom): THREE.Group {
 
 /** Seen from above, everything is a round picture floating over where it is. */
 const BADGE_Y = 3.2;
-function badge(color: string, size: number, picture: Promise<string> | string | null, disposables: Array<{ dispose(): void }>, image?: string | null): THREE.Sprite {
+function badge(color: string, size: number, picture: Promise<string> | string | null, disposables: Array<{ dispose(): void }>, image?: string | null, ring = "#ffffff"): THREE.Sprite {
   const c = document.createElement("canvas");
   c.width = c.height = 128;
   const g = c.getContext("2d")!;
@@ -330,13 +330,15 @@ function badge(color: string, size: number, picture: Promise<string> | string | 
       g.beginPath();
       g.arc(64, 64, 54, 0, Math.PI * 2);
       g.clip();
-      g.fillStyle = "#f4efe6";
+      g.fillStyle = "#fbf7f0";
       g.fillRect(0, 0, 128, 128);
-      g.drawImage(img, 10, 10, 108, 108);
+      // Portraits leave a margin around the model: crop in a little.
+      const k = image ? 0 : 10;
+      g.drawImage(img, 10 - k, 10 - k, 108 + 2 * k, 108 + 2 * k);
       g.restore();
     }
-    g.lineWidth = 6;
-    g.strokeStyle = "#ffffff";
+    g.lineWidth = 7;
+    g.strokeStyle = ring;
     g.beginPath();
     g.arc(64, 64, 60, 0, Math.PI * 2);
     g.stroke();
@@ -463,6 +465,7 @@ export function buildScene(
   const deptColor = (id: string) => departments.find((d) => d.id === id)?.color ?? "#8899aa";
 
   const roamers: Roamer[] = [];
+  const canTalkHere = (o: World["objects"][number]) => !!world && canTalk(world, o);
   const lifted = (o: THREE.Object3D) => ((o.userData.lift as number | undefined) ?? 0) * o.scale.y;
 
   // Placed objects, living through their states.
@@ -531,7 +534,8 @@ export function buildScene(
     }
     // Bigger things get bigger pictures on the map, within reason.
     const footprint = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
-    const pic = badge("#f4efe6", Math.min(1.3, Math.max(0.55, Math.max(footprint.x, footprint.z) * 0.6)), lookPortrait(kind.look), disposables, o.image ? assetUrl(o.image) : null);
+    const ring = kind.category === "character" || canTalkHere(o) ? "#e0a86a" : kind.actions.length ? "#9fd3c7" : "#ffffff";
+    const pic = badge("#fbf7f0", Math.min(1.25, Math.max(0.7, Math.max(footprint.x, footprint.z) * 0.6)), lookPortrait(kind.look), disposables, o.image ? assetUrl(o.image) : null, ring);
     pic.scale.divideScalar(carrier === obj ? o.scale : 1);
     pic.position.y = BADGE_Y / (carrier === obj ? o.scale : 1);
     carrier.add(pic);
@@ -612,7 +616,7 @@ export function buildScene(
     floorGroup(room.floorIndex).add(g);
     roamers.push(roamer);
     const own = world?.avatars.byAgent?.[a.id]?.image;
-    const face = badge(deptColor(a.departmentId), 0.95, own ? null : agentPortrait(a, world, deptColor(a.departmentId)), disposables, own ? assetUrl(own) : null);
+    const face = badge(deptColor(a.departmentId), 1.3, own ? null : agentPortrait(a, world, deptColor(a.departmentId)), disposables, own ? assetUrl(own) : null);
     face.renderOrder = 11;
     actor.add(face);
     const screenBadge = deskBadge(disposables);
@@ -759,6 +763,7 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
 
     // The computer has its own state: it wakes when its person sits down and works.
     const desk = deskState(work, r.seated);
+    deskStates.set(node.id, desk);
     paintScreen(node.screen, desk, a.runtime?.state ?? "none", sec);
     const flat = !!f.flat;
     node.avatar.visible = !flat;
@@ -871,7 +876,8 @@ function advance(r: Roamer, now: number, dt: number): "idle" | "walking" | "arri
   const dz = wp.z - r.obj.position.z;
   const flat = Math.hypot(dx, dz);
   const dist = Math.hypot(flat, dy);
-  const stepLen = r.speed * (wp.jump ? 0.6 : 1) * Math.min(dt, 0.1);
+  // A slow frame still moves at walking speed; a long pause (a hidden tab) does not jump ahead.
+  const stepLen = r.speed * (wp.jump ? 0.6 : 1) * Math.min(dt, 0.5);
   if (dist > stepLen) {
     r.obj.position.x += (dx / dist) * stepLen;
     r.obj.position.y += (dy / dist) * stepLen;

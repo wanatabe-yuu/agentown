@@ -311,9 +311,7 @@ function OrgApp({
           label={tr("Account")}
           trigger={
             <span className="who">
-              <span className="avatar-sm" aria-hidden>
-                {(me.user?.displayName ?? me.actor.id).slice(0, 1).toUpperCase()}
-              </span>
+              <Avatar who={{ type: "you" }} size={24} />
               <span className="who-name">{me.user?.displayName ?? me.actor.id}</span>
             </span>
           }
@@ -481,7 +479,7 @@ function AgentTable({ snapshot, workOf, now, onSelect, selected, onChat }: { onC
             return (
               <tr key={a.id} className={selected === a.id ? "selected" : ""} onClick={() => onSelect(a.id)} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onSelect(a.id)}>
                 <td title={a.id}>
-                  <strong>{a.displayName}</strong>
+                  <Avatar who={{ type: "agent", id: a.id }} size={24} /> <strong>{a.displayName}</strong>
                   {onChat && (
                     <button type="button" className="agent-chat-shortcut" aria-label={t("Chat with {name}", { name: a.displayName })} onClick={(e) => { e.stopPropagation(); onChat(a.id); }} onKeyDown={(e) => e.stopPropagation()}>
                       {t("Chat")}

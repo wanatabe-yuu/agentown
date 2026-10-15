@@ -19,7 +19,14 @@ interface Index { profile?: Profile | null; chats: Chat[]; credentials: Credenti
 /** Messages the system chat relays to someone start with this; their chat shows it as the owner speaking through it. */
 const RELAY = "[From the owner's system chat] ";
 const number = (n = 0) => n.toLocaleString();
-export const labels: Record<string, string> = { ask: "Ask", assign_to_ceo: "Hand to the CEO", objects: "Look at objects", interact: "Interact", set_state: "Change state", look_around: "Look around", inspect: "Read world", patch_world: "Edit world", replace_world: "Replace world", patch_config: "Edit organization", create_task: "Create task", task_action: "Update task", spawn_agent: "Hire agent", update_agent: "Update agent", configure_agent: "Configure agent", prepare_self_runtime: "Set up task runtime", agent_action: "Control agent", retire_agent: "Retire agent", update_person: "Update member", grant_person: "Grant permission", revoke_permission: "Revoke permission", delegate_permission: "Delegate permission", credential_action: "Update API key", delete_asset: "Delete art" };
+export const labels: Record<string, string> = { ask: "Ask", assign_to_ceo: "Hand to the CEO", objects: "Look at objects", directory: "Look up who and what", interact: "Interact", set_state: "Change state", look_around: "Look around", inspect: "Read world", patch_world: "Edit world", replace_world: "Replace world", patch_config: "Edit organization", create_task: "Create task", task_action: "Update task", spawn_agent: "Hire agent", update_agent: "Update agent", configure_agent: "Configure agent", prepare_self_runtime: "Set up task runtime", agent_action: "Control agent", retire_agent: "Retire agent", update_person: "Update member", grant_person: "Grant permission", revoke_permission: "Revoke permission", delegate_permission: "Delegate permission", credential_action: "Update API key", delete_asset: "Delete art" };
+
+/** Server notices are written in English; show them in the interface's language. */
+function noticeText(text: string) {
+  const steps = text.match(/^Reached (\d+) steps for this reply\./);
+  if (steps) return t("Reached {n} steps for this reply. Completed actions are saved; send a follow-up to continue.", { n: steps[1]! });
+  return t(text);
+}
 
 /** Chat formatting: GitHub Markdown (tables, lists, code); model HTML and remote media never render. */
 function ChatText({ text }: { text: string }) {
@@ -309,7 +316,7 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
         {timeline.map(row => row.kind === "action" ? <ActionCard key={row.item.id} action={row.item} busy={busy} decide={decide} agents={agents} tasks={tasks} credentials={index?.credentials ?? []} /> : row.kind === "activity" ? <details className="chat-activity" key={row.runId}>
           <summary>{row.items.length} {row.items.length === 1 ? t("step") : t("steps")}{row.items.some(a => a.status === "failed") ? t(" · {n} couldn't complete", { n: row.items.filter(a => a.status === "failed").length }) : t(" completed")}</summary>
           <div>{row.items.map(a => <ActionCard key={a.id} action={a} busy={busy} decide={decide} agents={agents} tasks={tasks} credentials={index?.credentials ?? []} />)}</div>
-        </details> : row.item.role === "notice" ? <article key={row.item.id} className="chat-message chat-notice"><ChatText text={row.item.text} /></article> : <article key={row.item.id} className={`chat-message chat-${row.item.role}${row.item.author_type ? " chat-relayed" : ""}`}>
+        </details> : row.item.role === "notice" ? <article key={row.item.id} className="chat-message chat-notice"><ChatText text={noticeText(row.item.text)} /></article> : <article key={row.item.id} className={`chat-message chat-${row.item.role}${row.item.author_type ? " chat-relayed" : ""}`}>
           <Avatar who={whoOf(row.item)} size={30} className="chat-avatar" />
           <div className="chat-bubble">
             <div className="chat-message-label">{row.item.role === "user" ? t("You") : nameOf(row.item)}{row.item.role === "user" && row.item.text.startsWith(RELAY) && <span className="muted"> · {t("via the system chat")}</span>}{row.item.partial && <span className="muted"> · {t("partial response")}</span>}</div>

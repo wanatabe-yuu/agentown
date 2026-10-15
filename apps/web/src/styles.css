@@ -2502,3 +2502,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 .desk-working { color: #22c55e; }
 .who-link { display: inline-flex; align-items: center; gap: 6px; }
 .panel-head > .who-avatar { flex: none; }
+/* From above, names sit under the pictures instead of on them. */
+.office-3d.flat .object-label { margin-top: 30px; }
+.office-3d.flat .agent-label { margin-top: 16px; }
+.studio-preset .avatar-setting { flex-direction: column; align-items: flex-start; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.studio-preset .avatar-setting .btn-row { flex-direction: column; align-items: flex-start; }
+.agent-table td .who-avatar, .table-wrap td .who-avatar { margin-right: 6px; }

@@ -123,8 +123,10 @@ export default function Office3D(props: Props) {
     // Tight framing: the world fills the stage, with just room for the labels.
     const span = (b.maxX - b.minX + (b.maxZ - b.minZ)) * 0.6 + 1.5;
     const aspect = el.clientWidth / Math.max(1, el.clientHeight);
-    // The isometric view shows a floor plan narrower than its span: fill the width on portrait screens.
-    const zoom = Math.max(0.15, Math.min(6, (2 * VIEW) / (span * 0.62 + 2), (2 * VIEW * aspect) / (span * 0.9)));
+    // From above the plan is seen as it is; the isometric view shows it narrower than its span (fill the width on portrait screens).
+    const zoom = latest.current.flat
+      ? Math.max(0.15, Math.min(6, (2 * VIEW) / (b.maxZ - b.minZ + 1.5), (2 * VIEW * aspect) / (b.maxX - b.minX + 1.5)))
+      : Math.max(0.15, Math.min(6, (2 * VIEW) / (span * 0.62 + 2), (2 * VIEW * aspect) / (span * 0.9)));
     e.tween = { from: e.controls.target.clone(), to, z0: e.camera.zoom, z1: zoom, start: performance.now() };
   };
   const visibleRooms = () => (floor === "all" ? layout.rooms : layout.rooms.filter((r) => r.floorIndex === floor));
@@ -178,6 +180,8 @@ export default function Office3D(props: Props) {
     controls.screenSpacePanning = false;
 
     engine.current = { renderer, labels, scene, camera, controls, office: null, hover: null, tween: null, turn: null, gizmo: null };
+    // ?debug in the address: the live scene, for inspecting it from the console.
+    if (new URLSearchParams(location.search).has("debug")) (window as unknown as { office: unknown }).office = engine.current;
 
     const resize = () => {
       const w = el.clientWidth;
@@ -366,11 +370,12 @@ export default function Office3D(props: Props) {
     e.controls.maxPolarAngle = 1.2;
     const from = e.camera.position.clone().sub(e.controls.target).normalize();
     e.turn = { from, to: flat ? new THREE.Vector3(0, 1, 0.0001) : ISO.clone().normalize(), start: performance.now(), flat };
-    // Floors stacked on top of each other cannot be seen from above: show one.
-    if (flat && floor === "all" && layout.floors.length > 1) {
-      setFloor(0);
-      focus(layout.rooms.filter((r) => r.floorIndex === 0));
-    }
+    // Floors stacked on top of each other cannot be seen from above: show one. Then frame it for this view.
+    const shown = flat && floor === "all" && layout.floors.length > 1 ? 0 : floor;
+    if (shown !== floor) setFloor(shown);
+    const room = layout.rooms.find((r) => r.id === focusRoom);
+    latest.current.flat = flat;
+    focus(room ? [room] : shown === "all" ? layout.rooms : layout.rooms.filter((r) => r.floorIndex === shown));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flat]);
 
@@ -509,7 +514,7 @@ export default function Office3D(props: Props) {
     e.tween = { from: e.controls.target.clone(), to: e.controls.target.clone(), z0: e.camera.zoom, z1: Math.max(0.15, Math.min(6, e.camera.zoom * k)), start: performance.now() };
   };
   return (
-    <div ref={wrap} className="office-canvas office-3d" aria-label="Office in 3D; select an agent to open its panel">
+    <div ref={wrap} className={`office-canvas office-3d${flat && !editing ? " flat" : ""}`} aria-label="Office in 3D; select an agent to open its panel">
       <div className="world-nav">
         {layout.floors.length > 1 && (
           <div className="seg-toggle" role="group" aria-label={tr("Floor")}>

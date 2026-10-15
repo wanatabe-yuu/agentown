@@ -1,16 +1,36 @@
-# Owner chat
+# System chat
 
-The **Owner chat** button beside **New task** opens a private, persistent conversation for the current organization. It runs independently of agents and tasks. Closing the modal or reloading the page does not cancel the response; **Stop** cancels further generation and tools while preserving completed changes and receipts.
+The **System chat** button (a gear) beside **New task** opens a private, persistent conversation for the current organization. It runs independently of agents and tasks. Closing the modal or reloading the page does not cancel the response; **Stop** cancels further generation and tools while preserving completed changes and receipts.
 
 Choose an existing organization API key, model, effort, context budget, output limit, tool-turn limit and confirmation mode in **Settings**. A new chat starts from the organization's root agent's available key/model settings (or its first available key); these are only defaults. Saving chat settings never edits an agent. Organizations and owners have separate conversation lists and credentials.
 
-## World operations and confirmation
+## Least privilege: read, ask, hand off
 
-Tools call the same validated, org-scoped Service/Instance operations as the UI. They can inspect the snapshot, config, world/schema, agents, tasks, art, members, key metadata and audit; patch or replace the world; edit organization structure; create prompt tasks and manage existing tasks; hire, configure, rename, reparent, pause or control agents; and manage existing members, grants, credentials and art.
+The system chat changes nothing itself, even for the owner. Its tools:
 
-`important` mode executes ordinary changes automatically. Replacing/resetting a world, removing world items, organization structure, model/key assignments, hiring/retiring agents, reporting-line changes, runtime stop/restart, task cancellation/review, member/grant changes, credential revocation and asset deletion require an **Approve action** / **Reject** decision. `all` mode confirms every write; reads remain automatic. New tasks use prompt specs only, matching New task; script/playbook creation is not exposed. The proposal is stored on the server and approval executes its exact validated arguments. Approval cannot edit a proposal or approve another organization's action.
+- `inspect` and `directory`: read anything about the organization (snapshot, config, world, agents, tasks, art, audit…; `directory` is a short list of who and what is here). When reading answers the question, it just answers.
+- `ask`: send a message to one agent or talking object. It goes into the owner's latest chat with them (or a new one, with their defaults), the persona answers there with its own rights, and the answer is shown in the system chat under that persona's name and avatar. Use it to talk to someone or to have them do something themselves (an agent can pet the cat).
+- `assign_to_ceo`: propose work — anything that changes the world, the organization, agents, tasks or permissions — as a task for the CEO agent (the root agent), who decides who does it. It is an important action: the owner confirms the card first. The task is created by the owner, assigned to the CEO, and requires review. When it reaches review, done, failed, blocked or cancelled, a report is posted back into the system chat from whoever did it.
 
-There is no host shell, arbitrary HTTP proxy, raw-key/token tool or install-level administration tool. Raw credential entry, account/token creation and binary uploads remain in the existing management UI. This is a text chat with structured world tools, rather than a generic wrapper exposing every vendor API feature.
+The organization tools the system chat used to call directly (patch/replace world, configure agents, grants…) remain the capability gateway's, used by agents within their own grants. Object personas follow the same rule: they read their own room, may change only what they themselves are doing (`set_state`) and propose work with `assign_to_ceo`; they no longer act with the owner's task permissions.
+
+There is no host shell, arbitrary HTTP proxy, raw-key/token tool or install-level administration tool. Raw credential entry, account/token creation and binary uploads remain in the existing management UI.
+
+## Who said it, and who was mentioned
+
+Migration 22 adds an author to chat lines (`author_type`/`author_id`): a reply relayed by `ask` and a task report carry the agent or object they come from. Every line shows an avatar: the owner ("you"), the system chat (a gear), or the agent/object who said it. A relayed message appears in the persona's own chat as the owner speaking "via the system chat".
+
+`chat_refs` records which conversations bring someone up: an `ask`, a hand-off to the CEO, or a line naming an agent or a named talking/acting object. That someone's chat lists those conversations ("Mentioned in…") and opens them at that conversation.
+
+## Avatars
+
+Each agent and placed object has a picture: an uploaded image (`world.avatars.byAgent[id].image`, `objects[].image`, PNG/JPEG/WebP from the art library) or, by default, a portrait rendered from its 3D model. Set it in the agent's Look panel or the object's Edit section. It is used in chats, conversation lists, team channels, the agent table and the 2D map.
+
+## Objects with states
+
+Object kinds may declare `states` (the first is the usual one; `auto` ones it drifts into by itself on a deterministic rhythm every viewer agrees on) and `actions` (put it in a state for some seconds, with a gesture: `pet`, `use` or `none`). While in a state its `behaviors` replace the kind's (a napping cat stops roaming), its glowing parts dim or brighten (`glow`) and characters show a `pose`. `POST /api/objects/:id/actions` runs an action: the owner for themself or by naming an agent, an agent only for itself and only on objects it can reach (its department's rooms, shared rooms, things that walk about). Agents have `objects` and `interact` chat tools; objects have `set_state`. Running actions are in the snapshot (`objectStates`) and stream as `org.object` events; the named agent walks over, does the gesture and walks back.
+
+A person's workstation is its own thing: its computer is off while they are offline, asleep while they are away from the desk, on while they sit, and working while they work. Clicking the desk opens its panel.
 
 ## Context and providers
 
@@ -46,7 +66,7 @@ The browser polls durable snapshots every 900 ms while open, showing partial str
 
 ## Validation
 
-`owner-chat.test.ts` exercises real HTTP routes/PostgreSQL with an injected model: owner isolation, org/key boundaries, no agent config changes, idempotency, concurrent sends, confirmations/rejections, stop/partial output, changed owner rights, native compaction/history/usage, failed summaries, tool bounds, restart uncertainty, stale revisions, world/asset validation, truncated output, duplicate tool IDs, archive/restore/deletion, lifecycle isolation and concurrent lifecycle/send races. `apps/web/test/requestId.test.ts` covers a browser without `randomUUID`.
+`owner-chat.test.ts` exercises real HTTP routes/PostgreSQL with an injected model: least privilege (no direct changes), hand-off to the CEO and its report back, owner isolation, org/key boundaries, no agent config changes, idempotency, concurrent sends, confirmations/rejections, stop/partial output, changed owner rights, native compaction/history/usage, failed summaries, tool bounds, restart uncertainty, truncated output, duplicate tool IDs, archive/restore/deletion, lifecycle isolation and concurrent lifecycle/send races. `objects.test.ts` covers object actions and reach, object/agent chat tools, the shared rhythm, `ask` relays and mention links. `apps/web/test/requestId.test.ts` covers a browser without `randomUUID`.
 
 `chat-provider.test.ts` checks native signed-block replay, capability discovery, count/effort/thinking requests, compaction accounting and fragmented UTF-8/CRLF-compatible streaming with tool deltas and usage. Provider response bodies and malformed tool JSON cannot reach world execution.
 
@@ -68,7 +88,7 @@ Migration 14 adds `subject_type`/`subject_id` to conversations and assigns stabl
 
 Default persona instructions cover colleagues/managers, cats, dogs, robots and furniture. Agent custom instructions come from its Config tab. Object kinds and individual placements have optional `chat.instructions`, editable in the world editor. Placement instructions extend the kind's instructions. These instructions do not grant authority.
 
-Agent chat tools execute as the real agent, with grants checked again before each operation and after approval. Object personas execute task operations under the chatting owner's permissions; they have no execution runtime. Both expose scoped inspection and task creation/assignment/retry/cancellation/review. Agents can additionally propose `prepare_self_runtime`, bound to their own ID and the current chat’s connection/model/effort. It always requires owner confirmation and runs that specific configuration change as the freshly authorized owner. It cannot change a runtime harness, configure another agent or grant permissions. They cannot edit layout, key values or permissions. Agent chat defaults inherit the agent's key/model/effort, with available same-org department-scoped keys; object chat inherits the org manager's defaults. Saving private chat configuration does not change runtime settings; only a separately confirmed runtime-preparation action does. Keys stay server-only.
+Agent chat tools execute as the real agent, with grants checked again before each operation and after approval: scoped inspection, objects and interact, and task creation/assignment/retry/cancellation/review. Object personas have no execution runtime and no task tools (see Least privilege above). Agents can additionally propose `prepare_self_runtime`, bound to their own ID and the current chat’s connection/model/effort. It always requires owner confirmation and runs that specific configuration change as the freshly authorized owner. It cannot change a runtime harness, configure another agent or grant permissions. They cannot edit layout, key values or permissions. Agent chat defaults inherit the agent's key/model/effort, with available same-org department-scoped keys; object chat inherits the org manager's defaults. Saving private chat configuration does not change runtime settings; only a separately confirmed runtime-preparation action does. Keys stay server-only.
 
 Custom Claude gateways use standard function tool schemas in the runtime rather than Anthropic's native bash extension. Optional capability/token endpoints have short timeouts and a clearly marked estimated-count fallback; authorization errors and user cancellation still fail. Native provider functionality remains available when supported.
 

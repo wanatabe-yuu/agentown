@@ -847,6 +847,10 @@ const VI: Record<string, string> = {
   "be used: {actions}. No chat, no access to anything else.": "được dùng: {actions}. Không chat, không có quyền truy cập gì khác.",
   "3D: people and things as they are": "3D: người và đồ vật như thật",
   "2D: from above, everyone as their picture": "2D: nhìn từ trên xuống, mọi người là ảnh đại diện",
+  "Reached {n} steps for this reply. Completed actions are saved; send a follow-up to continue.": "Đã dùng hết {n} bước cho lượt này. Những gì đã làm được giữ lại; nhắn tiếp để tiếp tục.",
+  "Stopped after 5 unsuccessful actions. Completed actions are saved. Check the details or tell me how you want to continue.": "Đã dừng sau 5 thao tác không thành công. Những gì đã làm được giữ lại. Xem chi tiết hoặc cho tôi biết muốn làm tiếp thế nào.",
+  "Context compacted. Full conversation history remains available.": "Đã rút gọn ngữ cảnh. Toàn bộ lịch sử vẫn còn.",
+  "Look up who and what": "Xem danh bạ",
   // activity
   "{name} joined as {role}": "{name} gia nhập với vị trí {role}",
   "{from} → {to}: {title}": "{from} → {to}: {title}",

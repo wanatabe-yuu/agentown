@@ -165,7 +165,7 @@ describe("owner harness chat", () => {
   it("works with the least privilege: reads and answers, never changes the world, agents or tasks itself", async () => {
     const id = await create();
     await send(id, "What can you do?");
-    expect(inputs[0]!.tools.map(t => t.name)).toEqual(["inspect", "objects", "ask", "assign_to_ceo"]);
+    expect(inputs[0]!.tools.map(t => t.name)).toEqual(["inspect", "directory", "ask", "assign_to_ceo"]);
     const before = (await env.call(env.owner, "GET", "/api/world")).body;
     plan = [tool("replace_world", { revision: before.revision, world: null }), tool("update_agent", { id: "po", change: { displayName: "Sneaky" } }), tool("create_task", { title: "Direct task" })];
     const data = await send(id, "Change things directly");
@@ -255,7 +255,7 @@ describe("owner harness chat", () => {
   });
   it("rechecks account rights during a running model response before tools execute", async () => {
     const id = await create();
-    plan = [async () => { await env.db.query("UPDATE org_members SET disabled_at=now() WHERE user_id=$1 AND org_id='agentown'", [ownerId]); return tool("objects", {}); }];
+    plan = [async () => { await env.db.query("UPDATE org_members SET disabled_at=now() WHERE user_id=$1 AND org_id='agentown'", [ownerId]); return tool("directory", {}); }];
     await send(id).catch(() => {});
     await env.db.query("UPDATE org_members SET disabled_at=NULL WHERE user_id=$1 AND org_id='agentown'", [ownerId]);
     expect((await call("GET", `/${id}`)).body.run.status).toBe("failed");
