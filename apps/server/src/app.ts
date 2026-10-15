@@ -360,6 +360,8 @@ export async function buildApp(opts: AppOptions) {
       r.post<{ Params: { id: string } }>("/owner-chats/:id/stop", async req => ownerChat.stop(svcOf(req).orgId, actorOf(req), req.params.id));
       r.post<{ Params: { id: string; aid: string } }>("/owner-chats/:id/actions/:aid", async req => ownerChat.decide(svcOf(req).orgId, actorOf(req), req.params.id, req.params.aid,
         parse(z.object({ approve: z.boolean() }).strict(), req.body).approve));
+      // Where any placed object (talking or not) came up in the owner's conversations.
+      r.get<{ Params: { id: string } }>("/object-refs/:id", async req => ownerChat.objectRefs(svcOf(req).orgId, actorOf(req), req.params.id));
       r.get<{ Params: { type: string; subjectId: string }; Querystring: { archived?: string } }>("/entity-chats/:type/:subjectId", async req => {
         if (req.query.archived !== undefined && !["true", "false"].includes(req.query.archived)) throw badRequest("Invalid archived filter.");
         return ownerChat.list(svcOf(req).orgId, actorOf(req), req.query.archived === "true", parse(chatSubjectSchema, { type: req.params.type, id: req.params.subjectId }));

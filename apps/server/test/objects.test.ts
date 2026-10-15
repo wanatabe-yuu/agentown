@@ -108,3 +108,21 @@ describe("the system chat asks others", () => {
     expect((await env.call(env.owner, "GET", `/api/entity-chats/agent/${worker}`)).body.refs.some((r: any) => r.chatId === id)).toBe(false);
   });
 });
+
+describe("objects in conversations", () => {
+  it("an object used from a chat speaks there with its own avatar, and any object lists the chats it came up in", async () => {
+    const kaiChat = (await env.call(env.owner, "POST", `/api/entity-chats/agent/${worker}`, config())).body.id;
+    plan = [tool("interact", { objectId: cat, action: "pet" }), { role: "assistant", text: "Done, Bean is purring." }];
+    await env.call(env.owner, "POST", `/api/entity-chats/agent/${worker}/${kaiChat}/messages`, { requestId: crypto.randomUUID(), text: "Please pet the cat" });
+    await env.ownerChat.idle();
+    const view = (await env.call(env.owner, "GET", `/api/entity-chats/agent/${worker}/${kaiChat}`)).body;
+    expect(view.messages).toContainEqual(expect.objectContaining({ role: "notice", author_type: "object", author_id: cat, text: "Bean: Purring" }));
+    expect((await env.call(env.owner, "GET", `/api/object-refs/${cat}`)).body.refs.some((r: any) => r.chatId === kaiChat)).toBe(true);
+    // A thing that does not talk is still found by its kind's name, and lists the chat.
+    const sys = (await env.call(env.owner, "POST", "/api/owner-chats", config())).body.id;
+    await env.call(env.owner, "POST", `/api/owner-chats/${sys}/messages`, { requestId: crypto.randomUUID(), text: "Is the machine in the ops room busy?" });
+    await env.ownerChat.idle();
+    expect((await env.call(env.owner, "GET", `/api/object-refs/${machine}`)).body.refs.some((r: any) => r.chatId === sys)).toBe(true);
+    expect((await env.call(env.token(worker), "GET", `/api/object-refs/${machine}`)).status).toBe(403);
+  });
+});

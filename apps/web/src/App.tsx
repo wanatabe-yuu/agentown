@@ -376,6 +376,7 @@ function OrgApp({
               owner={!!me.actor.owner}
               workOf={effectiveWork}
               onSelectAgent={setSelected}
+              onOpenChat={me.actor.owner ? openChat : undefined}
               onChat={me.actor.owner ? (id, name) => setEntityChat({ type: "object", id, name }) : undefined}
               onClose={() => setSelectedObject(null)}
               notify={notify}

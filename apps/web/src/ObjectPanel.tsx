@@ -4,7 +4,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { api } from "./api.ts";
 import { t } from "./i18n.ts";
 import type { Agent, Snapshot, WorkState } from "./types.ts";
-import { Avatar } from "./Avatar.tsx";
+import { Avatar, WhoName } from "./Avatar.tsx";
 import { uploadAsset } from "./Assets.tsx";
 import { StatusPill } from "./ui.tsx";
 import { deskStates } from "./office3d/live.ts";
@@ -37,6 +37,8 @@ type PanelProps = {
   workOf: (a: Agent) => WorkState;
   onChat?: (id: string, name: string) => void;
   onSelectAgent: (id: string) => void;
+  /** Open a conversation this object came up in. */
+  onOpenChat?: (target: { type: "agent" | "object"; id: string; name: string } | null, chatId: string) => void;
   onClose: () => void;
   notify: (msg: string, kind?: "error" | "info") => void;
 };
@@ -127,7 +129,17 @@ function PlacedPanel(p: PanelProps) {
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [doer, setDoer] = useState<Record<string, string>>({});
+  const [refs, setRefs] = useState<Array<{ chatId: string; title: string; subject: { type: "owner" | "agent" | "object"; id: string } }>>([]);
   const clock = useTick(1000);
+  // The conversations it came up in (asked, used, named): the owner can open them.
+  useEffect(() => {
+    if (!p.owner) return;
+    let live = true;
+    api<{ refs: typeof refs }>("GET", `/api/object-refs/${encodeURIComponent(p.objectId)}`).then((r) => live && setRefs(r.refs)).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [p.objectId, p.owner, p.snapshot.objectStates]);
   useEffect(() => {
     setDraft(null);
     setWalking(false);
@@ -281,6 +293,23 @@ function PlacedPanel(p: PanelProps) {
                   </button>
                 </div>
               ))}
+          </section>
+        )}
+
+        {refs.length > 0 && p.onOpenChat && (
+          <section className="object-refs">
+            <h3>{t("Mentioned in {n} other conversations", { n: refs.length })}</h3>
+            {refs.map((r) => (
+              <button key={r.chatId} type="button" className="chat-ref" onClick={() => p.onOpenChat!(r.subject.type === "owner" ? null : { type: r.subject.type, id: r.subject.id, name: "" }, r.chatId)}>
+                <Avatar who={r.subject.type === "owner" ? { type: "system" } : { type: r.subject.type, id: r.subject.id }} size={20} />
+                <span className="chat-ref-title">
+                  <b>
+                    <WhoName who={r.subject.type === "owner" ? { type: "system" } : { type: r.subject.type, id: r.subject.id }} />
+                  </b>{" "}
+                  · {r.title}
+                </span>
+              </button>
+            ))}
           </section>
         )}
 

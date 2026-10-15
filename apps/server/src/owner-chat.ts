@@ -65,11 +65,20 @@ export class OwnerChat {
     const defaults = entity ? (entity.defaults ? chatConfigSchema.parse(entity.defaults) : null) : credential ? chatConfigSchema.parse({ credentialId: credential.id, model: credential.models.includes(rootConfig?.model ?? "") ? rootConfig!.model : credential.models[0], effort: rootConfig?.effort ?? "medium", contextLimit: rootConfig?.contextLimit ?? 64000 }) : null;
     const chats = (await this.db.query<ChatRow>("SELECT * FROM owner_chats WHERE org_id=$1 AND user_id=$2 AND (archived_at IS NOT NULL)=$3 AND subject_type=$4 AND subject_id=$5 ORDER BY updated_at DESC LIMIT 100", [orgId, actor.id, archived, subject.type, subject.id])).rows.map(publicChat);
     // Other conversations that brought this one up: the system chat, other agents' chats.
-    const refs = subject.type === "owner" ? [] : (await this.db.query(
+    const refs = subject.type === "owner" ? [] : await this.refsTo(orgId, actor.id, subject);
+    return { chats, credentials, defaults, profile: entity?.profile ?? null, refs };
+  }
+  /** Other conversations that brought this one up: the system chat, other agents' chats. */
+  private async refsTo(orgId: string, userId: string, subject: { type: string; id: string }) {
+    return (await this.db.query(
       `SELECT c.id, c.title, c.subject_type, c.subject_id, c.updated_at FROM chat_refs r JOIN owner_chats c ON c.id=r.chat_id
        WHERE c.org_id=$1 AND c.user_id=$2 AND r.subject_type=$3 AND r.subject_id=$4 AND NOT (c.subject_type=$3 AND c.subject_id=$4)
-       ORDER BY r.at DESC LIMIT 30`, [orgId, actor.id, subject.type, subject.id])).rows.map(r => ({ chatId: r.id, title: r.title, subject: { type: r.subject_type, id: r.subject_id }, updatedAt: r.updated_at }));
-    return { chats, credentials, defaults, profile: entity?.profile ?? null, refs };
+       ORDER BY r.at DESC LIMIT 30`, [orgId, userId, subject.type, subject.id])).rows.map(r => ({ chatId: r.id, title: r.title, subject: { type: r.subject_type, id: r.subject_id }, updatedAt: r.updated_at }));
+  }
+  /** Where any object (talking or not) came up: its panel lists these. */
+  async objectRefs(orgId: string, actor: Actor, objectId: string) {
+    await this.scoped(orgId, actor);
+    return { refs: await this.refsTo(orgId, actor.id, { type: "object", id: objectId }) };
   }
   async create(orgId: string, actor: Actor, raw: unknown, subject: ChatSubject = ownerSubject) {
     const config = await this.validate(orgId, actor, raw, subject);
@@ -139,12 +148,31 @@ export class OwnerChat {
   private async refer(chatId: string, subject: { type: string; id: string }) {
     await this.db.query("INSERT INTO chat_refs(chat_id,subject_type,subject_id) VALUES($1,$2,$3) ON CONFLICT (chat_id,subject_type,subject_id) DO UPDATE SET at=now()", [chatId, subject.type, subject.id]);
   }
+  /**
+   * An object was used from this chat (petted, switched on): it shows up in the
+   * conversation with its own avatar and what it is doing now, and the chat is
+   * listed where that object came up.
+   */
+  private async objectSpoke(service: Service, c: Pick<ChatRow, "id">, runId: string, result: unknown) {
+    const out = result as { objectId?: string; state?: string; by?: { type: string; id: string } } | null;
+    const world = service.config.world;
+    const object = world?.objects.find(o => o.id === out?.objectId);
+    const kind = object && world!.kinds[object.kind];
+    if (!object?.id || !kind) return;
+    const state = kind.states.find(x => x.id === out!.state)?.name ?? out!.state ?? "";
+    await this.refer(c.id, { type: "object", id: object.id });
+    await this.transcript(c.id, runId, "notice", `${object.label ?? kind.name}: ${state}`, false, { type: "object", id: object.id });
+  }
   /** Agents and talking or acting objects named in a line of this chat. */
   private async noteRefs(service: Service, owner: Actor, c: Pick<ChatRow, "id" | "subject_type" | "subject_id">, text: string) {
     const world = service.config.world;
     const named = [
       ...(await service.listAgents(owner)).filter(a => a.lifecycleState !== "retired").map(a => ({ type: "agent", id: a.id, name: a.displayName })),
-      ...(world?.objects ?? []).filter(o => o.id && o.label && (canTalk(world!, o) || world!.kinds[o.kind]?.actions.length)).map(o => ({ type: "object", id: o.id!, name: o.label! })),
+      // Objects someone can talk to or use: by their own name, or by their kind's when it is the only one of its kind.
+      ...(world?.objects ?? []).filter(o => o.id && (canTalk(world!, o) || world!.kinds[o.kind]?.actions.length)).flatMap(o => [
+        ...(o.label ? [{ type: "object", id: o.id!, name: o.label }] : []),
+        ...(world!.objects.filter(x => x.kind === o.kind).length === 1 ? [{ type: "object", id: o.id!, name: world!.kinds[o.kind]!.name }] : []),
+      ]),
     ];
     for (const n of named) {
       if (n.name.length < 3 || (n.type === c.subject_type && n.id === c.subject_id)) continue;
@@ -335,6 +363,7 @@ export class OwnerChat {
         } catch (e) { action.status = "failed"; action.result = { error: safeError(e), ...(e instanceof ApiError ? { code: e.code } : {}) }; }
         await this.db.query("UPDATE owner_chat_actions SET status=$2,result=$3 WHERE id=$1", [action.id, action.status, JSON.stringify(action.result)]);
         await recordProposal(this.db, { type: "chat_action", id: action.id }, action.status === "applied" ? { status: "applied", receipt: action.result } : { status: "failed", error: JSON.stringify(action.result).slice(0, 2000) });
+        if (action.status === "applied" && ["interact", "set_state"].includes(call.name)) await this.objectSpoke(service, c, r.id, action.result);
       }
       if (action.status === "applying") { action.status = "uncertain"; action.result = { error: "Execution was interrupted; inspect the world before retrying. This action will not be replayed." }; }
       c.context.push({ role: "tool", toolId: call.id, text: JSON.stringify(action.result ?? { status: action.status }), isError: action.status !== "applied" });
