@@ -31,10 +31,10 @@ function ActionCard({ action: a, busy, decide, agents, tasks, credentials }: { c
   const args = dataObject(a.args), result = dataObject(a.result);
   const agent = agents.find(x => x.id === (args.assigneeAgentId ?? args.agentId ?? args.id))?.displayName;
   const task = tasks.find(x => x.id === args.id)?.title;
-  const description = a.name === "create_task" ? `${args.title ?? "New task"}${agent ? ` · ${agent}` : ""}` :
-    a.name === "prepare_self_runtime" ? `${agent ?? "This agent"} · ${credentials.find(k => k.id === args.credentialId)?.name ?? "saved API connection"} · ${modelLabel(String(args.model))}${args.effort ? ` · ${args.effort}` : ""}. Applies to task execution after your confirmation.` :
-    a.name === "task_action" ? `${String(args.action ?? "Update")} · ${task ?? args.id ?? "task"}` :
-    a.name === "inspect" ? `Checked ${args.kind ?? "world"}` : agent ?? (args.note || "");
+  const description = a.name === "create_task" ? `${args.title ?? t("New task")}${agent ? ` · ${agent}` : ""}` :
+    a.name === "prepare_self_runtime" ? `${agent ?? t("This agent")} · ${credentials.find(k => k.id === args.credentialId)?.name ?? t("saved API connection")} · ${modelLabel(String(args.model))}${args.effort ? ` · ${args.effort}` : ""}${t(". Applies to task execution after your confirmation.")}` :
+    a.name === "task_action" ? `${String(args.action ?? t("Update"))} · ${task ?? args.id ?? t("task")}` :
+    a.name === "inspect" ? t("Checked {what}", { what: args.kind ?? t("world") }) : agent ?? (args.note || "");
   return <div className={`chat-action ${a.status}`}>
     <div className="chat-action-heading"><strong>{t(labels[a.name] ?? a.name)}</strong><span className="chat-action-state">{t(actionStates[a.status] ?? a.status)}</span></div>
     {description && <p className="chat-action-description">{description}</p>}
@@ -210,98 +210,98 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
   const usage = view?.chat.usage;
   const assistantName = index?.profile?.name ?? subject?.name ?? t("Owner assistant");
   const actionable = view?.actions.filter(a => a.status === "pending") ?? [];
-  return <Modal title={subject ? `Chat · ${assistantName}` : t("Owner chat · {org}", { org: orgName })} onClose={onClose} wide className="owner-chat-modal" style={{ "--chat-viewport-height": viewportHeight ? `${viewportHeight}px` : "100dvh" } as CSSProperties}>
+  return <Modal title={subject ? t("Chat · {name}", { name: assistantName }) : t("Owner chat · {org}", { org: orgName })} onClose={onClose} wide className="owner-chat-modal" style={{ "--chat-viewport-height": viewportHeight ? `${viewportHeight}px` : "100dvh" } as CSSProperties}>
     <div className="owner-chat-shell">
       <div className="owner-chat-toolbar">
-        <select aria-label="Conversation" value={id ?? ""} disabled={busy} onChange={e => choose(e.target.value || null)}>
-          <option value="">{archived ? "Select archived chat" : "New conversation"}</option>
+        <select aria-label={t("Conversation")} value={id ?? ""} disabled={busy} onChange={e => choose(e.target.value || null)}>
+          <option value="">{archived ? t("Select archived chat") : t("New conversation")}</option>
           {index?.chats.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
         </select>
         <button type="button" onClick={newChat} disabled={busy} title={t("Start a separate conversation with the current settings")}>＋ {t("New")}</button>
-        <Menu trigger="•••" label="Chat options" items={[
-          { label: settings ? "Back to chat" : "Settings", onSelect: () => setSettings(x => !x) },
-          ...(!busy ? [{ label: archived ? "Active conversations" : "Archived conversations", onSelect: switchArchive }] : []),
+        <Menu trigger="•••" label={t("Chat options")} items={[
+          { label: settings ? t("Back to chat") : t("Settings"), onSelect: () => setSettings(x => !x) },
+          ...(!busy ? [{ label: archived ? t("Active conversations") : t("Archived conversations"), onSelect: switchArchive }] : []),
           ...(id && !busy && !active ? [
-            { label: readOnly ? "Restore conversation" : "Archive conversation", onSelect: () => { void lifecycle(readOnly ? "restore" : "archive"); } },
-            { label: "Delete conversation…", onSelect: () => setConfirmDelete(true), danger: true },
+            { label: readOnly ? t("Restore conversation") : t("Archive conversation"), onSelect: () => { void lifecycle(readOnly ? "restore" : "archive"); } },
+            { label: t("Delete conversation…"), onSelect: () => setConfirmDelete(true), danger: true },
           ] : []),
         ]} />
       </div>
-      {archived && <div className="chat-archive-banner">Archived conversations<button type="button" disabled={busy} onClick={switchArchive}>Back to chat</button></div>}
+      {archived && <div className="chat-archive-banner">{t("Archived conversations")}<button type="button" disabled={busy} onClick={switchArchive}>{t("Back to chat")}</button></div>}
       {confirmDelete && <div className="chat-delete-confirm" role="alert">
-        <p>Delete “{view?.chat.title ?? index?.chats.find(c => c.id === id)?.title}” permanently? This removes its messages and action receipts. Changes already made in the world remain.</p>
-        <div><button type="button" className="danger" disabled={busy || active} onClick={() => lifecycle("delete")}>Delete permanently</button><button type="button" disabled={busy} onClick={() => setConfirmDelete(false)}>Cancel</button></div>
+        <p>{t("Delete “{title}” permanently? This removes its messages and action receipts. Changes already made in the world remain.", { title: view?.chat.title ?? index?.chats.find(c => c.id === id)?.title ?? "" })}</p>
+        <div><button type="button" className="danger" disabled={busy || active} onClick={() => lifecycle("delete")}>{t("Delete permanently")}</button><button type="button" disabled={busy} onClick={() => setConfirmDelete(false)}>{t("Cancel")}</button></div>
       </div>}
       {settings && <div className="owner-chat-settings">
-        {!index?.credentials.length ? <div className="empty"><p>This chat needs an available API key in its world.</p><button type="button" onClick={onKeys}>Open API keys</button></div> : config && <>
+        {!index?.credentials.length ? <div className="empty"><p>{t("This chat needs an available API key in its world.")}</p><button type="button" onClick={onKeys}>{t("Open API keys")}</button></div> : config && <>
           <div className="chat-settings-grid">
-            <label>API key<select value={config.credentialId} disabled={active || busy || readOnly} onChange={e => {
+            <label>{t("API key")}<select value={config.credentialId} disabled={active || busy || readOnly} onChange={e => {
               const k = index.credentials.find(x => x.id === e.target.value)!;
               setConfig({ ...config, credentialId: k.id, model: k.models[0]!, effort: "medium" });
             }}>{index.credentials.map(k => <option key={k.id} value={k.id}>{k.name} · {k.provider}</option>)}</select></label>
-            <label>Model<select value={config.model} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, model: e.target.value })}>
+            <label>{t("Model")}<select value={config.model} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, model: e.target.value })}>
               {selectedKey?.models.map(m => <option key={m}>{m}</option>)}
             </select></label>
-            <label>Effort<select value={config.effort ?? ""} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, effort: e.target.value || null })}>
-              <option value="">Provider default</option>{["low", "medium", "high", "xhigh", "max"].map(v => <option key={v}>{v}</option>)}
+            <label>{t("Effort")}<select value={config.effort ?? ""} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, effort: e.target.value || null })}>
+              <option value="">{t("Provider default")}</option>{["low", "medium", "high", "xhigh", "max"].map(v => <option key={v}>{v}</option>)}
             </select></label>
           </div>
-          <details className="chat-advanced-settings"><summary>Limits & confirmations</summary><div className="chat-settings-grid">
-            <label>Confirm changes<select value={config.approvalMode} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, approvalMode: e.target.value as Config["approvalMode"] })}>
-              <option value="important">Important actions</option><option value="all">Every change</option>
+          <details className="chat-advanced-settings"><summary>{t("Limits & confirmations")}</summary><div className="chat-settings-grid">
+            <label>{t("Confirm changes")}<select value={config.approvalMode} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, approvalMode: e.target.value as Config["approvalMode"] })}>
+              <option value="important">{t("Important actions")}</option><option value="all">{t("Every change")}</option>
             </select></label>
-            <label>Context budget<input type="number" min={8192} max={1000000} step={1024} value={config.contextLimit} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, contextLimit: Number(e.target.value) })} /></label>
-            <label>Output limit<input type="number" min={256} max={32000} step={256} value={config.maxOutputTokens} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, maxOutputTokens: Number(e.target.value) })} /></label>
-            <label>Steps per reply<input type="number" min={1} max={40} value={config.maxTurns} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, maxTurns: Number(e.target.value) })} /></label>
+            <label>{t("Context budget")}<input type="number" min={8192} max={1000000} step={1024} value={config.contextLimit} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, contextLimit: Number(e.target.value) })} /></label>
+            <label>{t("Output limit")}<input type="number" min={256} max={32000} step={256} value={config.maxOutputTokens} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, maxOutputTokens: Number(e.target.value) })} /></label>
+            <label>{t("Steps per reply")}<input type="number" min={1} max={40} value={config.maxTurns} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, maxTurns: Number(e.target.value) })} /></label>
           </div></details>
         {index?.profile && <details className="entity-chat-instructions">
-          <summary>Persona instructions · {index.profile.role}</summary>
+          <summary>{t("Persona instructions")} · {index.profile.role}</summary>
           <p className="muted">{index.profile.authority}</p>
-          <label>Default instructions<textarea readOnly rows={4} value={index.profile.template} /></label>
-          {index.profile.instructions && <label>Custom instructions<textarea readOnly rows={4} value={index.profile.instructions} /></label>}
-          <p className="muted small">{subject?.type === "agent" ? "Edit custom instructions in this agent’s Config tab." : "Edit instructions for this object or its kind in the world editor."} The persona can create useful follow-up tasks; important changes require confirmation.</p>
+          <label>{t("Default instructions")}<textarea readOnly rows={4} value={index.profile.template} /></label>
+          {index.profile.instructions && <label>{t("Custom instructions")}<textarea readOnly rows={4} value={index.profile.instructions} /></label>}
+          <p className="muted small">{subject?.type === "agent" ? t("Edit custom instructions in this agent’s Config tab.") : t("Edit instructions for this object or its kind in the world editor.")} {t("The persona can create useful follow-up tasks; important changes require confirmation.")}</p>
         </details>}
 
-          <p className="muted">New conversations keep these settings. Changes here apply to this chat, independently of the agent’s runtime.</p>
-          <button type="button" className="primary" disabled={active || busy || readOnly} onClick={saveSettings}>Save settings</button>
+          <p className="muted">{t("New conversations keep these settings. Changes here apply to this chat, independently of the agent’s runtime.")}</p>
+          <button type="button" className="primary" disabled={active || busy || readOnly} onClick={saveSettings}>{t("Save settings")}</button>
         </>}
       </div>}
       <details className="owner-chat-context">
         <summary><span>{t("Context")} {compactNumber(context)} / {compactNumber(contextBudget)}</span><span className="muted">{view?.chat.countMode === "api" ? "" : "≈ "}{t("Auto compact")} <span aria-hidden>⌄</span></span></summary>
-        <progress max={contextBudget} value={Math.min(context, contextBudget)} aria-label="Context usage" />
-        <div className="chat-usage muted">Input {number(usage?.inputTokens)} · Output {number(usage?.outputTokens)} · Cached {number(usage?.cachedTokens)}{usage?.compactions ? ` · ${usage.compactions} compacts` : ""}
-          {id && <button type="button" disabled={active || busy || readOnly || !messages.length} onClick={compact}>Compact now</button>}
+        <progress max={contextBudget} value={Math.min(context, contextBudget)} aria-label={t("Context usage")} />
+        <div className="chat-usage muted">{t("Input {i} · Output {o} · Cached {c}", { i: number(usage?.inputTokens), o: number(usage?.outputTokens), c: number(usage?.cachedTokens) })}{usage?.compactions ? t(" · {n} compacts", { n: usage.compactions }) : ""}
+          {id && <button type="button" disabled={active || busy || readOnly || !messages.length} onClick={compact}>{t("Compact now")}</button>}
         </div>
-        <p className="muted">{view?.chat.countMode === "api" ? "Counted by the provider." : "Estimated context size."} Compacts automatically at 75% of the input budget. History stays available.</p>
-        {!!usage?.incompleteRequests && <small className="muted">Usage totals are incomplete for {usage.incompleteRequests} interrupted or unreported request(s).</small>}
+        <p className="muted">{view?.chat.countMode === "api" ? t("Counted by the provider.") : t("Estimated context size.")} {t("Compacts automatically at 75% of the input budget. History stays available.")}</p>
+        {!!usage?.incompleteRequests && <small className="muted">{t("Usage totals are incomplete for {n} interrupted or unreported request(s).", { n: usage.incompleteRequests })}</small>}
       </details>
       <div className="owner-chat-history" ref={scroll} onScroll={() => {
         const s = scroll.current!; stick.current = s.scrollHeight - s.scrollTop - s.clientHeight < 90;
-      }} aria-label="Chat history">
-        {view?.hasOlder && !historyExhausted && <button type="button" className="chat-older" disabled={busy} onClick={more}>Load earlier messages</button>}
-        {readOnly && <p className="chat-archive-notice muted">{id ? "This chat is archived. Restore it to continue." : "Select an archived chat above, or start a new conversation."}</p>}
+      }} aria-label={t("Chat history")}>
+        {view?.hasOlder && !historyExhausted && <button type="button" className="chat-older" disabled={busy} onClick={more}>{t("Load earlier messages")}</button>}
+        {readOnly && <p className="chat-archive-notice muted">{id ? t("This chat is archived. Restore it to continue.") : t("Select an archived chat above, or start a new conversation.")}</p>}
         {!messages.length && !active && !readOnly && <div className="chat-welcome">
-          <h3>{subject ? `Talk with ${assistantName}` : "Your world, one conversation"}</h3>
-          <p>{subject ? "Ask a question or think something through together. Tasks are created when there is work to do." : "Ask about your team, or tell me what you want to change."}</p>
+          <h3>{subject ? t("Talk with {name}", { name: assistantName }) : t("Your world, one conversation")}</h3>
+          <p>{subject ? t("Ask a question or think something through together. Tasks are created when there is work to do.") : t("Ask about your team, or tell me what you want to change.")}</p>
           <div className="chat-suggestions">{(subject ? ["Bạn có thể giúp tôi những gì?", "Cùng phân tích tình trạng hiện tại"] : ["Tóm tắt tình trạng hiện tại", "Ai đang cần tôi xử lý?"]).map(text => <button type="button" key={text} onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}</div>
-          <small className="muted">Private to you · Important changes need confirmation.</small>
+          <small className="muted">{t("Private to you · Important changes need confirmation.")}</small>
         </div>}
         {timeline.map(row => row.kind === "action" ? <ActionCard key={row.item.id} action={row.item} busy={busy} decide={decide} agents={agents} tasks={tasks} credentials={index?.credentials ?? []} /> : row.kind === "activity" ? <details className="chat-activity" key={row.runId}>
-          <summary>{row.items.length} {row.items.length === 1 ? "step" : "steps"}{row.items.some(a => a.status === "failed") ? ` · ${row.items.filter(a => a.status === "failed").length} couldn't complete` : " completed"}</summary>
+          <summary>{row.items.length} {row.items.length === 1 ? t("step") : t("steps")}{row.items.some(a => a.status === "failed") ? t(" · {n} couldn't complete", { n: row.items.filter(a => a.status === "failed").length }) : t(" completed")}</summary>
           <div>{row.items.map(a => <ActionCard key={a.id} action={a} busy={busy} decide={decide} agents={agents} tasks={tasks} credentials={index?.credentials ?? []} />)}</div>
         </details> : <article key={row.item.id} className={`chat-message chat-${row.item.role}`}>
           <div className="chat-message-label">{row.item.role === "user" ? t("You") : row.item.role === "notice" ? t("Update") : assistantName}{row.item.partial && <span className="muted"> · {t("partial response")}</span>}</div>
           <ChatText text={row.item.text} />
         </article>)}
         {view?.run?.partialText && <article className="chat-message chat-assistant"><div className="chat-message-label">{assistantName} · {t("writing")}</div><ChatText text={view.run.partialText} /></article>}
-        {active && <div className="chat-working" role="status">{actionable.length ? "Waiting for your confirmation above" : `Working · step ${view?.run?.rounds ?? 0} of ${config?.maxTurns ?? 5}`}</div>}
+        {active && <div className="chat-working" role="status">{actionable.length ? t("Waiting for your confirmation above") : t("Working · step {n} of {max}", { n: view?.run?.rounds ?? 0, max: config?.maxTurns ?? 5 })}</div>}
         {view?.run?.error && <div className="chat-error" role="status">{view.run.error}</div>}
       </div>
       {error && <div className="chat-error" role="alert">{error}</div>}
       <form className="owner-chat-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
-        <textarea ref={composer} aria-label={`Message ${assistantName}`} placeholder={readOnly ? "Restore this chat to continue…" : config ? subject ? `Ask ${assistantName} or discuss an idea…` : t("Ask or give an instruction for this world…") : "Add an API key to start…"} value={draft} rows={2} maxLength={50000} disabled={!config || readOnly} onChange={e => setDraft(e.target.value)}
+        <textarea ref={composer} aria-label={t("Message {name}", { name: assistantName })} placeholder={!index ? t("Loading…") : readOnly ? t("Restore this chat to continue…") : config ? subject ? t("Ask {name} or discuss an idea…", { name: assistantName }) : t("Ask or give an instruction for this world…") : t("Add an API key to start…")} value={draft} rows={2} maxLength={50000} disabled={!config || readOnly} onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && window.matchMedia("(min-width: 701px)").matches) { e.preventDefault(); if (!busy && !active) void send(); } }} />
-        <div className="chat-send-row"><small className="muted">{config ? modelLabel(config.model) : "Choose a model"}{config?.effort ? ` · ${config.effort}` : ""}</small>
+        <div className="chat-send-row"><small className="muted">{config ? modelLabel(config.model) : index ? t("Choose a model") : ""}{config?.effort ? ` · ${config.effort}` : ""}</small>
           {active ? <button type="button" disabled={busy} onClick={() => execute(async () => { await api("POST", `${base}/${id}/stop`); await refresh(id!); })}>{t("Stop")}</button> : <button type="submit" className="primary" disabled={busy || readOnly || !draft.trim() || !config}>{busy ? t("Sending…") : `${t("Send")} ↑`}</button>}
         </div>
       </form>

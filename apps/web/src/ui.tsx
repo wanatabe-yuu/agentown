@@ -1,4 +1,5 @@
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { t as tr } from "./i18n.ts";
 import { t } from "./i18n.ts";
 
 export function ago(iso: string | null, now = Date.now()): string {
@@ -76,7 +77,7 @@ export function Modal({ title, onClose, children, wide, className = "", style }:
       <div ref={dialog} className={`modal ${wide ? "wide" : ""} ${className}`} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modal-head">
           <h2>{title}</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={tr("Close")}>
             ×
           </button>
         </header>

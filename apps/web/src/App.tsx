@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { t as tr } from "./i18n.ts";
 import { AdminDialog } from "./Admin.tsx";
 import { AgentPanel } from "./AgentPanel.tsx";
 import { AssetsDialog } from "./Assets.tsx";
@@ -50,7 +51,7 @@ export function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  if (account === undefined) return <div className="center muted">Loading…</div>;
+  if (account === undefined) return <div className="center muted">{tr("Loading…")}</div>;
   if (!account) {
     return (
       <Login
@@ -72,10 +73,10 @@ export function App() {
     return (
       <div className="center">
         <div className="login">
-          <h1>No organization yet</h1>
+          <h1>{tr("No organization yet")}</h1>
           <p className="muted">You are signed in as {account.user?.displayName}, but you do not belong to any organization. Ask your admin to add you.</p>
           <button type="button" onClick={signOut}>
-            Sign out
+            {tr("Sign out")}
           </button>
         </div>
       </div>
@@ -217,7 +218,7 @@ function OrgApp({
         </div>
         <div className="stats">{t("{n} agents · {w} working", { n: active.length, w: working })}</div>
         <div className="spacer" />
-        <div className="seg-toggle" role="group" aria-label="View">
+        <div className="seg-toggle" role="group" aria-label={tr("View")}>
           <button type="button" className={view === "office" ? "active" : ""} onClick={() => setView("office")}>
             {t("Office")}
           </button>
@@ -253,7 +254,7 @@ function OrgApp({
           />
         )}
         <Menu
-          label="Account"
+          label={tr("Account")}
           trigger={
             <span className="who">
               <span className="avatar-sm" aria-hidden>
@@ -466,16 +467,16 @@ function AuditDialog({ onClose, now }: { onClose: () => void; now: number }) {
           <tbody>
             {shown.map((r) => (
               <tr key={r.id}>
-                <td data-label="When" className="muted small">{ago(r.at, now)}</td>
-                <td data-label="Actor">
+                <td data-label={tr("When")} className="muted small">{ago(r.at, now)}</td>
+                <td data-label={tr("Actor")}>
                   <code>{r.actor}</code>
                 </td>
-                <td data-label="Action">
+                <td data-label={tr("Action")}>
                   <code>{r.action}</code>
                 </td>
-                <td data-label="Target">{r.target}</td>
-                <td data-label="Decision">{r.allowed ? <span className="pill pill-good">{t("allowed")}</span> : <span className="pill pill-bad">{t("denied")}</span>}</td>
-                <td data-label="Reason" className="small mobile-wide">{r.reason}</td>
+                <td data-label={tr("Target")}>{r.target}</td>
+                <td data-label={tr("Decision")}>{r.allowed ? <span className="pill pill-good">{t("allowed")}</span> : <span className="pill pill-bad">{t("denied")}</span>}</td>
+                <td data-label={tr("Reason")} className="small mobile-wide">{r.reason}</td>
               </tr>
             ))}
           </tbody>
@@ -487,7 +488,7 @@ function AuditDialog({ onClose, now }: { onClose: () => void; now: number }) {
 
 function Legend() {
   return (
-    <div className="legend" aria-label="Legend">
+    <div className="legend" aria-label={tr("Legend")}>
       <span>
         <i className="sw sw-good" /> {t("runtime up")}
       </span>
@@ -521,13 +522,12 @@ function Login({ onToken, error }: { onToken: (t: string) => void; error: string
       >
         <h1>Agentown</h1>
         <p className="muted">
-          Paste your access token. The owner gets theirs from a terminal with <code>agentownctl token</code> (or{" "}
-          <code>.agentown/owner-token</code> when running from source); everyone else gets one from the owner under Users.
+          {tr("Paste your access token.")} {tr("The owner runs")} <code>agentownctl token</code> {tr("on the server")} ({tr("or reads")} <code>.agentown/owner-token</code> {tr("when running from source")}); {tr("everyone else gets one from the owner under Members.")}
         </p>
-        <input ref={ref} type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="aho_…" aria-label="Access token" />
+        <input ref={ref} type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="aho_…" aria-label={tr("Access token")} />
         {error && <p className="error">{error}</p>}
         <button type="submit" className="primary">
-          Enter the office
+          {tr("Enter the office")}
         </button>
       </form>
     </div>

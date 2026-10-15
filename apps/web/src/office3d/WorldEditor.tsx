@@ -1,4 +1,5 @@
 import { requestId } from "../requestId.ts";
+import { t as tr } from "../i18n.ts";
 import { chatInstructionTemplate } from "@agentown/core";
 import { BEHAVIORS, CHARACTERS, checkWorld, SHAPES, type World, worldSchema } from "@agentown/core/world";
 import { useState } from "react";
@@ -64,13 +65,13 @@ function Vec3({ value, onChange, label }: { value: number[] | undefined; onChang
 export function WorldEditor(p: EditorProps) {
   const [tab, setTab] = useState<Tab>("objects");
   return (
-    <aside className="world-editor" aria-label="World editor">
+    <aside className="world-editor" aria-label={tr("World editor")}>
       <div className="btn-row">
         <button type="button" className="primary" disabled={!p.dirty || p.saving || p.errors.length > 0} onClick={p.onSave}>
-          Save world
+          {tr("Save world")}
         </button>
-        <button type="button" disabled={!p.canUndo} onClick={p.onUndo} title="Undo (Ctrl+Z)">
-          Undo
+        <button type="button" disabled={!p.canUndo} onClick={p.onUndo} title={tr("Undo (Ctrl+Z)")}>
+          {tr("Undo")}
         </button>
         <button type="button" onClick={p.onDiscard}>
           {p.dirty ? "Discard" : "Close"}
@@ -105,29 +106,29 @@ function ObjectsTab(p: EditorProps) {
   const here = (p.draft.objects ?? []).map((o: Draft, i: number) => ({ o, i })).filter((x: { o: Draft }) => x.o.room === p.roomId);
   return (
     <section>
-      <p className="muted small">Click an object in the office to select it, then drag the handles. Pick a room (list above the office, or click its floor) to add things to it.</p>
-      <div className="seg-toggle" role="group" aria-label="Handle">
+      <p className="muted small">{tr("Click an object in the office to select it, then drag the handles. Pick a room (list above the office, or click its floor) to add things to it.")}</p>
+      <div className="seg-toggle" role="group" aria-label={tr("Handle")}>
         <button type="button" className={p.mode === "translate" ? "active" : ""} onClick={() => p.setMode("translate")}>
-          Move
+          {tr("Move")}
         </button>
         <button type="button" className={p.mode === "rotate" ? "active" : ""} onClick={() => p.setMode("rotate")}>
-          Turn
+          {tr("Turn")}
         </button>
       </div>
       {obj && (
         <div className="editor-card">
           <b>{p.draft.kinds?.[obj.kind]?.name ?? obj.kind}</b> <span className="muted small">in {obj.room}</span>
-          <Num label="scale" value={obj.scale ?? 1} min={0.05} max={20} onChange={(v) => p.edit((w) => (w.objects[p.selected!].scale = v))} />
-          <Num label="turn°" value={obj.rotationY ?? 0} step={15} onChange={(v) => p.edit((w) => (w.objects[p.selected!].rotationY = v))} />
+          <Num label={tr("scale")} value={obj.scale ?? 1} min={0.05} max={20} onChange={(v) => p.edit((w) => (w.objects[p.selected!].scale = v))} />
+          <Num label={tr("turn°")} value={obj.rotationY ?? 0} step={15} onChange={(v) => p.edit((w) => (w.objects[p.selected!].rotationY = v))} />
           <label className="num">
-            <span>label</span>
+            <span>{tr("label")}</span>
             <input value={obj.label ?? ""} maxLength={40} onChange={(e) => p.edit((w) => (w.objects[p.selected!].label = e.target.value || undefined))} />
           </label>
           <label className="num">
-            <span>title</span>
+            <span>{tr("title")}</span>
             <input value={obj.title ?? ""} maxLength={40} placeholder={p.draft.kinds?.[obj.kind]?.title || "role"} onChange={(e) => p.edit((w) => (w.objects[p.selected!].title = e.target.value || undefined))} />
           </label>
-          <label className="object-chat-field">Chat instructions<textarea rows={3} maxLength={12000} placeholder="Optional personality or context for this object" value={obj.chat?.instructions ?? ""} onChange={e => p.edit(w => { w.objects[p.selected!].chat = { instructions: e.target.value }; })} /></label>
+          <label className="object-chat-field">{tr("Chat instructions")}<textarea rows={3} maxLength={12000} placeholder={tr("Optional personality or context for this object")} value={obj.chat?.instructions ?? ""} onChange={e => p.edit(w => { w.objects[p.selected!].chat = { instructions: e.target.value }; })} /></label>
           <div className="btn-row">
             <button
               type="button"
@@ -140,7 +141,7 @@ function ObjectsTab(p: EditorProps) {
                 })
               }
             >
-              Duplicate
+              {tr("Duplicate")}
             </button>
             <button
               type="button"
@@ -150,7 +151,7 @@ function ObjectsTab(p: EditorProps) {
                 p.setSelected(null);
               }}
             >
-              Delete
+              {tr("Delete")}
             </button>
           </div>
         </div>
@@ -173,11 +174,11 @@ function ObjectsTab(p: EditorProps) {
             {k.name}
           </button>
         ))}
-        {kinds.length === 0 && <span className="muted small">No kinds yet: make one in the kinds tab.</span>}
+        {kinds.length === 0 && <span className="muted small">{tr("No kinds yet: make one in the kinds tab.")}</span>}
       </div>
       {room && (
         <>
-          <h4>In this room</h4>
+          <h4>{tr("In this room")}</h4>
           <ul className="task-list">
             {here.map(({ o, i }: { o: Draft; i: number }) => (
               <li key={i}>
@@ -201,8 +202,8 @@ function RoomsTab(p: EditorProps) {
   return (
     <section>
       <div className="form-row">
-        <select value={p.roomId} onChange={(e) => p.setRoomId(e.target.value)} aria-label="Room">
-          <option value="">Pick a room…</option>
+        <select value={p.roomId} onChange={(e) => p.setRoomId(e.target.value)} aria-label={tr("Room")}>
+          <option value="">{tr("Pick a room…")}</option>
           {all.map(({ floor, room: r }) => (
             <option key={r.id} value={r.id}>
               {floor.name} · {r.name}
@@ -219,19 +220,19 @@ function RoomsTab(p: EditorProps) {
             p.setRoomId(id);
           }}
         >
-          Add room
+          {tr("Add room")}
         </button>
       </div>
       {room && (
         <div className="editor-card">
           <label className="num wide">
-            <span>name</span>
+            <span>{tr("name")}</span>
             <input value={room.name} maxLength={60} onChange={(e) => set((r) => (r.name = e.target.value))} />
           </label>
           <label className="num wide">
-            <span>department</span>
+            <span>{tr("department")}</span>
             <select value={room.department ?? ""} onChange={(e) => set((r) => (r.department = e.target.value || undefined))}>
-              <option value="">— none (agents do not sit here) —</option>
+              <option value="">{tr("— none (agents do not sit here) —")}</option>
               {p.departments.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
@@ -243,23 +244,23 @@ function RoomsTab(p: EditorProps) {
             {(["x", "z", "w", "d"] as const).map((k) => (
               <Num key={k} label={k} value={room.area[k]} step={0.5} min={k === "w" || k === "d" ? 2 : -500} onChange={(v) => set((r) => (r.area[k] = v))} />
             ))}
-            <Num label="wall m" value={room.wallHeight ?? 2.6} step={0.1} min={0.2} max={10} onChange={(v) => set((r) => (r.wallHeight = v))} />
-            <Num label="seats" value={room.seats} step={1} min={0} onChange={(v) => set((r) => (r.seats = v))} />
+            <Num label={tr("wall m")} value={room.wallHeight ?? 2.6} step={0.1} min={0.2} max={10} onChange={(v) => set((r) => (r.wallHeight = v))} />
+            <Num label={tr("seats")} value={room.seats} step={1} min={0} onChange={(v) => set((r) => (r.seats = v))} />
           </div>
           <div className="nums">
             <label className="num">
-              <span>floor</span>
+              <span>{tr("floor")}</span>
               <input type="color" value={room.floorColor ?? "#e5e0d8"} onChange={(e) => set((r) => (r.floorColor = e.target.value))} />
             </label>
             <label className="num">
-              <span>walls</span>
+              <span>{tr("walls")}</span>
               <input type="color" value={room.wallColor ?? "#9aa3ad"} onChange={(e) => set((r) => (r.wallColor = e.target.value))} />
             </label>
             {(["floorTexture", "wallTexture"] as const).map((k) => (
               <label key={k} className="num">
                 <span>{k === "floorTexture" ? "floor image" : "wall image"}</span>
                 <select value={room[k] ?? ""} onChange={(e) => set((r) => (r[k] = e.target.value || undefined))}>
-                  <option value="">none</option>
+                  <option value="">{tr("none")}</option>
                   {textures.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
@@ -269,16 +270,16 @@ function RoomsTab(p: EditorProps) {
               </label>
             ))}
           </div>
-          <h4>Doors</h4>
+          <h4>{tr("Doors")}</h4>
           {(room.doors ?? []).map((d: Draft, i: number) => (
             <div key={i} className="form-row">
-              <select value={d.side} onChange={(e) => set((r) => (r.doors[i].side = e.target.value))} aria-label="Wall">
+              <select value={d.side} onChange={(e) => set((r) => (r.doors[i].side = e.target.value))} aria-label={tr("Wall")}>
                 {SIDES.map((s) => (
                   <option key={s}>{s}</option>
                 ))}
               </select>
               <Num label="at" value={d.at} step={0.5} min={0} onChange={(v) => set((r) => (r.doors[i].at = v))} />
-              <select value={d.to} onChange={(e) => set((r) => (r.doors[i].to = e.target.value))} aria-label="Leads to">
+              <select value={d.to} onChange={(e) => set((r) => (r.doors[i].to = e.target.value))} aria-label={tr("Leads to")}>
                 {all
                   .filter((x) => x.room.id !== room.id)
                   .map((x) => (
@@ -293,7 +294,7 @@ function RoomsTab(p: EditorProps) {
             </div>
           ))}
           <button type="button" disabled={all.length < 2} onClick={() => set((r) => (r.doors ??= []).push({ to: all.find((x) => x.room.id !== room.id)!.room.id, side: "east", at: 1 }))}>
-            Add door
+            {tr("Add door")}
           </button>
           <div className="btn-row" style={{ marginTop: 8 }}>
             <button
@@ -309,7 +310,7 @@ function RoomsTab(p: EditorProps) {
                 p.setRoomId("");
               }}
             >
-              Delete room (and what is in it)
+              {tr("Delete room (and what is in it)")}
             </button>
           </div>
         </div>
@@ -323,12 +324,12 @@ function FloorsTab(p: EditorProps) {
   const zones = Object.entries(p.draft.zones ?? {}) as Array<[string, string[]]>;
   return (
     <section>
-      <h4>Floors</h4>
+      <h4>{tr("Floors")}</h4>
       {(p.draft.floors ?? []).map((f: Draft, i: number) => (
         <div key={f.id} className="form-row">
-          <input value={f.name} maxLength={60} onChange={(e) => p.edit((w) => (w.floors[i].name = e.target.value))} aria-label="Floor name" />
+          <input value={f.name} maxLength={60} onChange={(e) => p.edit((w) => (w.floors[i].name = e.target.value))} aria-label={tr("Floor name")} />
           <span className="muted small">{f.rooms.length} rooms</span>
-          <button type="button" className="danger" disabled={p.draft.floors.length < 2 || f.rooms.length > 0} title="Only empty floors can be removed" onClick={() => p.edit((w) => w.floors.splice(i, 1))}>
+          <button type="button" className="danger" disabled={p.draft.floors.length < 2 || f.rooms.length > 0} title={tr("Only empty floors can be removed")} onClick={() => p.edit((w) => w.floors.splice(i, 1))}>
             ×
           </button>
         </div>
@@ -342,10 +343,10 @@ function FloorsTab(p: EditorProps) {
           })
         }
       >
-        Add floor
+        {tr("Add floor")}
       </button>
 
-      <h4>Stairs and elevators</h4>
+      <h4>{tr("Stairs and elevators")}</h4>
       {(p.draft.links ?? []).map((l: Draft, i: number) => (
         <div key={i} className="form-row">
           {(["from", "to"] as const).map((k) => (
@@ -357,9 +358,9 @@ function FloorsTab(p: EditorProps) {
               ))}
             </select>
           ))}
-          <select value={l.kind ?? "stairs"} onChange={(e) => p.edit((w) => (w.links[i].kind = e.target.value))} aria-label="Kind">
-            <option>stairs</option>
-            <option>elevator</option>
+          <select value={l.kind ?? "stairs"} onChange={(e) => p.edit((w) => (w.links[i].kind = e.target.value))} aria-label={tr("Kind")}>
+            <option value="stairs">{tr("stairs")}</option>
+            <option value="elevator">{tr("elevator")}</option>
           </select>
           <button type="button" className="danger" onClick={() => p.edit((w) => w.links.splice(i, 1))}>
             ×
@@ -367,11 +368,11 @@ function FloorsTab(p: EditorProps) {
         </div>
       ))}
       <button type="button" disabled={all.length < 2} onClick={() => p.edit((w) => (w.links ??= []).push({ from: all[0]!.room.id, to: all.at(-1)!.room.id, kind: "stairs" }))}>
-        Add stairs
+        {tr("Add stairs")}
       </button>
 
-      <h4>Zones</h4>
-      <p className="muted small">Named groups of rooms, for where things may walk (a kind's access).</p>
+      <h4>{tr("Zones")}</h4>
+      <p className="muted small">{tr("Named groups of rooms, for where things may walk (a kind's access).")}</p>
       {zones.map(([id, ids]) => (
         <div key={id} className="editor-card">
           <div className="form-row">
@@ -395,7 +396,7 @@ function FloorsTab(p: EditorProps) {
         </div>
       ))}
       <button type="button" onClick={() => p.edit((w) => ((w.zones ??= {})[freshId(Object.keys(w.zones), "zone")] = [all[0]!.room.id]))}>
-        Add zone
+        {tr("Add zone")}
       </button>
     </section>
   );
@@ -414,7 +415,7 @@ function KindsTab(p: EditorProps) {
   return (
     <section>
       <div className="form-row">
-        <select value={open} onChange={(e) => setOpen(e.target.value)} aria-label="Kind">
+        <select value={open} onChange={(e) => setOpen(e.target.value)} aria-label={tr("Kind")}>
           {Object.entries(kinds).map(([id, x]) => (
             <option key={id} value={id}>
               {(x as Draft).name} ({id})
@@ -429,34 +430,34 @@ function KindsTab(p: EditorProps) {
             setOpen(id);
           }}
         >
-          New kind
+          {tr("New kind")}
         </button>
       </div>
       {k && (
         <div className="editor-card">
           <div className="nums">
             <label className="num wide">
-              <span>name</span>
+              <span>{tr("name")}</span>
               <input value={k.name} maxLength={60} onChange={(e) => set((x) => (x.name = e.target.value))} />
             </label>
             <label className="num wide">
-              <span>title</span>
-              <input value={k.title ?? ""} maxLength={40} placeholder="role, e.g. Shop cat" onChange={(e) => set((x) => (x.title = e.target.value || undefined))} />
+              <span>{tr("title")}</span>
+              <input value={k.title ?? ""} maxLength={40} placeholder={tr("role, e.g. Shop cat")} onChange={(e) => set((x) => (x.title = e.target.value || undefined))} />
             </label>
             <label className="num">
-              <span>category</span>
+              <span>{tr("category")}</span>
               <select value={k.category} onChange={(e) => set((x) => (x.category = e.target.value))}>
-                <option value="character">character (person/animal)</option>
-                <option value="static">static</option>
-                <option value="dynamic">dynamic</option>
+                <option value="character">{tr("character (person/animal)")}</option>
+                <option value="static">{tr("static")}</option>
+                <option value="dynamic">{tr("dynamic")}</option>
               </select>
             </label>
           </div>
 
-          <h4>Look</h4>
-          <details className="object-chat-field"><summary>Default chat persona</summary><p className="muted small">{chatInstructionTemplate(k.look.character ?? "object", k.title ?? "", k.category)}</p></details>
-          <label className="object-chat-field">Chat instructions for this kind<textarea rows={3} maxLength={12000} placeholder="Optional instructions inherited by objects of this kind" value={k.chat?.instructions ?? ""} onChange={e => set(x => { x.chat = { instructions: e.target.value }; })} /></label>
-          <div className="seg-toggle" role="group" aria-label="Look">
+          <h4>{tr("Look")}</h4>
+          <details className="object-chat-field"><summary>{tr("Default chat persona")}</summary><p className="muted small">{chatInstructionTemplate(k.look.character ?? "object", k.title ?? "", k.category)}</p></details>
+          <label className="object-chat-field">{tr("Chat instructions for this kind")}<textarea rows={3} maxLength={12000} placeholder={tr("Optional instructions inherited by objects of this kind")} value={k.chat?.instructions ?? ""} onChange={e => set(x => { x.chat = { instructions: e.target.value }; })} /></label>
+          <div className="seg-toggle" role="group" aria-label={tr("Look")}>
             {(["character", "parts", "asset"] as const).map((t) => (
               <button
                 key={t}
@@ -477,7 +478,7 @@ function KindsTab(p: EditorProps) {
           {lookType === "character" && (
             <div className="nums">
               <label className="num">
-                <span>character</span>
+                <span>{tr("character")}</span>
                 <select value={k.look.character} onChange={(e) => set((x) => (x.look.character = e.target.value))}>
                   {CHARACTERS.map((c) => (
                     <option key={c}>{c}</option>
@@ -485,30 +486,30 @@ function KindsTab(p: EditorProps) {
                 </select>
               </label>
               <label className="num">
-                <span>color</span>
+                <span>{tr("color")}</span>
                 <input type="color" value={k.look.color ?? "#6b7280"} onChange={(e) => set((x) => (x.look.color = e.target.value))} />
               </label>
               <label className="num">
-                <span>accent</span>
+                <span>{tr("accent")}</span>
                 <input type="color" value={k.look.accent ?? "#3b2a20"} onChange={(e) => set((x) => (x.look.accent = e.target.value))} />
               </label>
-              <Num label="scale" value={k.look.scale ?? 1} min={0.1} max={5} onChange={(v) => set((x) => (x.look.scale = v))} />
+              <Num label={tr("scale")} value={k.look.scale ?? 1} min={0.1} max={5} onChange={(v) => set((x) => (x.look.scale = v))} />
             </div>
           )}
           {lookType === "parts" && (
             <>
               {k.look.parts.map((part: Draft, i: number) => (
                 <div key={i} className="part-row">
-                  <select value={part.shape} onChange={(e) => set((x) => (x.look.parts[i].shape = e.target.value))} aria-label="Shape">
+                  <select value={part.shape} onChange={(e) => set((x) => (x.look.parts[i].shape = e.target.value))} aria-label={tr("Shape")}>
                     {SHAPES.map((s) => (
                       <option key={s}>{s}</option>
                     ))}
                   </select>
-                  <Vec3 label="size" value={part.size} onChange={(v) => set((x) => (x.look.parts[i].size = v))} />
-                  <Vec3 label="offset" value={part.offset} onChange={(v) => set((x) => (x.look.parts[i].offset = v))} />
-                  <Vec3 label="rotation" value={part.rotation} onChange={(v) => set((x) => (x.look.parts[i].rotation = v))} />
-                  <input type="color" value={part.color ?? "#9aa3ad"} onChange={(e) => set((x) => (x.look.parts[i].color = e.target.value))} aria-label="Color" />
-                  <label className="small" title="Glows (and can blink)">
+                  <Vec3 label={tr("size")} value={part.size} onChange={(v) => set((x) => (x.look.parts[i].size = v))} />
+                  <Vec3 label={tr("offset")} value={part.offset} onChange={(v) => set((x) => (x.look.parts[i].offset = v))} />
+                  <Vec3 label={tr("rotation")} value={part.rotation} onChange={(v) => set((x) => (x.look.parts[i].rotation = v))} />
+                  <input type="color" value={part.color ?? "#9aa3ad"} onChange={(e) => set((x) => (x.look.parts[i].color = e.target.value))} aria-label={tr("Color")} />
+                  <label className="small" title={tr("Glows (and can blink)")}>
                     <input
                       type="checkbox"
                       checked={!!part.emissive}
@@ -516,21 +517,21 @@ function KindsTab(p: EditorProps) {
                     />{" "}
                     glow
                   </label>
-                  <input value={part.part ?? ""} placeholder="name" className="mono short" onChange={(e) => set((x) => (x.look.parts[i].part = e.target.value || undefined))} aria-label="Part name" />
+                  <input value={part.part ?? ""} placeholder={tr("name")} className="mono short" onChange={(e) => set((x) => (x.look.parts[i].part = e.target.value || undefined))} aria-label={tr("Part name")} />
                   <button type="button" className="danger" disabled={k.look.parts.length < 2} onClick={() => set((x) => x.look.parts.splice(i, 1))}>
                     ×
                   </button>
                 </div>
               ))}
               <button type="button" onClick={() => set((x) => x.look.parts.push({ shape: "box", size: [0.5, 0.5, 0.5], offset: [0, 0.25, 0], color: "#9aa3ad" }))}>
-                Add shape
+                {tr("Add shape")}
               </button>
             </>
           )}
           {lookType === "asset" && (
             <div className="nums">
               <label className="num wide">
-                <span>model</span>
+                <span>{tr("model")}</span>
                 <select value={k.look.asset} onChange={(e) => set((x) => (x.look.asset = e.target.value))}>
                   {models.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -554,39 +555,39 @@ function KindsTab(p: EditorProps) {
                       .catch((err) => p.notify(err.message, "error"));
                   }}
                 />
-                Upload .glb
+                {tr("Upload .glb")}
               </label>
-              <Num label="scale" value={k.look.scale ?? 1} min={0.01} max={100} onChange={(v) => set((x) => (x.look.scale = v))} />
-              <Num label="turn°" value={k.look.rotationY ?? 0} step={15} onChange={(v) => set((x) => (x.look.rotationY = v))} />
+              <Num label={tr("scale")} value={k.look.scale ?? 1} min={0.01} max={100} onChange={(v) => set((x) => (x.look.scale = v))} />
+              <Num label={tr("turn°")} value={k.look.rotationY ?? 0} step={15} onChange={(v) => set((x) => (x.look.rotationY = v))} />
             </div>
           )}
 
-          <h4>Behaviors</h4>
+          <h4>{tr("Behaviors")}</h4>
           {(k.behaviors ?? []).map((b: Draft, i: number) => (
             <div key={i} className="form-row">
-              <select value={b.type} onChange={(e) => set((x) => (x.behaviors[i].type = e.target.value))} aria-label="Behavior">
+              <select value={b.type} onChange={(e) => set((x) => (x.behaviors[i].type = e.target.value))} aria-label={tr("Behavior")}>
                 {BEHAVIORS.map((t) => (
                   <option key={t}>{t}</option>
                 ))}
               </select>
-              <select value={b.part ?? ""} onChange={(e) => set((x) => (x.behaviors[i].part = e.target.value || undefined))} aria-label="Part">
-                <option value="">whole object</option>
+              <select value={b.part ?? ""} onChange={(e) => set((x) => (x.behaviors[i].part = e.target.value || undefined))} aria-label={tr("Part")}>
+                <option value="">{tr("whole object")}</option>
                 {parts.map((n) => (
                   <option key={n}>{n}</option>
                 ))}
               </select>
-              <Num label="speed" value={b.speed ?? 1} min={0} max={20} onChange={(v) => set((x) => (x.behaviors[i].speed = v))} />
-              <Num label="amount" value={b.amount ?? 1} min={0} max={20} onChange={(v) => set((x) => (x.behaviors[i].amount = v))} />
+              <Num label={tr("speed")} value={b.speed ?? 1} min={0} max={20} onChange={(v) => set((x) => (x.behaviors[i].speed = v))} />
+              <Num label={tr("amount")} value={b.amount ?? 1} min={0} max={20} onChange={(v) => set((x) => (x.behaviors[i].amount = v))} />
               <button type="button" className="danger" onClick={() => set((x) => x.behaviors.splice(i, 1))}>
                 ×
               </button>
             </div>
           ))}
           <button type="button" onClick={() => set((x) => (x.behaviors ??= []).push({ type: "bob" }))}>
-            Add behavior
+            {tr("Add behavior")}
           </button>
 
-          <h4>May walk in</h4>
+          <h4>{tr("May walk in")}</h4>
           <div className="form-row">
             <select
               value={accessKind}
@@ -596,16 +597,16 @@ function KindsTab(p: EditorProps) {
                   x.access = v === "zone" ? { zone: Object.keys(p.draft.zones ?? {})[0] ?? "" } : v === "rooms" ? { rooms: [all[0]?.room.id] } : v;
                 })
               }
-              aria-label="Access"
+              aria-label={tr("Access")}
             >
-              <option value="own-room">its own room</option>
-              <option value="own-department">its department's rooms</option>
-              <option value="all">everywhere</option>
-              <option value="rooms">these rooms…</option>
-              <option value="zone">a zone…</option>
+              <option value="own-room">{tr("its own room")}</option>
+              <option value="own-department">{tr("its department's rooms")}</option>
+              <option value="all">{tr("everywhere")}</option>
+              <option value="rooms">{tr("these rooms…")}</option>
+              <option value="zone">{tr("a zone…")}</option>
             </select>
             {accessKind === "zone" && (
-              <select value={k.access.zone} onChange={(e) => set((x) => (x.access = { zone: e.target.value }))} aria-label="Zone">
+              <select value={k.access.zone} onChange={(e) => set((x) => (x.access = { zone: e.target.value }))} aria-label={tr("Zone")}>
                 {Object.keys(p.draft.zones ?? {}).map((z) => (
                   <option key={z}>{z}</option>
                 ))}
@@ -647,13 +648,13 @@ function KindsTab(p: EditorProps) {
                 setOpen(Object.keys(kinds).find((x) => x !== open) ?? "");
               }}
             >
-              Delete kind (and its objects)
+              {tr("Delete kind (and its objects)")}
             </button>
           </div>
         </div>
       )}
 
-      <h4>How agents look</h4>
+      <h4>{tr("How agents look")}</h4>
       <p className="muted small">A character kind per job title; others use the default, or a person in their department's color.</p>
       {["(default)", ...p.jobRoles].map((role) => {
         const current = role === "(default)" ? p.draft.avatars?.default : p.draft.avatars?.byJobRole?.[role];
@@ -687,7 +688,7 @@ function KindsTab(p: EditorProps) {
           </div>
         );
       })}
-      {Object.keys(kinds).some((id) => !ID.test(id)) && <p className="error small">Kind ids must be lowercase letters, digits and dashes.</p>}
+      {Object.keys(kinds).some((id) => !ID.test(id)) && <p className="error small">{tr("Kind ids must be lowercase letters, digits and dashes.")}</p>}
     </section>
   );
 }

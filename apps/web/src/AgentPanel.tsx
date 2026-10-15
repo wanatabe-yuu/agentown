@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import { requestId } from "./requestId.ts";
 import { AgentConfigForm } from "./Credentials.tsx";
@@ -181,7 +182,7 @@ export function AgentPanel(p: Props) {
                 <dd>
                   <code>{agent.id}</code>
                 </dd>
-                <dt>Runtime</dt>
+                <dt>{tr("Runtime")}</dt>
                 <dd>
                   <StatusPill state={agent.runtime?.state ?? "none"} /> g{agent.runtime?.generation} · {agent.runtime?.presetId}
                   {agent.runtime?.detail && <div className="muted small">{agent.runtime.detail}</div>}
@@ -189,11 +190,11 @@ export function AgentPanel(p: Props) {
                     {agent.runtime?.workloadRef ?? "—"} · {ago(agent.runtime?.observedAt ?? null, p.now)}
                   </div>
                 </dd>
-                <dt>Lifecycle</dt>
+                <dt>{tr("Lifecycle")}</dt>
                 <dd>
                   {agent.lifecycleState} · intake {agent.acceptingWork ? "open" : "paused"} · desired {agent.desiredRuntime}
                 </dd>
-                <dt>Template</dt>
+                <dt>{tr("Template")}</dt>
                 <dd>{agent.templateId}</dd>
               </dl>
             </details>
@@ -227,7 +228,7 @@ export function AgentPanel(p: Props) {
                   <tr key={g.id}>
                     <td>
                       <code>{g.action}</code>
-                      {g.delegable && <span className="tag">delegable</span>}
+                      {g.delegable && <span className="tag">{tr("delegable")}</span>}
                     </td>
                     <td data-label={t("Scope")}>
                       {describeScope(g.scope)}

@@ -1,4 +1,5 @@
 import { t } from "../i18n.ts";
+import { t as tr } from "../i18n.ts";
 import type { World } from "@agentown/core/world";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
@@ -441,7 +442,7 @@ export default function Office3D(props: Props) {
     <div ref={wrap} className="office-canvas office-3d" aria-label="Office in 3D; select an agent to open its panel">
       <div className="world-nav">
         {layout.floors.length > 1 && (
-          <div className="seg-toggle" role="group" aria-label="Floor">
+          <div className="seg-toggle" role="group" aria-label={tr("Floor")}>
             <button type="button" className={floor === "all" ? "active" : ""} onClick={() => (setFloor("all"), focus(layout.rooms))}>
               {t("All")}
             </button>
@@ -511,10 +512,10 @@ export default function Office3D(props: Props) {
         />
       )}
       <div className={`zoom-controls ${editing ? "editing" : ""}`}>
-        <button type="button" onClick={() => zoomBy(1.25)} aria-label="Zoom in">
+        <button type="button" onClick={() => zoomBy(1.25)} aria-label={tr("Zoom in")}>
           +
         </button>
-        <button type="button" onClick={() => zoomBy(0.8)} aria-label="Zoom out">
+        <button type="button" onClick={() => zoomBy(0.8)} aria-label={tr("Zoom out")}>
           −
         </button>
         <button
@@ -523,7 +524,7 @@ export default function Office3D(props: Props) {
             setFocusRoom("");
             focus(visibleRooms());
           }}
-          aria-label="Fit to screen"
+          aria-label={tr("Fit to screen")}
         >
           ⤢
         </button>
@@ -538,14 +539,13 @@ function NoWebGL({ snapshot, workOf, onSelect }: Props) {
     <div className="office-canvas no-webgl">
       <div className="notice">
         <div>
-          <b>The 3D office cannot start in this browser.</b>
+          <b>{tr("The 3D office cannot start in this browser.")}</b>
           <p className="muted small">
-            It needs WebGL 2. Turn on hardware acceleration (Chrome/Edge: Settings → System → “Use graphics acceleration when available”), then reload. Everyone is listed
-            below meanwhile.
+            {tr("It needs WebGL 2. Turn on hardware acceleration (Chrome/Edge: Settings → System → “Use graphics acceleration when available”), then reload. Everyone is listed below meanwhile.")}
           </p>
         </div>
         <button type="button" onClick={() => location.reload()}>
-          Try again
+          {tr("Try again")}
         </button>
       </div>
       <div className="dept-cards">

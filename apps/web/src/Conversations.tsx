@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
 import type { ChatTarget } from "./OwnerChat.tsx";
 import type { FeedItem, FeedKind, Snapshot, TeamMessage } from "./types.ts";
@@ -168,7 +169,7 @@ function TeamChatDialog({ teamId, snapshot, now, onClose }: { teamId: string; sn
     <Modal title={`Team · ${team?.name ?? teamId}`} onClose={onClose} wide className="team-chat">
       <p className="muted small">
         {members.map((m) => m.displayName).join(", ") || t("No one yet")}
-        {team?.runtime && <> · runtime <StatusPill state={team.runtime.state} /> g{team.runtime.generation}{team.runtime.resources ? ` · ${team.runtime.resources.cpu}m / ${team.runtime.resources.memory}Mi` : ""}</>}
+        {team?.runtime && <> {tr("· runtime")} <StatusPill state={team.runtime.state} /> g{team.runtime.generation}{team.runtime.resources ? ` · ${team.runtime.resources.cpu}m / ${team.runtime.resources.memory}Mi` : ""}</>}
       </p>
       {error && <p className="error small">{error}</p>}
       <div className="team-messages" aria-live="polite">
@@ -233,7 +234,7 @@ function FeedDialog({ kind, snapshot, now, onClose, onOpenTask }: { kind: FeedKi
       <div className="form-row">
         <span className="muted small">{t(label.hint)}</span>
         <span className="spacer" />
-        <select value={team} onChange={(e) => setTeam(e.target.value)} aria-label="Team">
+        <select value={team} onChange={(e) => setTeam(e.target.value)} aria-label={tr("Team")}>
           <option value="">{t("All teams")}</option>
           {snapshot.teams.filter((t) => t.memberIds.length).map((t) => (
             <option key={t.id} value={t.id}>
