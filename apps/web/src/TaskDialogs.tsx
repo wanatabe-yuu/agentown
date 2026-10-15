@@ -217,16 +217,16 @@ export function TaskDialog({ taskId, snapshot, onClose, onOpenTask, notify, now 
   );
 }
 
-const workLabels: Record<string, string> = { thinking: "Thinking", executing: "Running a command", waiting: "Waiting for a dependency", blocked: "Needs attention", offline: "Waiting for the agent to reconnect", error: "Agent reported an error", idle: "Preparing the next step" };
+const workLabels: Record<string, string> = { thinking: "Thinking it over", executing: "Running a command", waiting: "Waiting for a dependency", blocked: "Needs attention", offline: "Waiting for the agent to reconnect", error: "Agent reported an error", idle: "Preparing the next step" };
 function TaskActivity({ task, progress, now, agents }: { task: TaskDetail; progress: TaskProgress | null; now: number; agents: Snapshot["agents"] }) {
   const run = task.runs.at(-1);
   const active = task.status === "in_progress" && run?.status === "running";
   const heartbeatStale = active && (!progress?.current?.heartbeatAt || now - Date.parse(progress.current.heartbeatAt) > 30000);
   const resultReady = ["review", "done"].includes(task.status);
-  const title = task.status === "done" ? "Task complete" : task.status === "review" ? "Result ready · waiting for review" :
+  const title = tr(task.status === "done" ? "Task complete" : task.status === "review" ? "Result ready · waiting for review" :
     task.status === "failed" ? "Task failed" : task.status === "blocked" ? "Task needs attention" : task.status === "cancelled" ? "Task cancelled" :
-    active ? heartbeatStale ? "Waiting for an update" : workLabels[progress?.current?.state ?? "thinking"] ?? "Working" : task.assigneeAgentId ? "Waiting to start" : "Waiting for an assignee";
-  const steps = ["Created", "Processing", "Result ready", task.requiresReview ? "Approved" : "Complete"];
+    active ? heartbeatStale ? "Waiting for an update" : workLabels[progress?.current?.state ?? "thinking"] ?? "Working" : task.assigneeAgentId ? "Waiting to start" : "Waiting for an assignee");
+  const steps = ["Created", "Processing", "Result ready", task.requiresReview ? "Approved" : "Complete"].map((x) => tr(x));
   const stage = task.status === "done" ? 3 : resultReady ? 2 : active || !!run ? 1 : 0;
   const duration = run ? Math.max(0, Math.floor(((run.finished_at ? Date.parse(run.finished_at) : now) - Date.parse(run.started_at)) / 1000)) : 0;
   const elapsed = duration >= 60 ? `${Math.floor(duration / 60)}m ${duration % 60}s` : `${duration}s`;
@@ -236,31 +236,40 @@ function TaskActivity({ task, progress, now, agents }: { task: TaskDetail; progr
   return <section className={`task-progress task-progress-${task.status}`} aria-label={tr("Task progress")}>
     <div className="task-progress-heading"><h3>{title}</h3>{active && <span className="task-live-indicator">{tr("Live")}</span>}</div>
     <ol className="task-progress-stages" aria-label={tr("Task stages")}>{steps.map((step, n) => <li key={step} className={n < stage || task.status === "done" ? "complete" : n === stage ? "current" : ""} aria-current={n === stage ? "step" : undefined}><span aria-hidden>{n < stage || task.status === "done" ? "✓" : n + 1}</span>{step}</li>)}</ol>
-    <p className="muted small">Attempt {task.attempt} / {task.maxAttempts ?? 5}{run ? ` · ${run.finished_at ? "Ran for" : "Elapsed"} ${elapsed}` : ""}{progress?.current?.heartbeatAt && active ? ` · Last contact ${ago(progress.current.heartbeatAt, now)}` : ""}</p>
+    <p className="muted small">{tr("Attempt {n} / {max}", { n: task.attempt, max: task.maxAttempts ?? 5 })}{run ? ` · ${tr(run.finished_at ? "Ran for {t}" : "Elapsed {t}", { t: elapsed })}` : ""}{progress?.current?.heartbeatAt && active ? ` · ${tr("Last contact {ago}", { ago: ago(progress.current.heartbeatAt, now) })}` : ""}</p>
     {active && heartbeatStale && <p className="muted small">{tr("No recent heartbeat. Completed activity is preserved; waiting for the runtime to reconnect.")}</p>}
     {active && progress?.current?.detail && !heartbeatStale && <p className="task-current-action">{progress.current.detail}</p>}
     <ConfigurationResult task={task} agents={agents} />
     {result && (result.length > 240 ? <details className="task-progress-result"><summary><strong>{tr("Agent report · View full summary")}</strong><span className="task-result-preview">{preview}…</span></summary><ReportText text={result} /></details> : <div className="task-progress-result"><strong>{tr("Agent report")}</strong><ReportText text={result} /></div>)}
     {result && <p className="muted small">{tr("The report records what the agent said at that time. Saved configuration changes and current settings are shown separately below.")}</p>}
-    {!!task.artifacts.length && <p className="small">{task.artifacts.length} {task.artifacts.length === 1 ? "file" : "files"} available below.</p>}
-    {events.length > 0 && <details className="task-progress-timeline" open><summary>{tr("Activity")}</summary><ol>{events.map(e => <li key={e.seq}><time dateTime={e.at} title={new Date(e.at).toLocaleString()}>{new Date(e.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><div><span>{e.message}</span>{e.detail && <p>{e.detail}</p>}</div></li>)}</ol></details>}
-    {progress?.canReadLogs && <details className="task-output"><summary>Execution log · attempt {run?.attempt}</summary><pre>{progress.logs.length ? progress.logs.map(l => `[${new Date(l.at).toLocaleTimeString()}] ${l.stream}: ${l.line}`).join("\n") : "No output yet."}</pre></details>}
+    {!!task.artifacts.length && <p className="small">{tr("{n} file(s) available below.", { n: task.artifacts.length })}</p>}
+    {events.length > 0 && <details className="task-progress-timeline" open><summary>{tr("Activity")}</summary><ol>{events.map(e => <li key={e.seq}><time dateTime={e.at} title={new Date(e.at).toLocaleString()}>{new Date(e.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><div><span>{progressText(e.message)}</span>{e.detail && <p>{e.detail}</p>}</div></li>)}</ol></details>}
+    {progress?.canReadLogs && <details className="task-output"><summary>{tr("Execution log · attempt {n}", { n: run?.attempt ?? 1 })}</summary><pre>{progress.logs.length ? progress.logs.map(l => `[${new Date(l.at).toLocaleTimeString()}] ${l.stream}: ${l.line}`).join("\n") : tr("No output yet.")}</pre></details>}
   </section>;
 }
 
 const settingLabels: Record<string, string> = { model: "Model", effort: "Effort", credentialId: "Saved key", maxTurns: "Steps per task", contextLimit: "Context budget" };
-const settingValue = (key: string, value: unknown) => value == null ? "Provider default / not configured" : key === "contextLimit" ? `${Number(value).toLocaleString()} tokens` : String(value);
+const settingValue = (key: string, value: unknown) => value == null ? tr("Provider default / not configured") : key === "contextLimit" ? tr("{n} tokens", { n: Number(value).toLocaleString() }) : String(value);
+/** Progress lines come from the server in English; phrase them in the reader's language. */
+function progressText(m: string): string {
+  let x: RegExpMatchArray | null;
+  if ((x = m.match(/^Status: (.+)$/))) return tr("Status: {s}", { s: tr(x[1]!) });
+  if ((x = m.match(/^Attempt (\d+) started$/))) return tr("Attempt {n} started", { n: x[1]! });
+  if ((x = m.match(/^Execution (.+)$/))) return tr("Execution {outcome}", { outcome: tr(x[1]!) });
+  if ((x = m.match(/^File ready: (.+)$/))) return tr("File ready: {name}", { name: x[1]! });
+  return tr(m);
+}
 function ConfigurationResult({ task, agents }: { task: TaskDetail; agents: Snapshot["agents"] }) {
   const changes = task.configurationChanges ?? [];
   return <div className="task-configuration">
     {changes.some(c => c.changedSince) && <p className="config-history-notice">{tr("Some settings changed again after this task. Its historical report does not describe the current configuration.")}</p>}
-    <details className="config-receipts"><summary>Saved configuration changes · {changes.length} server records</summary>
+    <details className="config-receipts"><summary>{tr("Saved configuration changes · {n} server records", { n: changes.length })}</summary>
       {!changes.length && <p className="muted small">{tr("No configuration write is recorded for this task. An agent report alone does not verify a change.")}</p>}
-      {changes.map(c => <article key={c.id}><strong>{c.name} · {c.changed === false ? "Already matched" : c.changed ? "Saved change" : "Historical record"}</strong><p className="muted small">{new Date(c.at).toLocaleString()}{c.revision ? ` · revision ${c.revision}` : ""} · {c.linked ? "Linked task receipt" : "Recorded while this agent was running the task"}</p>
-        {Object.entries(c.saved).filter(([key]) => key in settingLabels).map(([key, saved]) => <div className="config-receipt-field" key={key}><span className="muted">{settingLabels[key]}</span><span>{c.before && key in c.before ? `${settingValue(key, c.before[key])} → ` : ""}{settingValue(key, saved)}</span>{c.current[key] !== saved && <small>Current: {settingValue(key, c.current[key])} · changed later</small>}</div>)}
+      {changes.map(c => <article key={c.id}><strong>{c.name} · {tr(c.changed === false ? "Already matched" : c.changed ? "Saved change" : "Historical record")}</strong><p className="muted small">{new Date(c.at).toLocaleString()}{c.revision ? ` · ${tr("revision {n}", { n: c.revision })}` : ""} · {tr(c.linked ? "Linked task receipt" : "Recorded while this agent was running the task")}</p>
+        {Object.entries(c.saved).filter(([key]) => key in settingLabels).map(([key, saved]) => <div className="config-receipt-field" key={key}><span className="muted">{tr(settingLabels[key]!)}</span><span>{c.before && key in c.before ? `${settingValue(key, c.before[key])} → ` : ""}{settingValue(key, saved)}</span>{c.current[key] !== saved && <small>{tr("Current: {v} · changed later", { v: settingValue(key, c.current[key]) })}</small>}</div>)}
       </article>)}
     </details>
-    <details className="config-current-world"><summary>{tr("Current world configuration")}</summary><p className="muted small">{tr("Live saved settings. Context budget does not increase a provider's model window.")}</p><div className="report-table-scroll"><table><thead><tr><th>{tr("Agent")}</th><th>{tr("Model")}</th><th>{tr("Effort")}</th><th>{tr("Context budget")}</th></tr></thead><tbody>{agents.filter(a => a.lifecycleState !== "retired").map(a => <tr key={a.id}><th>{a.displayName}</th><td>{a.config.model ?? "Template default"}</td><td>{a.config.effort ?? "Provider default"}</td><td>{a.config.contextLimit?.toLocaleString() ?? "Provider default"}</td></tr>)}</tbody></table></div></details>
+    <details className="config-current-world"><summary>{tr("Current world configuration")}</summary><p className="muted small">{tr("Live saved settings. Context budget does not increase a provider's model window.")}</p><div className="report-table-scroll"><table><thead><tr><th>{tr("Agent")}</th><th>{tr("Model")}</th><th>{tr("Effort")}</th><th>{tr("Context budget")}</th></tr></thead><tbody>{agents.filter(a => a.lifecycleState !== "retired").map(a => <tr key={a.id}><th>{a.displayName}</th><td>{a.config.model ?? tr("Template default")}</td><td>{a.config.effort ?? tr("Provider default")}</td><td>{a.config.contextLimit?.toLocaleString() ?? tr("Provider default")}</td></tr>)}</tbody></table></div></details>
   </div>;
 }
 

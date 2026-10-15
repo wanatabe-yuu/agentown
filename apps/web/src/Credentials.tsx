@@ -180,7 +180,7 @@ export function CredentialsDialog({ catalog, onClose, notify, now }: { catalog: 
             <option value="bearer">Authorization: Bearer &lt;API key&gt;</option><option value="x-api-key">x-api-key: &lt;API key&gt;</option><option value="custom">{tr("Custom header name")}</option>
           </select></label>
           {authMode === "custom" && <>
-            <label>{tr("Header name")}<input value={headerName} onChange={e => setHeaderName(e.target.value)} placeholder="e.g. x-gateway-key" required maxLength={64} pattern="[A-Za-z0-9][A-Za-z0-9-]*" autoComplete="off" /></label>
+            <label>{tr("Header name")}<input value={headerName} onChange={e => setHeaderName(e.target.value)} placeholder={tr("e.g. x-gateway-key")} required maxLength={64} pattern="[A-Za-z0-9][A-Za-z0-9-]*" autoComplete="off" /></label>
             <label>{tr("Key format")}<select value={headerScheme} onChange={e => setHeaderScheme(e.target.value as "raw" | "bearer")}><option value="raw">{tr("API key directly")}</option><option value="bearer">{tr("Bearer + API key")}</option></select></label>
           </>}
           <p className="muted small">The selected header uses {editing ? "the saved API key" : "the API key below"}. Only that authentication header is sent.</p>
@@ -288,7 +288,7 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
   return (
     <form className="form" onSubmit={save} onChangeCapture={() => setDirty(true)}>
       {externalChange && <div className="review-box"><p>{tr("Settings changed elsewhere while you were editing. Your draft is preserved.")}</p><button type="button" onClick={() => loadSaved(detail)}>{tr("Load saved settings")}</button></div>}
-      <p className="muted small">Saved configuration · revision {detail.configRevision}{dirty ? " · Unsaved changes" : ""}</p>
+      <p className="muted small">{tr("Saved configuration · revision {n}", { n: detail.configRevision })}{dirty ? ` · ${tr("Unsaved changes")}` : ""}</p>
       {harness === "script" && <p className="muted small">{tr("This agent runs the deterministic script harness: model settings are stored but not used.")}</p>}
       <label>
         {tr("API key")}
