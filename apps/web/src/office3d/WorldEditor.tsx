@@ -9,6 +9,7 @@ import type { Department } from "../types.ts";
 /** The world document as edited (the template's format). */
 export type Draft = Record<string, any>;
 type Tab = "objects" | "rooms" | "floors" | "kinds";
+const TAB_NAME: Record<Tab, string> = { objects: "Objects", rooms: "Rooms", floors: "Floors", kinds: "Kinds" };
 const ID = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
 const SIDES = ["north", "south", "east", "west"];
 
@@ -74,7 +75,7 @@ export function WorldEditor(p: EditorProps) {
           {tr("Undo")}
         </button>
         <button type="button" onClick={p.onDiscard}>
-          {p.dirty ? "Discard" : "Close"}
+          {tr(p.dirty ? "Discard" : "Close")}
         </button>
       </div>
       {p.errors.length > 0 && (
@@ -87,7 +88,7 @@ export function WorldEditor(p: EditorProps) {
       <nav className="tabs" role="tablist">
         {(["objects", "rooms", "floors", "kinds"] as Tab[]).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-            {t}
+            {tr(TAB_NAME[t])}
           </button>
         ))}
       </nav>
@@ -156,7 +157,7 @@ function ObjectsTab(p: EditorProps) {
           </div>
         </div>
       )}
-      <h4>Add to {room ? room.name : "…pick a room"}</h4>
+      <h4>{room ? tr("Add to {room}", { room: room.name }) : tr("Add: pick a room first")}</h4>
       <div className="palette">
         {kinds.map(([id, k]) => (
           <button

@@ -798,6 +798,11 @@ const VI: Record<string, string> = {
   "Template default": "Mặc định của template",
   "Activity updated": "Cập nhật hoạt động",
   "Context updated": "Đã cập nhật ngữ cảnh",
+  "Objects": "Đồ vật",
+  "Rooms": "Phòng",
+  "Kinds": "Loại",
+  "Add to {room}": "Thêm vào {room}",
+  "Add: pick a room first": "Thêm: chọn phòng trước",
   // activity
   "{name} joined as {role}": "{name} gia nhập với vị trí {role}",
   "{from} → {to}: {title}": "{from} → {to}: {title}",
