@@ -476,7 +476,7 @@ function KindsTab(p: EditorProps) {
                   })
                 }
               >
-                {t === "parts" ? "built from shapes" : t === "asset" ? "uploaded model" : "built-in character"}
+                {tr(t === "parts" ? "built from shapes" : t === "asset" ? "uploaded model" : "built-in character")}
               </button>
             ))}
           </div>
@@ -527,7 +527,7 @@ function KindsTab(p: EditorProps) {
                       checked={!!part.emissive}
                       onChange={(e) => set((x) => (x.look.parts[i].emissive = e.target.checked ? (part.color ?? "#ffffff") : undefined))}
                     />{" "}
-                    glow
+                    {tr("glow")}
                   </label>
                   <input value={part.part ?? ""} placeholder={tr("name")} className="mono short" onChange={(e) => set((x) => (x.look.parts[i].part = e.target.value || undefined))} aria-label={tr("Part name")} />
                   <button type="button" className="danger" disabled={k.look.parts.length < 2} onClick={() => set((x) => x.look.parts.splice(i, 1))}>

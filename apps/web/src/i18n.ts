@@ -803,6 +803,10 @@ const VI: Record<string, string> = {
   "Kinds": "Loại",
   "Add to {room}": "Thêm vào {room}",
   "Add: pick a room first": "Thêm: chọn phòng trước",
+  "built from shapes": "ghép từ khối",
+  "uploaded model": "model tải lên",
+  "built-in character": "nhân vật có sẵn",
+  "glow": "phát sáng",
   // activity
   "{name} joined as {role}": "{name} gia nhập với vị trí {role}",
   "{from} → {to}: {title}": "{from} → {to}: {title}",
