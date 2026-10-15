@@ -1,7 +1,7 @@
 import { requestId } from "../requestId.ts";
 import { t as tr } from "../i18n.ts";
 import { chatInstructionTemplate } from "@agentown/core";
-import { BEHAVIORS, CHARACTERS, checkWorld, SHAPES, type World, worldSchema } from "@agentown/core/world";
+import { BEHAVIORS, CHARACTERS, checkWorld, FINISHES, SHAPES, type World, worldSchema } from "@agentown/core/world";
 import { useState } from "react";
 import { type AssetRow, uploadAsset, useAssets } from "../Assets.tsx";
 import type { Department } from "../types.ts";
@@ -128,7 +128,7 @@ function ObjectsTab(p: EditorProps) {
             <span>{tr("title")}</span>
             <input value={obj.title ?? ""} maxLength={40} placeholder={p.draft.kinds?.[obj.kind]?.title || "role"} onChange={(e) => p.edit((w) => (w.objects[p.selected!].title = e.target.value || undefined))} />
           </label>
-          <label className="object-chat-field">{tr("Chat instructions")}<textarea rows={3} maxLength={12000} placeholder={tr("Optional personality or context for this object")} value={obj.chat?.instructions ?? ""} onChange={e => p.edit(w => { w.objects[p.selected!].chat = { instructions: e.target.value }; })} /></label>
+          <label className="object-chat-field">{tr("Chat instructions")}<textarea rows={3} maxLength={12000} placeholder={tr("Optional personality or context for this object")} value={obj.chat?.instructions ?? ""} onChange={e => p.edit(w => { w.objects[p.selected!].chat = { ...w.objects[p.selected!].chat, instructions: e.target.value }; })} /></label>
           <div className="btn-row">
             <button
               type="button"
@@ -456,7 +456,11 @@ function KindsTab(p: EditorProps) {
 
           <h4>{tr("Look")}</h4>
           <details className="object-chat-field"><summary>{tr("Default chat persona")}</summary><p className="muted small">{chatInstructionTemplate(k.look.character ?? "object", k.title ?? "", k.category)}</p></details>
-          <label className="object-chat-field">{tr("Chat instructions for this kind")}<textarea rows={3} maxLength={12000} placeholder={tr("Optional instructions inherited by objects of this kind")} value={k.chat?.instructions ?? ""} onChange={e => set(x => { x.chat = { instructions: e.target.value }; })} /></label>
+          <label className="check object-chat-field">
+            <input type="checkbox" checked={!!k.chat && k.chat.enabled !== false} onChange={(e) => set((x) => { x.chat = e.target.checked ? { ...x.chat, enabled: undefined } : undefined; })} />
+            {tr("Things of this kind can be talked to")}
+          </label>
+          {!!k.chat && k.chat.enabled !== false && <label className="object-chat-field">{tr("Chat instructions for this kind")}<textarea rows={3} maxLength={12000} placeholder={tr("Optional instructions inherited by objects of this kind")} value={k.chat?.instructions ?? ""} onChange={e => set(x => { x.chat = { ...x.chat, instructions: e.target.value }; })} /></label>}
           <div className="seg-toggle" role="group" aria-label={tr("Look")}>
             {(["character", "parts", "asset"] as const).map((t) => (
               <button
@@ -509,6 +513,13 @@ function KindsTab(p: EditorProps) {
                   <Vec3 label={tr("offset")} value={part.offset} onChange={(v) => set((x) => (x.look.parts[i].offset = v))} />
                   <Vec3 label={tr("rotation")} value={part.rotation} onChange={(v) => set((x) => (x.look.parts[i].rotation = v))} />
                   <input type="color" value={part.color ?? "#9aa3ad"} onChange={(e) => set((x) => (x.look.parts[i].color = e.target.value))} aria-label={tr("Color")} />
+                  <select value={part.finish ?? "matte"} onChange={(e) => set((x) => (x.look.parts[i].finish = e.target.value))} aria-label={tr("Finish")}>
+                    {FINISHES.map((f) => (
+                      <option key={f} value={f}>
+                        {tr(f)}
+                      </option>
+                    ))}
+                  </select>
                   <label className="small" title={tr("Glows (and can blink)")}>
                     <input
                       type="checkbox"
@@ -578,6 +589,16 @@ function KindsTab(p: EditorProps) {
               </select>
               <Num label={tr("speed")} value={b.speed ?? 1} min={0} max={20} onChange={(v) => set((x) => (x.behaviors[i].speed = v))} />
               <Num label={tr("amount")} value={b.amount ?? 1} min={0} max={20} onChange={(v) => set((x) => (x.behaviors[i].amount = v))} />
+              {["spin", "sway", "rock"].includes(b.type) && (
+                <select value={b.axis ?? ""} onChange={(e) => set((x) => (x.behaviors[i].axis = e.target.value || undefined))} aria-label={tr("Axis")}>
+                  <option value="">{tr("default axis")}</option>
+                  {["x", "y", "z"].map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              )}
               <button type="button" className="danger" onClick={() => set((x) => x.behaviors.splice(i, 1))}>
                 ×
               </button>

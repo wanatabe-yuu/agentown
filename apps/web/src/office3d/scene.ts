@@ -4,9 +4,11 @@ import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Agent, Department, WorkState } from "../types.ts";
 import { FLOOR_HEIGHT, type PlacedRoom, type Seat, type WorldLayout } from "./layout.ts";
 import { t } from "../i18n.ts";
-import { allowedRooms, inside, type Nav, reachable, route, type Spot, type Waypoint } from "./nav.ts";
+import { allowedRooms, freeSpot, inside, type Nav, reachable, route, type Spot, type Waypoint } from "./nav.ts";
 import { loadModels, texture } from "./assets.ts";
 import { chair, character, desk, lookObject, monitor } from "./procedural.ts";
+import { type Animated, applyBehavior, prepareBehaviors } from "./behave.ts";
+import { pattern } from "./patterns.ts";
 
 /** A task handed from one agent to another: a sheet of paper flies between their desks. */
 export interface Flight {
@@ -25,7 +27,6 @@ export const SCREEN: Record<string, string> = {
   none: "#334155",
   unknown: "#a78bfa",
 };
-const TAU = Math.PI * 2;
 
 export interface AgentNode {
   id: string;
@@ -63,14 +64,6 @@ interface Roamer {
   seed: number;
 }
 
-interface Animated {
-  target: THREE.Object3D;
-  behavior: Behavior;
-  base: { position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 };
-  materials: THREE.MeshStandardMaterial[];
-  room: PlacedRoom;
-  seed: number;
-}
 
 export interface OfficeScene {
   root: THREE.Group;
@@ -94,22 +87,78 @@ export function agentAvatar(a: Pick<Agent, "id" | "jobRole">, world: World | nul
   const kindId = own?.kind ?? world?.avatars.byJobRole[a.jobRole] ?? world?.avatars.default;
   const kind = kindId ? world!.kinds[kindId] : undefined;
   const hairs = ["#3b2a20", "#1f2937", "#7c4a1e", "#d4a373"];
-  if (own?.character) return { avatar: character(own.character, own.color ?? deptColor, own.accent ?? hairs[Math.floor(hash(a.id) * 4)]), kind };
-  if (kind && "character" in kind.look) return { avatar: lookObject({ ...kind.look, ...(own?.color ? { color: own.color } : {}), ...(own?.accent ? { accent: own.accent } : {}) }, deptColor), kind };
-  if (kind) return { avatar: lookObject(kind.look, deptColor), kind };
-  return { avatar: character("person", own?.color ?? deptColor, own?.accent ?? hairs[Math.floor(hash(a.id) * 4)]), kind };
+  // The same job looks alike, but each person keeps their own face and hair.
+  const variant = Math.floor(hash(a.id) * 16);
+  const done = (avatar: THREE.Group) => {
+    avatar.userData.seed = hash(a.id);
+    return { avatar, kind };
+  };
+  if (own?.character) return done(character(own.character, own.color ?? deptColor, own.accent ?? hairs[variant % 4], 1, variant));
+  if (kind && "character" in kind.look) return done(lookObject({ ...kind.look, ...(own?.color ? { color: own.color } : {}), ...(own?.accent ? { accent: own.accent } : {}) }, deptColor, variant));
+  if (kind) return done(lookObject(kind.look, deptColor));
+  return done(character("person", own?.color ?? deptColor, own?.accent ?? hairs[variant % 4], 1, variant));
 }
 
-/** Motion by work state: busy typing while executing, a slow bob while thinking. */
-export function animateAvatar(avatar: THREE.Object3D, work: string, sec: number, baseY = 0) {
-  const bob = work === "executing" ? Math.abs(Math.sin(sec * 10)) * 0.025 : work === "thinking" ? Math.sin(sec * 2.2) * 0.03 : 0;
-  avatar.position.y = baseY + bob;
-  for (const arm of ["arm-l", "arm-r"]) {
-    const m = avatar.getObjectByName(arm);
-    if (m) m.rotation.x = ((work === "executing" ? 55 + Math.sin(sec * 18 + (arm === "arm-l" ? 0 : 1.6)) * 10 : 35) * Math.PI) / 180;
+/**
+ * Motion by work state, on the named joints characters have (head, arms,
+ * legs, tail, eyes, antenna): breathing and looking around when idle, typing
+ * while working, a hand to the chin while thinking, drumming fingers while
+ * waiting, a hung head when blocked. Characters without a joint just skip it.
+ */
+export function animateAvatar(avatar: THREE.Object3D, work: string, sec: number, baseY = 0, walking = false) {
+  const seed = ((avatar.userData.seed as number | undefined) ?? 0) * 10;
+  const t = sec + seed;
+  const get = (n: string) => avatar.getObjectByName(n);
+  const head = get("head");
+  const armL = get("arm-l");
+  const armR = get("arm-r");
+  const tail = get("tail");
+  const eyes = get("eyes");
+  const deg = Math.PI / 180;
+  let bob = Math.sin(t * 1.6) * 0.006; // breathing
+  let headX = 0;
+  let headY = Math.sin(t * 0.35) * 0.35 * Math.max(0, Math.sin(t * 0.13)); // now and then a look around
+  let headZ = 0;
+  let armLX = 35;
+  let armRX = 35;
+  let armRZ = 0;
+  if (walking) {
+    armLX = Math.sin(t * 9) * 28;
+    armRX = -Math.sin(t * 9) * 28;
+    headY = 0;
+    bob = Math.abs(Math.sin(t * 9)) * 0.03;
+  } else if (work === "executing") {
+    armLX = 58 + Math.sin(t * 18) * 9;
+    armRX = 58 + Math.sin(t * 18 + 1.6) * 9;
+    headX = 8 * deg + Math.sin(t * 2) * 0.03;
+    headY = Math.sin(t * 0.9) * 0.08;
+    bob = Math.abs(Math.sin(t * 10)) * 0.012;
+  } else if (work === "thinking") {
+    // A hand to the chin.
+    armRX = 145;
+    armRZ = -24;
+    headZ = 0.18;
+    headX = -6 * deg;
+    headY = Math.sin(t * 0.5) * 0.25;
+    bob = Math.sin(t * 2.2) * 0.02;
+  } else if (work === "waiting") {
+    armLX = 50 + Math.max(0, Math.sin(t * 7)) * 8;
+    headY = Math.sin(t * 0.8) * 0.5;
+  } else if (work === "blocked" || work === "error") {
+    headX = 22 * deg;
+    armLX = 15;
+    armRX = 15;
+    bob = Math.sin(t * 0.9) * 0.01 - 0.02;
   }
-  const tail = avatar.getObjectByName("tail");
-  if (tail) tail.rotation.z = Math.sin(sec * (work === "executing" ? 6 : 1.5)) * 0.4;
+  avatar.position.y = baseY + bob;
+  if (head) head.rotation.set(headX, headY, headZ);
+  if (armL) armL.rotation.set(armLX * deg, 0, 0);
+  if (armR) armR.rotation.set(armRX * deg, 0, armRZ * deg);
+  // Blink every few seconds.
+  if (eyes) eyes.scale.y = (t * 0.7) % 4 < 0.12 ? 0.1 : 1;
+  if (tail) tail.rotation.z = Math.sin(t * (work === "executing" || walking ? 7 : 1.6)) * (work === "blocked" ? 0.1 : 0.45);
+  const tip = get("antenna-tip") as THREE.Mesh | undefined;
+  if (tip) (tip.material as THREE.MeshStandardMaterial).emissiveIntensity = work === "executing" ? 0.5 + 0.5 * Math.sin(t * 12) : 0.4 + 0.3 * Math.sin(t * 2);
 }
 
 function label(className: string, text: string): { el: HTMLDivElement; obj: CSS2DObject } {
@@ -130,7 +179,11 @@ function roomMesh(room: PlacedRoom): THREE.Group {
   g.position.set(room.x, room.y, room.z);
   const floor = new THREE.Mesh(
     new THREE.BoxGeometry(room.w, 0.12, room.d),
-    new THREE.MeshStandardMaterial(room.floorTexture ? { map: texture(room.floorTexture, room.w, room.d, room.textureRepeat), roughness: 0.9 } : { color: room.floorColor, roughness: 0.9 }),
+    new THREE.MeshStandardMaterial(
+      room.floorTexture
+        ? { map: texture(room.floorTexture, room.w, room.d, room.textureRepeat), roughness: 0.9 }
+        : { color: room.floorStyle && room.floorStyle !== "plain" ? "#ffffff" : room.floorColor, map: pattern(room.floorStyle, room.floorColor, room.w, room.d), roughness: room.floorStyle === "tile" || room.floorStyle === "checker" ? 0.45 : 0.85 },
+    ),
   );
   floor.position.set(room.w / 2, -0.06, room.d / 2);
   floor.receiveShadow = true;
@@ -138,9 +191,15 @@ function roomMesh(room: PlacedRoom): THREE.Group {
   g.add(floor);
   // Dollhouse cut: full walls on the north and west sides, a low rim on the south and east.
   // Doors are gaps in a wall.
-  const wall = new THREE.MeshStandardMaterial(
+  const plainWall = new THREE.MeshStandardMaterial(
     room.wallTexture ? { map: texture(room.wallTexture, Math.max(room.w, room.d), room.wallHeight, room.textureRepeat), roughness: 0.85 } : { color: room.wallColor, roughness: 0.85 },
   );
+  // A patterned wall gets its own texture per segment, so bricks keep their size.
+  const wallFor = (length: number, height: number) =>
+    room.wallTexture || !room.wallStyle || room.wallStyle === "plain"
+      ? plainWall
+      : new THREE.MeshStandardMaterial({ color: "#ffffff", map: pattern(room.wallStyle, room.wallColor, length, height), roughness: 0.85 });
+  const trim = new THREE.MeshStandardMaterial({ color: new THREE.Color(room.wallColor).lerp(new THREE.Color("#000000"), 0.35), roughness: 0.6 });
   const t = 0.12;
   const h = room.wallHeight;
   const low = Math.min(0.35, h);
@@ -154,17 +213,22 @@ function roomMesh(room: PlacedRoom): THREE.Group {
       if (to - from > 0.05) {
         const mid = (from + to) / 2;
         const along = side === "north" || side === "south";
-        const m = new THREE.Mesh(new THREE.BoxGeometry(along ? to - from : t, height, along ? t : to - from), wall);
+        const m = new THREE.Mesh(new THREE.BoxGeometry(along ? to - from : t, height, along ? t : to - from), wallFor(to - from, height));
         m.position.set(along ? mid : side === "west" ? 0 : room.w, height / 2, along ? (side === "north" ? 0 : room.d) : mid);
         m.castShadow = true;
         m.receiveShadow = true;
         g.add(m);
+        // A skirting board along the inside of tall walls; a cap on the low rims.
+        const sk = new THREE.Mesh(new THREE.BoxGeometry(along ? to - from : t + 0.04, height > 1 ? 0.12 : 0.04, along ? t + 0.04 : to - from), trim);
+        sk.position.set(m.position.x, height > 1 ? 0.06 : height + 0.02, m.position.z);
+        g.add(sk);
       }
       start = Math.max(start, b);
     }
   };
-  segment("north", h);
-  segment("west", h);
+  const half = Math.min(h, 1.1);
+  segment("north", room.shared.north ? half : h);
+  segment("west", room.shared.west ? half : h);
   segment("south", low);
   segment("east", low);
   return g;
@@ -197,7 +261,11 @@ export function buildScene(
   for (const room of layout.rooms) {
     const g = roomMesh(room);
     g.traverse((o) => {
-      if (o instanceof THREE.Mesh) disposables.push(o.geometry, o.material as THREE.Material);
+      if (o instanceof THREE.Mesh) {
+        const mat = o.material as THREE.MeshStandardMaterial;
+        disposables.push(o.geometry, mat);
+        if (mat.map) disposables.push(mat.map);
+      }
     });
     const { el, obj } = label("room-label", room.name);
     el.onclick = () => onRoomClick(room.id);
@@ -303,24 +371,7 @@ export function buildScene(
     } else {
       floorGroup(room.floorIndex).add(obj);
     }
-    for (const b of kind.behaviors.filter((x) => x.type !== "roam")) {
-      // Wander moves the whole object around the room; other behaviors may target one part.
-      const target = b.part && b.type !== "wander" ? (obj.getObjectByName(b.part) ?? obj) : obj;
-      const materials: THREE.MeshStandardMaterial[] = [];
-      target.traverse((m) => {
-        // Only glowing parts blink (they own their material); plain shared materials are left alone.
-        const mat = m instanceof THREE.Mesh ? (m.material as THREE.MeshStandardMaterial) : null;
-        if (mat?.emissive && mat.emissive.getHex() !== 0) materials.push(mat);
-      });
-      animated.push({
-        target,
-        behavior: b,
-        base: { position: target.position.clone(), rotation: target.rotation.clone(), scale: target.scale.clone() },
-        materials,
-        room,
-        seed: hash(`${o.kind}:${i}`) * 100,
-      });
-    }
+    animated.push(...prepareBehaviors(obj, kind, hash(`${o.kind}:${i}`) * 100, room));
   }
 
   // Agents: desk, monitor, chair, avatar, labels.
@@ -457,7 +508,8 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
     node.screen.color.set(SCREEN[screen] ?? SCREEN.unknown!);
     node.screen.emissive.set(SCREEN[screen] ?? "#000000");
     node.screen.emissiveIntensity = work === "executing" ? 0.55 + 0.35 * Math.sin(sec * 9) : screen === "running" ? 0.35 : 0.15;
-    animateAvatar(node.avatar, work, sec, node.roamer && !node.roamer.seated ? -node.roamer.lift : 0);
+    const walking = !!node.roamer && !node.roamer.seated && !!node.roamer.path;
+    animateAvatar(node.avatar, work, sec, node.roamer && !node.roamer.seated ? -node.roamer.lift : 0, walking);
 
     const ringMat = node.ring.material as THREE.MeshBasicMaterial;
     ringMat.opacity = f.selected === node.id ? 0.95 : f.hover === node.id ? 0.45 : 0;
@@ -480,47 +532,13 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
     node.bubble.style.display = text ? "" : "none";
   }
 
-  for (const an of f.frozen ? [] : s.animated) {
-    const { target: o, behavior: b, base } = an;
-    const phase = sec * b.speed * TAU + an.seed;
-    switch (b.type) {
-      case "spin":
-        o.rotation.y = base.rotation.y + sec * b.speed * TAU * b.amount;
-        break;
-      case "bob":
-        o.position.y = base.position.y + Math.sin(phase) * 0.08 * b.amount;
-        break;
-      case "sway":
-        o.rotation.z = base.rotation.z + Math.sin(phase) * 0.15 * b.amount;
-        break;
-      case "pulse":
-        o.scale.copy(base.scale).multiplyScalar(1 + Math.sin(phase) * 0.08 * b.amount);
-        break;
-      case "blink":
-        for (const m of an.materials) m.emissiveIntensity = 0.5 + 0.5 * Math.sin(phase) * b.amount;
-        break;
-      case "wander": {
-        // A smooth, seeded stroll around where it was placed, staying inside the room.
-        const r = an.room;
-        const k = sec * b.speed * 0.25;
-        const x = base.position.x + (Math.sin(k + an.seed) + Math.sin(k * 0.61 + an.seed * 2)) * 0.5 * b.amount;
-        const z = base.position.z + (Math.cos(k * 0.83 + an.seed) + Math.sin(k * 0.47 + an.seed * 3)) * 0.5 * b.amount;
-        const nx = Math.min(r.x + r.w - 0.4, Math.max(r.x + 0.4, x));
-        const nz = Math.min(r.z + r.d - 0.4, Math.max(r.z + 0.4, z));
-        const dx = nx - o.position.x;
-        const dz = nz - o.position.z;
-        if (dx * dx + dz * dz > 1e-6) o.rotation.y = Math.atan2(-dx, -dz);
-        o.position.x = nx;
-        o.position.z = nz;
-        break;
-      }
-    }
-  }
+  for (const an of f.frozen ? [] : s.animated) applyBehavior(an, sec);
 
   for (const r of s.roamers) {
     if (r.home) continue; // agents were stepped above
     if (!f.frozen) stepRoamer(s.nav, r, f.t, f.dt, false);
-    r.body.position.y = -r.lift;
+    // Animals and people that roam breathe, look around, wag and swing their arms like agents do.
+    animateAvatar(r.body, "idle", sec, -r.lift, !!r.path);
     r.obj.visible = s.floors.get(Math.round(r.obj.position.y / FLOOR_HEIGHT))?.visible ?? true;
   }
 
@@ -555,6 +573,13 @@ function seat(r: Roamer) {
   swingLegs(r.body, 0);
 }
 
+/** Turn smoothly the short way round, instead of snapping. */
+function turnToward(o: THREE.Object3D, angle: number, dt: number) {
+  let d = angle - o.rotation.y;
+  d = Math.atan2(Math.sin(d), Math.cos(d));
+  o.rotation.y += d * Math.min(1, dt * 8);
+}
+
 export function swingLegs(body: THREE.Object3D, angle: number) {
   const l = body.getObjectByName("leg-l");
   const rr = body.getObjectByName("leg-r");
@@ -587,7 +612,7 @@ function stepRoamer(nav: Nav, r: Roamer, now: number, dt: number, goHome: boolea
     if (!r.path && now >= r.waitUntil) {
       const options = reachable(nav, r.room, r.allowed);
       const room = nav.rooms.get(options[Math.floor(Math.random() * options.length)]!)!;
-      const [x, z] = inside(room, room.x + Math.random() * room.w, room.z + Math.random() * room.d);
+      const [x, z] = freeSpot(nav, room.id, ...inside(room, room.x + Math.random() * room.w, room.z + Math.random() * room.d));
       r.path = route(nav, here, { room: room.id, x, z }, r.allowed);
       r.idx = 0;
       if (!r.path) r.waitUntil = now + 3000;
@@ -598,18 +623,19 @@ function stepRoamer(nav: Nav, r: Roamer, now: number, dt: number, goHome: boolea
     swingLegs(r.body, 0);
     return;
   }
-  if (wp.jump) {
-    r.obj.position.set(wp.x, wp.y, wp.z);
-  } else {
+  {
+    // Stairs and elevators are climbed too (slower), not jumped.
     const dx = wp.x - r.obj.position.x;
+    const dy = wp.y - r.obj.position.y;
     const dz = wp.z - r.obj.position.z;
-    const dist = Math.hypot(dx, dz);
-    const stepLen = r.speed * Math.min(dt, 0.1);
+    const flat = Math.hypot(dx, dz);
+    const dist = Math.hypot(flat, dy);
+    const stepLen = r.speed * (wp.jump ? 0.6 : 1) * Math.min(dt, 0.1);
     if (dist > stepLen) {
       r.obj.position.x += (dx / dist) * stepLen;
+      r.obj.position.y += (dy / dist) * stepLen;
       r.obj.position.z += (dz / dist) * stepLen;
-      r.obj.position.y = wp.y;
-      r.obj.rotation.y = Math.atan2(-dx, -dz);
+      if (flat > 0.02) turnToward(r.obj, Math.atan2(-dx, -dz), dt);
       swingLegs(r.body, Math.sin(now / 110) * 0.5);
       return;
     }

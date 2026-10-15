@@ -23,7 +23,8 @@ interface Props {
   needsOwner: Set<string>;
   selected: string | null;
   onSelect: (id: string | null) => void;
-  onObjectChat?: (id: string) => void;
+  /** Someone picked a placed object (furniture, the shop cat…). */
+  onSelectObject?: (id: string) => void;
   flights: Flight[];
   dark: boolean;
   /** May edit the world (org.design). */
@@ -126,20 +127,28 @@ export default function Office3D(props: Props) {
     }
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Filmic tone mapping: warm highlights (lamps, screens) roll off instead of clipping.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
     el.prepend(renderer.domElement);
     const labels = new CSS2DRenderer();
     labels.domElement.className = "office-labels";
     el.appendChild(labels.domElement);
 
     const scene = new THREE.Scene();
-    const hemi = new THREE.HemisphereLight("#ffffff", "#8a7f74", 1.4);
-    const sun = new THREE.DirectionalLight("#ffffff", 1.6);
-    sun.position.set(30, 50, 20);
+    // Soft sky from above, warm bounce from the floor, a low warm sun for long soft shadows.
+    const hemi = new THREE.HemisphereLight("#f4f1ff", "#a0846a", 1.25);
+    const sun = new THREE.DirectionalLight("#fff1dc", 1.9);
+    sun.position.set(28, 46, 18);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.radius = 4;
+    sun.shadow.bias = -0.0004;
     Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, far: 200 });
-    scene.add(hemi, sun, sun.target);
+    const fill = new THREE.DirectionalLight("#cfe0ff", 0.45);
+    fill.position.set(-30, 25, -20);
+    scene.add(hemi, sun, sun.target, fill);
 
     const camera = new THREE.OrthographicCamera(-VIEW, VIEW, VIEW, -VIEW, 0.1, 500);
     camera.position.copy(ISO);
@@ -244,13 +253,13 @@ export default function Office3D(props: Props) {
         } else {
           const id = pickAt(ev);
           if (id) latest.current.props.onSelect(id);
-          else if (latest.current.props.onObjectChat) {
+          else if (latest.current.props.onSelectObject) {
             aim(ev);
             const e = engine.current!;
             const hits = e.office ? ray.intersectObject(e.office.root, true).filter(h => h.object.visible && (h.object as THREE.Mesh).isMesh) : [];
             const index = hits.map(h => objectIndexOf(h.object)).find(i => i !== null);
             const object = index != null ? latest.current.props.snapshot.world?.objects[index] : undefined;
-            if (object?.id) latest.current.props.onObjectChat(object.id);
+            if (object?.id) latest.current.props.onSelectObject(object.id);
           }
         }
       }

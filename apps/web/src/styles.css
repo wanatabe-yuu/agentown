@@ -2204,3 +2204,214 @@ input.short {
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 /* CSS2DRenderer re-shows every label each frame: an empty bubble must stay hidden. */
 .agent-bubble:empty { display: none !important; }
+
+/* ---- object panel */
+.object-avatar { background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #000)); }
+.object-panel .panel-head .tab-chat { margin: 0; }
+.object-stage { height: 300px; }
+@media (max-width: 900px) { .object-stage { height: max(260px, calc(100dvh - 360px)); } }
+.studio-under { margin-top: 8px; }
+.studio-under button { font-size: 13px; padding: 6px 12px; }
+.object-edit { display: flex; flex-direction: column; gap: 10px; }
+.object-edit h3 { margin: 0; }
+.object-edit label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.object-edit label.check { flex-direction: row; align-items: center; gap: 8px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.swatches input[type="color"], .object-edit input[type="color"] { width: 40px; height: 32px; padding: 2px; border-radius: 8px; }
+
+/* ======================================================================
+   Design v3: warmer neutrals, softer depth, one accent the world can set
+   (a café's caramel). Overrides the layers above.
+   ====================================================================== */
+:root {
+  --bg: #f5f3ef;
+  --surface: #ffffff;
+  --surface-2: #faf8f5;
+  --surface-3: #f1ede7;
+  --border: #e7e1d8;
+  --border-strong: #d8cfc2;
+  --text: #1d1a16;
+  --muted: #7a7166;
+  --accent: #5b5bd6;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-ink: #ffffff;
+  --stage: #ece7df;
+  --shadow: 0 1px 2px rgba(40, 30, 20, 0.05), 0 10px 30px rgba(40, 30, 20, 0.07);
+  --shadow-lg: 0 2px 6px rgba(40, 30, 20, 0.06), 0 24px 60px rgba(40, 30, 20, 0.14);
+  --radius: 14px;
+  --h: 36px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1012;
+    --surface: #17181b;
+    --surface-2: #1c1d21;
+    --surface-3: #232429;
+    --border: #2a2c31;
+    --border-strong: #383b42;
+    --text: #ecebe8;
+    --muted: #9a968f;
+    --accent: #8b8bff;
+    --accent-ink: #12121a;
+    --stage: #121316;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 32px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.4), 0 28px 70px rgba(0, 0, 0, 0.55);
+  }
+}
+/* A world's own colors (set on <html> while it is open). */
+:root[data-world-theme] { --accent: var(--world-accent); }
+@media (prefers-color-scheme: light) {
+  :root[data-world-theme][data-world-surface] { --bg: var(--world-bg); --surface-2: color-mix(in srgb, var(--world-bg) 60%, #fff); --stage: color-mix(in srgb, var(--world-bg) 88%, #7a5a3a); --text: var(--world-ink); }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-world-theme] { --accent-ink: #160f08; --accent: color-mix(in srgb, var(--world-accent) 80%, #fff); }
+}
+
+body {
+  font: 14px/1.5 "Inter", "SF Pro Text", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: -0.005em;
+  font-feature-settings: "cv11", "ss01";
+}
+h1, h2, h3 { letter-spacing: -0.015em; }
+h3 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+
+/* Buttons and fields */
+button {
+  border-radius: 10px;
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: 0 1px 0 rgba(40, 30, 20, 0.03);
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s, box-shadow 0.15s;
+}
+button:hover:not(:disabled) { background: var(--surface-3); border-color: var(--border-strong); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button.primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, #fff), var(--accent));
+  border-color: color-mix(in srgb, var(--accent) 80%, #000);
+  color: var(--accent-ink);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 78%, #fff), color-mix(in srgb, var(--accent) 92%, #000));
+  border-color: color-mix(in srgb, var(--accent) 70%, #000);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), select, textarea {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input:focus, select:focus, textarea:focus { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); box-shadow: 0 0 0 3px var(--accent-soft); outline: none; }
+input[type="range"] { accent-color: var(--accent); }
+input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+
+/* Top bar: a calm strip of glass */
+.topbar {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: saturate(1.4) blur(14px);
+  -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  border-bottom: 1px solid var(--border);
+}
+.logo, .brand .logo {
+  background: radial-gradient(120% 120% at 20% 10%, color-mix(in srgb, var(--accent) 70%, #fff), var(--accent) 55%, color-mix(in srgb, var(--accent) 70%, #000));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+}
+.seg-toggle { background: var(--surface-3); border: 1px solid var(--border); border-radius: 12px; padding: 3px; gap: 2px; }
+.seg-toggle button { border: 0; background: transparent; box-shadow: none; border-radius: 9px; }
+.seg-toggle button.active, .seg-toggle .active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(40, 30, 20, 0.12); }
+.world-nav .seg-toggle .active,
+.world-nav .seg-toggle .active:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
+
+/* Side panel: sections as soft cards */
+.panel { background: var(--surface-2); }
+.panel.side { gap: 12px; padding: 12px; }
+.panel.side > section, .panel.side > div > section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  box-shadow: 0 1px 2px rgba(40, 30, 20, 0.03);
+}
+.panel-head { background: var(--surface); }
+.agent-panel .panel-body { background: var(--surface-2); }
+.agent-panel .panel-body > section:not(.studio) {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+.tabs-row { background: var(--surface); }
+.tabs button.active { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.avatar { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 2px 6px rgba(0, 0, 0, 0.12); }
+
+/* Lists */
+.conv-row, .feed-row { border-radius: 10px; }
+.conv-row:hover, .feed-row:hover:not(:disabled) { background: var(--surface-3); }
+.conv-avatar { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.inbox li { border-radius: 12px; background: var(--surface); box-shadow: 0 1px 2px rgba(40, 30, 20, 0.04); }
+.pill { border-radius: 999px; }
+
+/* Office stage */
+.stage {
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--accent) 7%, var(--stage)), var(--stage) 60%),
+    var(--stage);
+}
+.legend {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.world-nav > *, .zoom-controls, .office-zoom {
+  box-shadow: var(--shadow);
+}
+
+/* 3D labels */
+.room-label {
+  font: 600 11px/1.6 "Inter", system-ui, sans-serif;
+  color: #fff;
+  background: color-mix(in srgb, #1d1a16 82%, transparent);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 1px 10px 1px 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.room-label::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 1px; }
+.room-label:hover { background: var(--accent); }
+.agent-label b {
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-weight: 650;
+}
+.agent-label.selected b { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), 0 2px 8px rgba(0, 0, 0, 0.12); }
+.object-label b {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  text-shadow: none;
+}
+.agent-bubble { box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); }
+
+/* Modals */
+.modal-backdrop { background: rgba(20, 16, 12, 0.42); backdrop-filter: blur(6px); }
+.modal { border-radius: 18px; border: 1px solid var(--border); box-shadow: var(--shadow-lg); }
+
+/* Studio */
+.studio-stage {
+  border-radius: 16px;
+  background:
+    radial-gradient(70% 60% at 50% 40%, color-mix(in srgb, var(--accent) 10%, var(--surface)), var(--surface-3) 75%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 2px rgba(40, 30, 20, 0.05);
+}
+@media (prefers-color-scheme: dark) {
+  .studio-stage { background: radial-gradient(70% 60% at 50% 40%, color-mix(in srgb, var(--accent) 14%, #1f2026), #121316 80%); }
+}

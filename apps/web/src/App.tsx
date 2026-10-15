@@ -18,6 +18,8 @@ import type { Flight } from "./office3d/scene.ts";
 
 // three.js is only downloaded when the office is shown.
 const Office3D = lazy(() => import("./office3d/Office3D.tsx"));
+// The object panel brings the world schema along: loaded when an object is first picked.
+const ObjectPanel = lazy(() => import("./ObjectPanel.tsx").then((m) => ({ default: m.ObjectPanel })));
 import { STRUCTURAL, useOffice } from "./store.ts";
 import type { Account, AgentEvent, Catalog, Me } from "./types.ts";
 import { Menu, type MenuItem, Modal, StatusPill, ago } from "./ui.tsx";
@@ -123,7 +125,18 @@ function OrgApp({
   const [showAssets, setShowAssets] = useState(false);
   const [worldEditing, setWorldEditing] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [selectedObject, setSelectedObject] = useState<string | null>(null);
+  // One thing is inspected at a time: picking an agent closes an object and the other way round.
+  const selected = selectedAgent;
+  const setSelected = (id: string | null) => {
+    setSelectedAgent(id);
+    if (id) setSelectedObject(null);
+  };
+  const selectObject = (id: string | null) => {
+    setSelectedObject(id);
+    if (id) setSelectedAgent(null);
+  };
   const [openTask, setOpenTask] = useState<string | null>(null);
   const [newTaskFor, setNewTaskFor] = useState<string | null | undefined>(undefined);
   // The 3D office is the default everywhere (it falls back to a flat view without WebGL).
@@ -165,6 +178,25 @@ function OrgApp({
   }, [reloadMe]);
 
   const { snapshot, status, feed, effectiveWork, now } = useOffice(!!me, onEvent);
+  // The open world's own colors (a café's caramel) tint the whole interface.
+  const theme = snapshot?.world?.theme;
+  useEffect(() => {
+    const el = document.documentElement;
+    const vars = ["--world-accent", "--world-bg", "--world-ink"];
+    if (!theme) {
+      delete el.dataset.worldTheme;
+      delete el.dataset.worldSurface;
+      for (const v of vars) el.style.removeProperty(v);
+      return;
+    }
+    el.dataset.worldTheme = "";
+    el.style.setProperty("--world-accent", theme.accent);
+    if (theme.surface) {
+      el.dataset.worldSurface = "";
+      el.style.setProperty("--world-bg", theme.surface);
+      el.style.setProperty("--world-ink", theme.ink ?? "#1d1a16");
+    } else delete el.dataset.worldSurface;
+  }, [theme?.accent, theme?.surface, theme?.ink]);
 
   useEffect(() => {
     if (me && status === "live" && !catalog) api<Catalog>("GET", "/api/catalog").then(setCatalog).catch(() => {});
@@ -280,7 +312,7 @@ function OrgApp({
         />
       </header>
 
-      <main className={`main${selected && !worldEditing ? " panel-open" : ""}`}>
+      <main className={`main${(selected || selectedObject) && !worldEditing ? " panel-open" : ""}`}>
         <section className={`stage view-${view}`}>
           {view === "office" ? (
             <Suspense fallback={<div className="center muted">{t("Loading the office…")}</div>}>
@@ -290,10 +322,7 @@ function OrgApp({
                 needsOwner={needsOwner}
                 selected={selected}
                 onSelect={setSelected}
-                onObjectChat={me.actor.owner ? id => {
-                  const o = snapshot.world?.objects.find(o => o.id === id);
-                  if (o) setEntityChat({ type: "object", id, name: o.label || snapshot.world!.kinds[o.kind]!.name });
-                } : undefined}
+                onSelectObject={selectObject}
                 flights={flights}
                 dark={dark}
                 canDesign={!!me.can["org.design"]}
@@ -321,6 +350,17 @@ function OrgApp({
             notify={notify}
             canDesign={!!me.can["org.design"]}
           />
+        ) : selectedObject ? (
+          <Suspense fallback={<aside className="panel agent-panel" />}>
+            <ObjectPanel
+              objectId={selectedObject}
+              snapshot={snapshot}
+              canDesign={!!me.can["org.design"]}
+              onChat={me.actor.owner ? (id, name) => setEntityChat({ type: "object", id, name }) : undefined}
+              onClose={() => setSelectedObject(null)}
+              notify={notify}
+            />
+          </Suspense>
         ) : (
           <aside className="panel side">
             <NeedsYou snapshot={snapshot} now={now} refreshKey={inboxKey} onOpenTask={setOpenTask} onAgents={setNeedsOwner} />

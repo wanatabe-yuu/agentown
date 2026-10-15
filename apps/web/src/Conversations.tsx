@@ -43,7 +43,8 @@ export function ConversationsSection({ snapshot, onChat, onOpenTask, now }: { sn
     } catch {}
   };
   const people = snapshot.agents.filter((a) => a.lifecycleState !== "retired");
-  const objects = snapshot.world?.objects.filter((o) => o.id) ?? [];
+  // Only objects that talk have a conversation (see canTalk in the world schema).
+  const objects = snapshot.world?.objects.filter((o) => o.id && (o.chat?.enabled ?? snapshot.world!.kinds[o.kind]?.chat?.enabled ?? !!snapshot.world!.kinds[o.kind]?.chat)) ?? [];
   const teams = snapshot.teams.filter((t) => t.memberIds.length > 0 || !t.implicit);
 
   return (

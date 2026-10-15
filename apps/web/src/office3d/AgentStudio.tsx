@@ -18,7 +18,7 @@ type Action = "live" | "idle" | "thinking" | "executing" | "waiting" | "blocked"
 const ACTIONS: Array<{ id: Action; label: string }> = [
   { id: "live", label: "Right now" },
   { id: "idle", label: "Idle" },
-  { id: "thinking", label: "Thinking" },
+  { id: "thinking", label: "Thinking it over" },
   { id: "executing", label: "Working" },
   { id: "waiting", label: "Waiting" },
   { id: "blocked", label: "Blocked" },
@@ -84,6 +84,9 @@ export default function AgentStudio(p: {
     }
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
     el.prepend(renderer.domElement);
     const labels = new CSS2DRenderer();
     labels.domElement.className = "studio-labels";
@@ -168,8 +171,8 @@ export default function AgentStudio(p: {
         actor.rotation.y = 0;
       }
       if (avatar) {
-        animateAvatar(avatar, walking ? "idle" : work, sec, walking ? -((avatar.userData.lift as number | undefined) ?? 0) * avatar.scale.y + Math.abs(Math.sin(sec * 8)) * 0.03 : 0);
-        swingLegs(avatar, walking ? Math.sin(sec * 8) * 0.6 : 0);
+        animateAvatar(avatar, walking ? "idle" : work, sec, walking ? -((avatar.userData.lift as number | undefined) ?? 0) * avatar.scale.y : 0, walking);
+        swingLegs(avatar, walking ? Math.sin(sec * 9) * 0.6 : 0);
       }
       screen.color.set(SCREEN[runtime] ?? SCREEN.unknown!);
       screen.emissive.set(SCREEN[runtime] ?? "#000000");

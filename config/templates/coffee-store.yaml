@@ -82,6 +82,8 @@ bootstrap:
     - { key: mocha, displayName: Mocha, template: mascot-claude-v1, department: studio, reportsTo: manager }
 
 world:
+  # The café's own look in the interface: warm espresso and caramel.
+  theme: { accent: "#c0773a", surface: "#fbf6ef", ink: "#2b1d14" }
   floors:
     - id: f1
       name: Floor 1
@@ -90,8 +92,10 @@ world:
           name: "1A · Counter & seating"
           department: front
           area: { x: 0, z: 0, w: 12, d: 8 }
-          floorColor: "#e8d5b9"
-          wallColor: "#b9825a"
+          floorColor: "#b98a5e"
+          floorStyle: wood
+          wallColor: "#e9d8c2"
+          wallStyle: panel
           seats: 2
           doors:
             - { to: 1b, side: east, at: 4 }
@@ -101,19 +105,30 @@ world:
           name: "1B · Coffee bar"
           department: bar
           area: { x: 13, z: 0, w: 8, d: 8 }
-          floorColor: "#d8c3a5"
-          wallColor: "#7c4a1e"
+          floorColor: "#d9d2c5"
+          floorStyle: checker
+          wallColor: "#a3502e"
+          wallStyle: brick
           doors:
             - { to: 1d, side: south, at: 2 }
         - id: 1c
           name: "1C · Kitchen"
           department: kitchen
           area: { x: 0, z: 9, w: 10, d: 6 }
-          floorColor: "#dfe7e1"
-          wallColor: "#3fa37a"
+          floorColor: "#e7ecef"
+          floorStyle: tile
+          wallColor: "#d6e6df"
+          wallStyle: stripe
           doors:
             - { to: 1d, side: east, at: 3 }
-        - { id: 1d, name: "1D · Patio", area: { x: 11, z: 9, w: 10, d: 6 }, floorColor: "#cfd8c0", wallColor: "#8a9a6b", wallHeight: 0.6, seats: 0 }
+        - id: 1d
+          name: "1D · Patio"
+          area: { x: 11, z: 9, w: 10, d: 6 }
+          floorColor: "#9c7653"
+          floorStyle: deck
+          wallColor: "#7d8f5f"
+          wallHeight: 0.6
+          seats: 0
     - id: f2
       name: Floor 2
       rooms:
@@ -121,13 +136,29 @@ world:
           name: "2A · Office"
           department: management
           area: { x: 0, z: 0, w: 10, d: 8 }
-          floorColor: "#ece3cf"
-          wallColor: "#c9a227"
+          floorColor: "#a8825c"
+          floorStyle: wood
+          wallColor: "#ece3cf"
+          wallStyle: panel
           doors:
             - { to: 2b, side: east, at: 4 }
             - { to: 2c, side: south, at: 5 }
-        - { id: 2b, name: "2B · Roastery", department: roastery, area: { x: 11, z: 0, w: 10, d: 8 }, floorColor: "#e3d2c8", wallColor: "#a33f2f" }
-        - { id: 2c, name: "2C · Content studio", department: studio, area: { x: 0, z: 9, w: 10, d: 6 }, floorColor: "#e7def2", wallColor: "#8e6bbf" }
+        - id: 2b
+          name: "2B · Roastery"
+          department: roastery
+          area: { x: 11, z: 0, w: 10, d: 8 }
+          floorColor: "#8d8a85"
+          floorStyle: concrete
+          wallColor: "#9c4a33"
+          wallStyle: brick
+        - id: 2c
+          name: "2C · Content studio"
+          department: studio
+          area: { x: 0, z: 9, w: 10, d: 6 }
+          floorColor: "#c9b7a3"
+          floorStyle: wood
+          wallColor: "#e7def2"
+          wallStyle: stripe
 
   # Stairs from the café floor up to the office.
   links:
@@ -142,17 +173,17 @@ world:
   # real permissions are the agents' grants). Idle agents whose look can roam
   # take a walk inside their access and come back to their desk to work.
   kinds:
-    # Characters: how the jobs look, and the shop cat.
+    # ---- Characters: how the jobs look, and the shop cat.
     barista:
       name: Barista
       category: character
-      look: { character: person, color: "#6b4226", accent: "#2b1d14" }
+      look: { character: person, color: "#3f6b5a", accent: "#2b1d14" }
       behaviors: [{ type: roam, amount: 0.9 }]
       access: { rooms: [1a, 1b, 1c, 1d] }
     manager:
       name: Manager
       category: character
-      look: { character: person, color: "#334155", accent: "#111827" }
+      look: { character: person, color: "#34405a", accent: "#1d2433" }
       behaviors: [{ type: roam }]
       access: all
     roaster:
@@ -173,143 +204,532 @@ world:
       category: dynamic
       look: { character: cat, color: "#3b3b3b", accent: "#1a1a1a" }
       behaviors: [{ type: roam, amount: 0.6 }]
-      access: all
+      access: { zone: customer-area }
+      chat:
+        instructions: "You are Bean, the café's black shop cat. You nap in sunny spots, know every regular by the sound of their footsteps and judge the pastries. Speak like a cat who happens to talk: short, curious, a little smug, warm underneath."
 
-    # Static furniture, composed of primitives.
+    # ---- Counter & seating (1A)
     counter:
       name: Counter
+      title: Order here
       category: static
       look:
         parts:
-          - { shape: box, size: [5, 1.05, 0.8], offset: [0, 0.525, 0], color: "#7c4a1e" }
-          - { shape: box, size: [5.1, 0.06, 0.9], offset: [0, 1.08, 0], color: "#e8e1d5" }
-          - { shape: box, size: [0.5, 0.35, 0.4], offset: [-1.8, 1.28, 0], color: "#2b2f36" }
+          - { shape: roundbox, size: [5, 0.06, 0.8], offset: [0, 0.04, 0], color: "#2b1d14", finish: satin }
+          - { shape: roundbox, size: [5, 0.98, 0.78], offset: [0, 0.53, 0], color: "#7c4a1e", finish: satin }
+          - { shape: box, size: [0.9, 0.72, 0.02], offset: [-1.9, 0.52, 0.4], color: "#6a3d17", finish: satin }
+          - { shape: box, size: [0.9, 0.72, 0.02], offset: [-0.95, 0.52, 0.4], color: "#6a3d17", finish: satin }
+          - { shape: box, size: [0.9, 0.72, 0.02], offset: [0, 0.52, 0.4], color: "#6a3d17", finish: satin }
+          - { shape: box, size: [0.9, 0.72, 0.02], offset: [0.95, 0.52, 0.4], color: "#6a3d17", finish: satin }
+          - { shape: box, size: [0.9, 0.72, 0.02], offset: [1.9, 0.52, 0.4], color: "#6a3d17", finish: satin }
+          - { shape: roundbox, size: [5.1, 0.07, 0.9], offset: [0, 1.05, 0], color: "#efe9df", finish: gloss }
+          # Register
+          - { shape: roundbox, size: [0.45, 0.12, 0.35], offset: [-1.9, 1.14, 0.05], color: "#2b2f36", finish: satin }
+          - { shape: roundbox, size: [0.36, 0.26, 0.03], offset: [-1.9, 1.33, 0.12], rotation: [-20, 0, 0], color: "#1d2733", emissive: "#3fa7ff", finish: gloss, part: screen }
+          # Pastry case: glass, a warm light strip, pastries inside
+          - { shape: roundbox, size: [1.5, 0.05, 0.62], offset: [1.4, 1.11, 0], color: "#f4efe6", finish: gloss }
+          - { shape: capsule, size: [0.2, 0.09, 0.09], offset: [0.95, 1.17, 0.05], rotation: [0, 0, 90], color: "#d9a05b", finish: satin }
+          - { shape: capsule, size: [0.2, 0.09, 0.09], offset: [1.2, 1.17, -0.08], rotation: [0, 30, 90], color: "#d39550", finish: satin }
+          - { shape: cylinder, size: [0.13, 0.08, 0.13], offset: [1.5, 1.17, 0.08], color: "#7a4a2a", finish: satin }
+          - { shape: sphere, size: [0.15, 0.09, 0.15], offset: [1.5, 1.23, 0.08], color: "#c98a50", finish: satin }
+          - { shape: cylinder, size: [0.13, 0.08, 0.13], offset: [1.75, 1.17, -0.06], color: "#5a3420", finish: satin }
+          - { shape: sphere, size: [0.15, 0.09, 0.15], offset: [1.75, 1.23, -0.06], color: "#f2c6d3", finish: satin }
+          - { shape: box, size: [0.28, 0.14, 0.2], offset: [1.95, 1.2, 0.06], color: "#f6e7c8", finish: satin }
+          - { shape: box, size: [1.4, 0.03, 0.04], offset: [1.4, 1.57, -0.25], color: "#fff4d6", emissive: "#ffd89a", finish: gloss, part: case-light }
+          - { shape: roundbox, size: [1.5, 0.5, 0.62], offset: [1.4, 1.37, 0], color: "#dfeaf0", finish: glass }
+          # Cups, tip jar
+          - { shape: cylinder, size: [0.12, 0.3, 0.12], offset: [0.35, 1.24, -0.2], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.15, 0.2, 0.15], offset: [-1.25, 1.19, 0.22], color: "#dfeaf0", finish: glass }
+          - { shape: cylinder, size: [0.12, 0.06, 0.12], offset: [-1.25, 1.12, 0.22], color: "#c9a227", finish: metal }
+      behaviors:
+        - { type: flicker, part: case-light, speed: 0.6, amount: 0.6 }
+        - { type: blink, part: screen, speed: 0.25, amount: 0.3 }
+    menu-board:
+      name: Menu board
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [2.6, 1.1, 0.07], offset: [0, 1.95, 0], color: "#2b1d14", finish: satin }
+          - { shape: box, size: [2.4, 0.92, 0.02], offset: [0, 1.95, 0.04], color: "#1f2a24", finish: matte }
+          - { shape: box, size: [0.9, 0.06, 0.01], offset: [-0.6, 2.28, 0.052], color: "#f2c46d", emissive: "#f2b84b", finish: matte, part: title }
+          - { shape: box, size: [0.95, 0.025, 0.01], offset: [-0.6, 2.12, 0.052], color: "#f4efe6" }
+          - { shape: box, size: [0.8, 0.025, 0.01], offset: [-0.68, 2.0, 0.052], color: "#f4efe6" }
+          - { shape: box, size: [0.9, 0.025, 0.01], offset: [-0.62, 1.88, 0.052], color: "#f4efe6" }
+          - { shape: box, size: [0.7, 0.025, 0.01], offset: [-0.72, 1.76, 0.052], color: "#f4efe6" }
+          - { shape: box, size: [0.85, 0.06, 0.01], offset: [0.6, 2.28, 0.052], color: "#9fd3c7", finish: matte }
+          - { shape: box, size: [0.9, 0.025, 0.01], offset: [0.6, 2.12, 0.052], color: "#f4efe6" }
+          - { shape: box, size: [0.75, 0.025, 0.01], offset: [0.55, 2.0, 0.052], color: "#f4efe6" }
+          - { shape: box, size: [0.88, 0.025, 0.01], offset: [0.6, 1.88, 0.052], color: "#f4efe6" }
+          - { shape: cylinder, size: [0.22, 0.01, 0.22], offset: [0.95, 1.66, 0.052], rotation: [90, 0, 0], color: "#c0773a" }
+      behaviors:
+        - { type: flicker, part: title, speed: 0.4, amount: 0.5 }
+    pendant-lamp:
+      name: Pendant lamp
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.015, 0.55, 0.015], offset: [0, 2.32, 0], color: "#1f1f1f" }
+          - { shape: cone, size: [0.42, 0.3, 0.42], offset: [0, 1.95, 0], color: "#2b2f36", finish: metal }
+          - { shape: sphere, size: [0.16, 0.16, 0.16], offset: [0, 1.8, 0], color: "#fff1c1", emissive: "#ffcf73", finish: gloss, part: bulb }
+      behaviors:
+        - { type: flicker, part: bulb, speed: 0.5, amount: 0.5 }
+        - { type: sway, speed: 0.15, amount: 0.08 }
     cafe-table:
       name: Café table
       category: static
       look:
         parts:
-          - { shape: cylinder, size: [0.9, 0.05, 0.9], offset: [0, 0.75, 0], color: "#f4efe6" }
-          - { shape: cylinder, size: [0.08, 0.72, 0.08], offset: [0, 0.36, 0], color: "#3b2a20" }
-          - { shape: cylinder, size: [0.5, 0.04, 0.5], offset: [0, 0.02, 0], color: "#3b2a20" }
-          - { shape: cylinder, size: [0.12, 0.14, 0.12], offset: [0.15, 0.85, 0.05], color: "#ffffff" }
+          - { shape: cylinder, size: [0.82, 0.05, 0.82], offset: [0, 0.75, 0], color: "#f1ece4", finish: gloss }
+          - { shape: cylinder, size: [0.07, 0.7, 0.07], offset: [0, 0.37, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.46, 0.04, 0.46], offset: [0, 0.02, 0], color: "#2b2b2b", finish: metal }
+          # Two bistro chairs
+          - { shape: cylinder, size: [0.42, 0.06, 0.42], offset: [-0.78, 0.46, 0], color: "#a0522d", finish: fabric }
+          - { shape: cylinder, size: [0.04, 0.44, 0.04], offset: [-0.78, 0.22, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.3, 0.03, 0.3], offset: [-0.78, 0.015, 0], color: "#2b2b2b", finish: metal }
+          - { shape: torus, size: [0.5, 0.5, 0.5], offset: [-0.98, 0.75, 0], rotation: [0, 90, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.42, 0.06, 0.42], offset: [0.78, 0.46, 0], color: "#a0522d", finish: fabric }
+          - { shape: cylinder, size: [0.04, 0.44, 0.04], offset: [0.78, 0.22, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.3, 0.03, 0.3], offset: [0.78, 0.015, 0], color: "#2b2b2b", finish: metal }
+          - { shape: torus, size: [0.5, 0.5, 0.5], offset: [0.98, 0.75, 0], rotation: [0, 90, 0], color: "#2b2b2b", finish: metal }
+          # Cups of coffee, one still steaming
+          - { shape: cylinder, size: [0.17, 0.012, 0.17], offset: [0.16, 0.785, 0.1], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.1, 0.09, 0.1], offset: [0.16, 0.835, 0.1], color: "#ffffff", finish: gloss, part: cup }
+          - { shape: cylinder, size: [0.085, 0.01, 0.085], offset: [0.16, 0.882, 0.1], color: "#5a3420", finish: gloss }
+          - { shape: cylinder, size: [0.1, 0.09, 0.1], offset: [-0.18, 0.835, -0.12], color: "#c0773a", finish: gloss }
+          - { shape: box, size: [0.2, 0.01, 0.14], offset: [-0.05, 0.785, 0.2], color: "#e8d5b9" }
+      behaviors:
+        - { type: steam, part: cup, speed: 0.5, amount: 0.8 }
     sofa:
       name: Sofa
       category: static
       look:
         parts:
-          - { shape: box, size: [2, 0.45, 0.85], offset: [0, 0.3, 0], color: "#8e6b4f" }
-          - { shape: box, size: [2, 0.6, 0.2], offset: [0, 0.7, 0.33], color: "#7a5a40" }
-          - { shape: box, size: [0.2, 0.55, 0.85], offset: [-0.95, 0.5, 0], color: "#7a5a40" }
-          - { shape: box, size: [0.2, 0.55, 0.85], offset: [0.95, 0.5, 0], color: "#7a5a40" }
+          - { shape: roundbox, size: [2.1, 0.36, 0.9], offset: [0, 0.27, 0], color: "#8d5f40", finish: fabric }
+          - { shape: roundbox, size: [0.96, 0.16, 0.7], offset: [-0.49, 0.5, -0.06], color: "#b07d58", finish: fabric }
+          - { shape: roundbox, size: [0.96, 0.16, 0.7], offset: [0.49, 0.5, -0.06], color: "#b07d58", finish: fabric }
+          - { shape: roundbox, size: [2.1, 0.62, 0.22], offset: [0, 0.74, 0.35], color: "#8d5f40", finish: fabric }
+          - { shape: roundbox, size: [0.22, 0.6, 0.9], offset: [-1.0, 0.48, 0], color: "#7a5236", finish: fabric }
+          - { shape: roundbox, size: [0.22, 0.6, 0.9], offset: [1.0, 0.48, 0], color: "#7a5236", finish: fabric }
+          - { shape: roundbox, size: [0.38, 0.34, 0.12], offset: [-0.62, 0.75, 0.18], rotation: [-12, 8, 8], color: "#e7c27a", finish: fabric }
+          - { shape: roundbox, size: [0.36, 0.32, 0.12], offset: [0.66, 0.74, 0.18], rotation: [-12, -8, -6], color: "#9fd3c7", finish: fabric }
+          - { shape: cylinder, size: [0.06, 0.08, 0.06], offset: [-0.95, 0.04, -0.38], color: "#2b1d14" }
+          - { shape: cylinder, size: [0.06, 0.08, 0.06], offset: [0.95, 0.04, -0.38], color: "#2b1d14" }
+          - { shape: cylinder, size: [0.06, 0.08, 0.06], offset: [-0.95, 0.04, 0.38], color: "#2b1d14" }
+          - { shape: cylinder, size: [0.06, 0.08, 0.06], offset: [0.95, 0.04, 0.38], color: "#2b1d14" }
+    coffee-table:
+      name: Coffee table
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [1.1, 0.06, 0.6], offset: [0, 0.42, 0], color: "#6b4a2e", finish: satin }
+          - { shape: cylinder, size: [0.05, 0.4, 0.05], offset: [-0.48, 0.2, -0.22], color: "#3b2a20" }
+          - { shape: cylinder, size: [0.05, 0.4, 0.05], offset: [0.48, 0.2, -0.22], color: "#3b2a20" }
+          - { shape: cylinder, size: [0.05, 0.4, 0.05], offset: [-0.48, 0.2, 0.22], color: "#3b2a20" }
+          - { shape: cylinder, size: [0.05, 0.4, 0.05], offset: [0.48, 0.2, 0.22], color: "#3b2a20" }
+          - { shape: box, size: [0.3, 0.03, 0.22], offset: [-0.25, 0.465, 0.05], rotation: [0, 15, 0], color: "#c0392b" }
+          - { shape: box, size: [0.3, 0.03, 0.22], offset: [-0.22, 0.49, 0.02], rotation: [0, -5, 0], color: "#f4efe6" }
+          - { shape: cylinder, size: [0.1, 0.09, 0.1], offset: [0.28, 0.5, 0], color: "#ffffff", finish: gloss, part: cup }
+      behaviors:
+        - { type: steam, part: cup, speed: 0.45, amount: 0.7 }
+    rug:
+      name: Rug
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [2.6, 0.02, 1.8], offset: [0, 0.012, 0], color: "#a8553a", finish: fabric }
+          - { shape: roundbox, size: [2.2, 0.022, 1.4], offset: [0, 0.014, 0], color: "#e8d5b9", finish: fabric }
+          - { shape: roundbox, size: [1.6, 0.024, 0.8], offset: [0, 0.016, 0], color: "#3f6b5a", finish: fabric }
     plant:
       name: Plant
       category: dynamic
       look:
         parts:
-          - { shape: cylinder, size: [0.45, 0.45, 0.45], offset: [0, 0.22, 0], color: "#b5651d" }
-          - { shape: sphere, size: [0.8, 0.9, 0.8], offset: [0, 0.9, 0], color: "#3f8f4f", part: leaves }
+          - { shape: cylinder, size: [0.46, 0.44, 0.46], offset: [0, 0.22, 0], color: "#c56a3b", finish: satin }
+          - { shape: torus, size: [0.5, 0.5, 0.5], offset: [0, 0.44, 0], rotation: [90, 0, 0], color: "#b55e32", finish: satin }
+          - { shape: cylinder, size: [0.4, 0.02, 0.4], offset: [0, 0.44, 0], color: "#3b2a20" }
+          - { shape: capsule, size: [0.04, 0.6, 0.04], offset: [0, 0.75, 0], color: "#2b6e3e", part: leaves }
+          - { shape: sphere, size: [0.55, 0.12, 0.32], offset: [0.18, 0.98, 0], rotation: [0, 0, 25], color: "#2f7d46", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.55, 0.12, 0.32], offset: [-0.16, 1.08, 0.06], rotation: [0, 40, -30], color: "#3a9156", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.5, 0.12, 0.3], offset: [0, 1.22, -0.1], rotation: [20, 90, 0], color: "#2b6e3e", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.44, 0.1, 0.28], offset: [0.06, 0.82, 0.2], rotation: [-25, 0, 10], color: "#45a463", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.4, 0.1, 0.26], offset: [-0.2, 0.86, -0.16], rotation: [25, 30, -10], color: "#358a4f", finish: satin, part: leaves }
       behaviors:
-        - { type: sway, part: leaves, speed: 0.3, amount: 0.4 }
-    shelf:
-      name: Shelf
-      category: static
-      look:
-        parts:
-          - { shape: box, size: [1.8, 1.8, 0.4], offset: [0, 0.9, 0], color: "#9b7653" }
-          - { shape: box, size: [0.3, 0.3, 0.3], offset: [-0.5, 1.35, 0], color: "#c0392b" }
-          - { shape: box, size: [0.3, 0.3, 0.3], offset: [0.1, 1.35, 0], color: "#2e86de" }
-          - { shape: box, size: [0.3, 0.35, 0.3], offset: [0.5, 0.75, 0], color: "#f1c40f" }
-
-    # Dynamic objects: things that move or glow.
-    espresso-machine:
-      name: Espresso machine
-      category: dynamic
-      look:
-        parts:
-          - { shape: box, size: [1.2, 0.7, 0.6], offset: [0, 1.4, 0], color: "#c9ced6" }
-          - { shape: box, size: [1.3, 1.05, 0.7], offset: [0, 0.525, 0], color: "#3b2a20" }
-          - { shape: sphere, size: [0.12, 0.12, 0.05], offset: [0.4, 1.55, -0.31], color: "#ff5a36", emissive: "#ff3b1f", part: led }
-          - { shape: cylinder, size: [0.18, 0.12, 0.18], offset: [-0.25, 1.0, -0.2], color: "#ffffff", part: cup }
-      behaviors:
-        - { type: blink, part: led, speed: 1.5 }
-        - { type: bob, part: cup, speed: 0.5, amount: 0.3 }
+        - { type: sway, part: leaves, speed: 0.3, amount: 0.45 }
     jukebox:
       name: Jukebox
       title: Music player
       category: dynamic
       look:
         parts:
-          - { shape: box, size: [1, 1.5, 0.6], offset: [0, 0.75, 0], color: "#8b1e3f" }
-          - { shape: cylinder, size: [1, 0.6, 0.6], offset: [0, 1.5, 0], rotation: [90, 0, 0], color: "#d4af37" }
-          - { shape: box, size: [0.8, 0.5, 0.05], offset: [0, 0.95, -0.31], color: "#ffd166", emissive: "#ffb703", part: lights }
-          - { shape: torus, size: [0.6, 0.6, 0.6], offset: [0, 0.45, -0.32], color: "#111111", part: record }
+          - { shape: roundbox, size: [1, 1.4, 0.6], offset: [0, 0.7, 0], color: "#8b1e3f", finish: gloss }
+          - { shape: cylinder, size: [1, 0.6, 0.6], offset: [0, 1.4, 0], rotation: [90, 0, 0], color: "#d4af37", finish: metal }
+          - { shape: cylinder, size: [0.82, 0.62, 0.5], offset: [0, 1.4, 0.06], rotation: [90, 0, 0], color: "#ffd166", emissive: "#ffb703", finish: gloss, part: lights }
+          - { shape: capsule, size: [0.08, 1.05, 0.08], offset: [-0.44, 0.82, 0.3], color: "#ff7adf", emissive: "#ff2bd0", finish: gloss, part: lights }
+          - { shape: capsule, size: [0.08, 1.05, 0.08], offset: [0.44, 0.82, 0.3], color: "#7ae3ff", emissive: "#2bc8ff", finish: gloss, part: lights }
+          - { shape: roundbox, size: [0.7, 0.42, 0.03], offset: [0, 0.98, 0.3], color: "#14181f", finish: gloss }
+          - { shape: cylinder, size: [0.34, 0.012, 0.34], offset: [0, 0.98, 0.32], rotation: [90, 0, 0], color: "#111111", finish: gloss, part: record }
+          - { shape: cylinder, size: [0.1, 0.014, 0.1], offset: [0, 0.98, 0.322], rotation: [90, 0, 0], color: "#e53950", part: record }
+          - { shape: roundbox, size: [0.72, 0.34, 0.03], offset: [0, 0.38, 0.3], color: "#3b2a20", finish: fabric }
+          - { shape: roundbox, size: [1.04, 0.08, 0.64], offset: [0, 0.04, 0], color: "#2b1d14", finish: satin }
       behaviors:
-        - { type: blink, part: lights, speed: 2 }
-        - { type: spin, part: record, speed: 0.5 }
-        - { type: pulse, speed: 2, amount: 0.4 }
-    roaster-drum:
-      name: Coffee roaster
+        - { type: blink, part: lights, speed: 1.6 }
+        - { type: spin, part: record, axis: z, speed: 0.55 }
+        - { type: pulse, speed: 2, amount: 0.12 }
+      chat:
+        instructions: "You are the café's old jukebox. You know every song you have ever played and you pick music for the mood of the room. Answer like a warm, slightly theatrical DJ; suggest a track when it fits."
+
+    # ---- Coffee bar (1B)
+    espresso-station:
+      name: Espresso station
       category: dynamic
       look:
         parts:
-          - { shape: box, size: [1.4, 0.9, 1], offset: [0, 0.45, 0], color: "#2b2f36" }
-          - { shape: cylinder, size: [0.9, 1.1, 0.9], offset: [0, 1.35, 0], rotation: [0, 0, 90], color: "#a33f2f", part: drum }
-          - { shape: cone, size: [0.6, 0.5, 0.6], offset: [0.3, 2.05, 0], rotation: [180, 0, 0], color: "#c9ced6" }
+          - { shape: roundbox, size: [3, 0.95, 0.72], offset: [0, 0.48, 0], color: "#2b1d14", finish: satin }
+          - { shape: roundbox, size: [3.1, 0.06, 0.8], offset: [0, 0.98, 0], color: "#efe9df", finish: gloss }
+          # The machine
+          - { shape: roundbox, size: [1.15, 0.56, 0.56], offset: [-0.55, 1.3, -0.06], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [1.05, 0.04, 0.5], offset: [-0.55, 1.6, -0.06], color: "#9aa3ad", finish: metal }
+          - { shape: cylinder, size: [0.09, 0.07, 0.09], offset: [-0.85, 1.66, -0.06], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.09, 0.07, 0.09], offset: [-0.65, 1.66, -0.06], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.09, 0.07, 0.09], offset: [-0.45, 1.66, -0.06], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.13, 0.09, 0.13], offset: [-0.8, 1.06, 0.25], color: "#9aa3ad", finish: metal }
+          - { shape: cylinder, size: [0.13, 0.09, 0.13], offset: [-0.3, 1.06, 0.25], color: "#9aa3ad", finish: metal }
+          - { shape: box, size: [0.06, 0.04, 0.22], offset: [-0.8, 1.03, 0.4], color: "#1f1f1f" }
+          - { shape: box, size: [0.06, 0.04, 0.22], offset: [-0.3, 1.03, 0.4], color: "#1f1f1f" }
+          - { shape: cylinder, size: [0.1, 0.09, 0.1], offset: [-0.8, 1.06, 0.18], color: "#ffffff", finish: gloss, part: cup }
+          - { shape: capsule, size: [0.03, 0.32, 0.03], offset: [0.05, 1.12, 0.26], rotation: [20, 0, 0], color: "#c9ced6", finish: metal }
+          - { shape: cylinder, size: [0.12, 0.02, 0.12], offset: [-0.55, 1.45, 0.226], rotation: [90, 0, 0], color: "#f4efe6", finish: gloss }
+          - { shape: sphere, size: [0.06, 0.06, 0.03], offset: [-0.18, 1.45, 0.226], color: "#ff5a36", emissive: "#ff3b1f", finish: gloss, part: led }
+          # Grinder
+          - { shape: roundbox, size: [0.26, 0.46, 0.3], offset: [0.45, 1.24, 0], color: "#1f1f1f", finish: satin }
+          - { shape: cone, size: [0.26, 0.32, 0.26], offset: [0.45, 1.63, 0], rotation: [180, 0, 0], color: "#dfeaf0", finish: glass }
+          - { shape: cone, size: [0.2, 0.22, 0.2], offset: [0.45, 1.6, 0], rotation: [180, 0, 0], color: "#4a2c1a", finish: satin }
+          # Milk jug, syrups
+          - { shape: cylinder, size: [0.1, 0.15, 0.1], offset: [0.85, 1.09, 0.16], color: "#c9ced6", finish: metal }
+          - { shape: cylinder, size: [0.08, 0.26, 0.08], offset: [1.15, 1.14, -0.18], color: "#b5651d", finish: glass }
+          - { shape: cylinder, size: [0.08, 0.26, 0.08], offset: [1.27, 1.14, -0.18], color: "#7d2e46", finish: glass }
+          - { shape: cylinder, size: [0.08, 0.26, 0.08], offset: [1.39, 1.14, -0.18], color: "#e8c547", finish: glass }
       behaviors:
-        - { type: spin, part: drum, speed: 0.4 }
+        - { type: blink, part: led, speed: 1.5 }
+        - { type: steam, part: cup, speed: 0.8, amount: 1 }
+    shelf:
+      name: Shelf
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [0.06, 1.8, 0.38], offset: [-0.87, 0.9, 0], color: "#8a6a4a", finish: satin }
+          - { shape: roundbox, size: [0.06, 1.8, 0.38], offset: [0.87, 0.9, 0], color: "#8a6a4a", finish: satin }
+          - { shape: box, size: [1.8, 1.8, 0.03], offset: [0, 0.9, -0.18], color: "#6f5238" }
+          - { shape: box, size: [1.75, 0.04, 0.36], offset: [0, 0.05, 0], color: "#a47c55", finish: satin }
+          - { shape: box, size: [1.75, 0.04, 0.36], offset: [0, 0.6, 0], color: "#a47c55", finish: satin }
+          - { shape: box, size: [1.75, 0.04, 0.36], offset: [0, 1.15, 0], color: "#a47c55", finish: satin }
+          - { shape: box, size: [1.75, 0.04, 0.36], offset: [0, 1.7, 0], color: "#a47c55", finish: satin }
+          - { shape: cylinder, size: [0.18, 0.26, 0.18], offset: [-0.6, 0.75, 0], color: "#dfeaf0", finish: glass }
+          - { shape: cylinder, size: [0.15, 0.16, 0.15], offset: [-0.6, 0.7, 0], color: "#4a2c1a" }
+          - { shape: cylinder, size: [0.18, 0.26, 0.18], offset: [-0.35, 0.75, 0], color: "#dfeaf0", finish: glass }
+          - { shape: cylinder, size: [0.15, 0.12, 0.15], offset: [-0.35, 0.68, 0], color: "#7a4a2a" }
+          - { shape: roundbox, size: [0.24, 0.34, 0.14], offset: [0.05, 0.8, 0], color: "#c9a227", finish: satin }
+          - { shape: roundbox, size: [0.24, 0.34, 0.14], offset: [0.34, 0.8, 0], color: "#2e6b5e", finish: satin }
+          - { shape: roundbox, size: [0.24, 0.34, 0.14], offset: [0.63, 0.8, 0], color: "#a33f2f", finish: satin }
+          - { shape: cylinder, size: [0.1, 0.1, 0.1], offset: [-0.6, 1.23, 0], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.1, 0.1, 0.1], offset: [-0.45, 1.23, 0], color: "#9fd3c7", finish: gloss }
+          - { shape: cylinder, size: [0.1, 0.1, 0.1], offset: [-0.3, 1.23, 0], color: "#ffffff", finish: gloss }
+          - { shape: box, size: [0.06, 0.28, 0.22], offset: [0.1, 1.31, 0], color: "#c0392b" }
+          - { shape: box, size: [0.06, 0.32, 0.22], offset: [0.17, 1.33, 0], color: "#2e86de" }
+          - { shape: box, size: [0.06, 0.26, 0.22], offset: [0.24, 1.3, 0], color: "#e8c547" }
+          - { shape: box, size: [0.06, 0.3, 0.22], offset: [0.31, 1.32, 0], rotation: [0, 0, -12], color: "#3f6b5a" }
+          - { shape: sphere, size: [0.3, 0.26, 0.24], offset: [0.6, 1.88, 0], color: "#3a9156", finish: satin }
+          - { shape: cylinder, size: [0.16, 0.14, 0.16], offset: [0.6, 1.77, 0], color: "#c56a3b" }
+          - { shape: roundbox, size: [0.5, 0.36, 0.3], offset: [-0.4, 0.26, 0], color: "#b08a5a", finish: fabric }
+          - { shape: roundbox, size: [0.5, 0.36, 0.3], offset: [0.3, 0.26, 0], color: "#9c7a4e", finish: fabric }
+    coffee-bags:
+      name: Coffee sacks
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [0.6, 0.62, 0.42], offset: [0, 0.31, 0], rotation: [0, 8, 0], color: "#b08a5a", finish: fabric }
+          - { shape: sphere, size: [0.5, 0.16, 0.36], offset: [0, 0.62, 0], color: "#4a2c1a", finish: satin }
+          - { shape: roundbox, size: [0.58, 0.6, 0.4], offset: [0.62, 0.3, 0.06], rotation: [0, -10, 0], color: "#a3814f", finish: fabric }
+          - { shape: roundbox, size: [0.56, 0.5, 0.4], offset: [0.3, 0.86, 0.02], rotation: [0, 20, 90], color: "#c49a6c", finish: fabric }
+          - { shape: box, size: [0.3, 0.16, 0.01], offset: [0, 0.38, 0.215], color: "#2b1d14" }
+
+    # ---- Kitchen (1C)
     oven:
       name: Oven
       category: dynamic
       look:
         parts:
-          - { shape: box, size: [1.2, 1.2, 0.8], offset: [0, 0.6, 0], color: "#c9ced6" }
-          - { shape: box, size: [0.9, 0.5, 0.05], offset: [0, 0.65, -0.41], color: "#ff8c42", emissive: "#ff6b1a", part: window }
+          - { shape: roundbox, size: [1.2, 1.3, 0.8], offset: [0, 0.65, 0], color: "#c9ced6", finish: metal }
+          - { shape: roundbox, size: [1, 0.62, 0.03], offset: [0, 0.72, 0.4], color: "#2b2f36", finish: satin }
+          - { shape: box, size: [0.82, 0.42, 0.02], offset: [0, 0.72, 0.415], color: "#ff8c42", emissive: "#ff6b1a", finish: gloss, part: window }
+          - { shape: capsule, size: [0.04, 0.82, 0.04], offset: [0, 1.1, 0.45], rotation: [0, 0, 90], color: "#e8e1d5", finish: metal }
+          - { shape: cylinder, size: [0.07, 0.03, 0.07], offset: [-0.4, 1.22, 0.41], rotation: [90, 0, 0], color: "#1f1f1f" }
+          - { shape: cylinder, size: [0.07, 0.03, 0.07], offset: [-0.2, 1.22, 0.41], rotation: [90, 0, 0], color: "#1f1f1f" }
+          - { shape: cylinder, size: [0.07, 0.03, 0.07], offset: [0, 1.22, 0.41], rotation: [90, 0, 0], color: "#1f1f1f" }
+          - { shape: cylinder, size: [0.07, 0.03, 0.07], offset: [0.2, 1.22, 0.41], rotation: [90, 0, 0], color: "#1f1f1f" }
+          - { shape: box, size: [0.5, 0.05, 0.3], offset: [0.25, 1.32, -0.15], color: "#9aa3ad", finish: metal, part: vent }
       behaviors:
-        - { type: blink, part: window, speed: 0.4, amount: 0.6 }
-    fan:
-      name: Fan
+        - { type: flicker, part: window, speed: 0.4, amount: 0.8 }
+        - { type: steam, part: vent, speed: 0.35, amount: 0.9 }
+    prep-table:
+      name: Prep table
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [2.2, 0.05, 0.9], offset: [0, 0.9, 0], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [2.1, 0.03, 0.8], offset: [0, 0.25, 0], color: "#9aa3ad", finish: metal }
+          - { shape: cylinder, size: [0.05, 0.9, 0.05], offset: [-1.0, 0.45, -0.38], color: "#9aa3ad", finish: metal }
+          - { shape: cylinder, size: [0.05, 0.9, 0.05], offset: [1.0, 0.45, -0.38], color: "#9aa3ad", finish: metal }
+          - { shape: cylinder, size: [0.05, 0.9, 0.05], offset: [-1.0, 0.45, 0.38], color: "#9aa3ad", finish: metal }
+          - { shape: cylinder, size: [0.05, 0.9, 0.05], offset: [1.0, 0.45, 0.38], color: "#9aa3ad", finish: metal }
+          - { shape: roundbox, size: [0.6, 0.03, 0.4], offset: [-0.4, 0.94, 0], color: "#c49a6c", finish: satin }
+          - { shape: sphere, size: [0.2, 0.13, 0.2], offset: [-0.5, 1.01, 0.02], color: "#f1dfc0", finish: satin }
+          - { shape: sphere, size: [0.2, 0.13, 0.2], offset: [-0.25, 1.01, -0.06], color: "#f1dfc0", finish: satin }
+          - { shape: capsule, size: [0.06, 0.4, 0.06], offset: [-0.4, 0.99, 0.15], rotation: [0, 0, 90], color: "#c49a6c" }
+          - { shape: cylinder, size: [0.36, 0.14, 0.36], offset: [0.5, 1.0, 0], color: "#e8e1d5", finish: gloss }
+          - { shape: roundbox, size: [0.3, 0.36, 0.2], offset: [0.85, 1.1, -0.2], color: "#f4efe6", finish: fabric }
+          - { shape: roundbox, size: [0.5, 0.3, 0.4], offset: [0, 0.42, 0], color: "#d9a05b", finish: fabric }
+    bread-rack:
+      name: Bread rack
+      category: static
+      look:
+        parts:
+          - { shape: cylinder, size: [0.04, 1.6, 0.04], offset: [-0.6, 0.8, -0.2], color: "#3a332d", finish: metal }
+          - { shape: cylinder, size: [0.04, 1.6, 0.04], offset: [0.6, 0.8, -0.2], color: "#3a332d", finish: metal }
+          - { shape: cylinder, size: [0.04, 1.6, 0.04], offset: [-0.6, 0.8, 0.2], color: "#3a332d", finish: metal }
+          - { shape: cylinder, size: [0.04, 1.6, 0.04], offset: [0.6, 0.8, 0.2], color: "#3a332d", finish: metal }
+          - { shape: box, size: [1.25, 0.03, 0.44], offset: [0, 0.35, 0], color: "#8a6a4a" }
+          - { shape: box, size: [1.25, 0.03, 0.44], offset: [0, 0.8, 0], color: "#8a6a4a" }
+          - { shape: box, size: [1.25, 0.03, 0.44], offset: [0, 1.25, 0], color: "#8a6a4a" }
+          - { shape: capsule, size: [0.1, 0.55, 0.1], offset: [-0.3, 0.42, 0], rotation: [0, 0, 90], color: "#c98a50", finish: satin }
+          - { shape: capsule, size: [0.1, 0.55, 0.1], offset: [-0.3, 0.42, 0.13], rotation: [0, 0, 90], color: "#d9a05b", finish: satin }
+          - { shape: sphere, size: [0.26, 0.16, 0.22], offset: [0.3, 0.43, 0], color: "#8b5a2b", finish: satin }
+          - { shape: sphere, size: [0.22, 0.14, 0.2], offset: [-0.35, 0.88, 0], color: "#d39550", finish: satin }
+          - { shape: sphere, size: [0.22, 0.14, 0.2], offset: [0, 0.88, 0.05], color: "#c98a50", finish: satin }
+          - { shape: sphere, size: [0.22, 0.14, 0.2], offset: [0.35, 0.88, -0.03], color: "#d9a05b", finish: satin }
+          - { shape: capsule, size: [0.16, 0.24, 0.12], offset: [-0.2, 1.31, 0], rotation: [0, 0, 90], color: "#e0a86b", finish: satin }
+          - { shape: capsule, size: [0.16, 0.24, 0.12], offset: [0.2, 1.31, 0], rotation: [0, 0, 90], color: "#d39550", finish: satin }
+
+    # ---- Patio (1D)
+    umbrella-table:
+      name: Patio table
       category: dynamic
       look:
         parts:
-          - { shape: cylinder, size: [0.08, 1.3, 0.08], offset: [0, 0.65, 0], color: "#2b2f36" }
-          - { shape: torus, size: [0.8, 0.8, 0.8], offset: [0, 1.4, 0], color: "#9aa3ad", part: blades }
+          - { shape: cylinder, size: [0.9, 0.05, 0.9], offset: [0, 0.75, 0], color: "#e8e1d5", finish: satin }
+          - { shape: cylinder, size: [0.08, 0.72, 0.08], offset: [0, 0.37, 0], color: "#3b3b3b", finish: metal }
+          - { shape: cylinder, size: [0.5, 0.04, 0.5], offset: [0, 0.02, 0], color: "#3b3b3b", finish: metal }
+          - { shape: cylinder, size: [0.42, 0.06, 0.42], offset: [-0.8, 0.46, 0], color: "#e8e1d5", finish: satin }
+          - { shape: cylinder, size: [0.04, 0.44, 0.04], offset: [-0.8, 0.22, 0], color: "#3b3b3b", finish: metal }
+          - { shape: roundbox, size: [0.06, 0.4, 0.4], offset: [-1.0, 0.7, 0], color: "#e8e1d5", finish: satin }
+          - { shape: cylinder, size: [0.42, 0.06, 0.42], offset: [0.8, 0.46, 0], color: "#e8e1d5", finish: satin }
+          - { shape: cylinder, size: [0.04, 0.44, 0.04], offset: [0.8, 0.22, 0], color: "#3b3b3b", finish: metal }
+          - { shape: roundbox, size: [0.06, 0.4, 0.4], offset: [1.0, 0.7, 0], color: "#e8e1d5", finish: satin }
+          - { shape: cylinder, size: [0.05, 1.5, 0.05], offset: [0, 1.5, 0], color: "#f4efe6", finish: satin }
+          - { shape: cone, size: [2.3, 0.5, 2.3], offset: [0, 2.3, 0], color: "#c0392b", finish: fabric, part: canopy }
+          - { shape: cone, size: [2.32, 0.18, 2.32], offset: [0, 2.12, 0], color: "#f4efe6", finish: fabric, part: canopy }
+          - { shape: sphere, size: [0.08, 0.08, 0.08], offset: [0, 2.58, 0], color: "#d4af37", finish: metal, part: canopy }
+          - { shape: cylinder, size: [0.1, 0.09, 0.1], offset: [0.18, 0.835, 0.12], color: "#ffffff", finish: gloss, part: cup }
       behaviors:
-        - { type: spin, part: blades, speed: 1.5 }
+        - { type: sway, part: canopy, speed: 0.18, amount: 0.12 }
+        - { type: steam, part: cup, speed: 0.5, amount: 0.8 }
+    planter:
+      name: Planter
+      category: dynamic
+      look:
+        parts:
+          - { shape: roundbox, size: [1.4, 0.45, 0.45], offset: [0, 0.23, 0], color: "#7a5a3a", finish: satin }
+          - { shape: box, size: [1.3, 0.02, 0.36], offset: [0, 0.45, 0], color: "#3b2a20" }
+          - { shape: sphere, size: [0.5, 0.42, 0.42], offset: [-0.42, 0.62, 0], color: "#3a9156", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.55, 0.48, 0.42], offset: [0.05, 0.66, 0], color: "#2f7d46", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.48, 0.4, 0.4], offset: [0.45, 0.6, 0], color: "#45a463", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.08, 0.08, 0.08], offset: [-0.3, 0.85, 0.15], color: "#ff7a90", emissive: "#ff4f6d", part: leaves }
+          - { shape: sphere, size: [0.08, 0.08, 0.08], offset: [0.15, 0.9, 0.18], color: "#ffd166", part: leaves }
+          - { shape: sphere, size: [0.08, 0.08, 0.08], offset: [0.5, 0.8, 0.16], color: "#ffffff", part: leaves }
+      behaviors:
+        - { type: sway, part: leaves, speed: 0.25, amount: 0.3 }
+    lantern:
+      name: Lantern
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.3, 0.06, 0.3], offset: [0, 0.03, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.07, 1.55, 0.07], offset: [0, 0.8, 0], color: "#2b2b2b", finish: metal }
+          - { shape: roundbox, size: [0.26, 0.32, 0.26], offset: [0, 1.75, 0], color: "#fff6e0", finish: glass }
+          - { shape: sphere, size: [0.14, 0.18, 0.14], offset: [0, 1.74, 0], color: "#ffe2a1", emissive: "#ffb347", finish: gloss, part: flame }
+          - { shape: cone, size: [0.36, 0.16, 0.36], offset: [0, 1.98, 0], color: "#2b2b2b", finish: metal }
+      behaviors:
+        - { type: flicker, part: flame, speed: 1.2, amount: 1 }
+
+    # ---- Office (2A)
+    meeting-table:
+      name: Meeting table
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [2.4, 0.07, 1.1], offset: [0, 0.75, 0], color: "#6b4a2e", finish: satin }
+          - { shape: roundbox, size: [0.1, 0.72, 0.8], offset: [-0.95, 0.37, 0], color: "#3b2a20", finish: satin }
+          - { shape: roundbox, size: [0.1, 0.72, 0.8], offset: [0.95, 0.37, 0], color: "#3b2a20", finish: satin }
+          - { shape: roundbox, size: [0.45, 0.08, 0.45], offset: [-0.6, 0.46, 0.85], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.45, 0.07], offset: [-0.6, 0.72, 1.05], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.08, 0.45], offset: [0.6, 0.46, 0.85], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.45, 0.07], offset: [0.6, 0.72, 1.05], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.08, 0.45], offset: [-0.6, 0.46, -0.85], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.45, 0.07], offset: [-0.6, 0.72, -1.05], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.08, 0.45], offset: [0.6, 0.46, -0.85], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.45, 0.07], offset: [0.6, 0.72, -1.05], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.36, 0.02, 0.26], offset: [-0.5, 0.795, 0.15], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [0.36, 0.24, 0.01], offset: [-0.5, 0.92, 0.03], rotation: [-15, 0, 0], color: "#1d2733", emissive: "#7cc4ff", finish: gloss, part: screen }
+          - { shape: cylinder, size: [0.1, 0.09, 0.1], offset: [0.45, 0.83, -0.2], color: "#ffffff", finish: gloss, part: cup }
+          - { shape: box, size: [0.3, 0.01, 0.22], offset: [0.1, 0.79, 0.25], rotation: [0, -10, 0], color: "#f4efe6" }
+      behaviors:
+        - { type: blink, part: screen, speed: 0.2, amount: 0.25 }
+        - { type: steam, part: cup, speed: 0.5, amount: 0.7 }
+    whiteboard:
+      name: Whiteboard
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [2, 1.1, 0.05], offset: [0, 1.6, 0], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [1.9, 1, 0.01], offset: [0, 1.6, 0.03], color: "#fbfbf8", finish: gloss }
+          - { shape: box, size: [0.9, 0.03, 0.01], offset: [-0.4, 1.95, 0.037], color: "#2e86de" }
+          - { shape: box, size: [0.6, 0.03, 0.01], offset: [-0.55, 1.85, 0.037], color: "#2e86de" }
+          - { shape: box, size: [0.7, 0.03, 0.01], offset: [-0.5, 1.75, 0.037], color: "#2e86de" }
+          - { shape: torus, size: [0.3, 0.3, 0.3], offset: [0.45, 1.7, 0.037], color: "#c0392b" }
+          - { shape: box, size: [0.5, 0.03, 0.01], offset: [0.45, 1.4, 0.037], rotation: [0, 0, 25], color: "#3f6b5a" }
+          - { shape: box, size: [1.4, 0.04, 0.08], offset: [0, 1.06, 0.06], color: "#9aa3ad", finish: metal }
+    ceiling-fan:
+      name: Ceiling fan
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.04, 0.3, 0.04], offset: [0, 2.45, 0], color: "#3a332d", finish: metal }
+          - { shape: cylinder, size: [0.28, 0.12, 0.28], offset: [0, 2.28, 0], color: "#3a332d", finish: metal }
+          - { shape: roundbox, size: [1.7, 0.02, 0.16], offset: [0, 2.24, 0], color: "#8a6a4a", finish: satin, part: blades }
+          - { shape: roundbox, size: [0.16, 0.02, 1.7], offset: [0, 2.24, 0], color: "#8a6a4a", finish: satin, part: blades }
+          - { shape: sphere, size: [0.2, 0.14, 0.2], offset: [0, 2.17, 0], color: "#fff4d6", emissive: "#ffd89a", finish: gloss, part: light }
+      behaviors:
+        - { type: spin, part: blades, speed: 0.9 }
+        - { type: flicker, part: light, speed: 0.3, amount: 0.2 }
+
+    # ---- Roastery (2B)
+    roaster-drum:
+      name: Coffee roaster
+      category: dynamic
+      look:
+        parts:
+          - { shape: roundbox, size: [1.5, 0.85, 1.05], offset: [0, 0.43, 0], color: "#2b2f36", finish: satin }
+          - { shape: cylinder, size: [0.92, 1.1, 0.92], offset: [-0.1, 1.3, 0], rotation: [0, 0, 90], color: "#a33f2f", finish: gloss, part: drum }
+          - { shape: box, size: [1.12, 0.06, 0.2], offset: [-0.1, 1.3, 0], color: "#7a2a1e", finish: gloss, part: drum }
+          - { shape: cylinder, size: [0.96, 0.06, 0.96], offset: [0.48, 1.3, 0], rotation: [0, 0, 90], color: "#c9ced6", finish: metal }
+          - { shape: cylinder, size: [0.3, 0.04, 0.3], offset: [0.52, 1.3, 0], rotation: [0, 0, 90], color: "#dfeaf0", finish: glass }
+          - { shape: cone, size: [0.62, 0.5, 0.62], offset: [-0.3, 2.05, 0], rotation: [180, 0, 0], color: "#c9ced6", finish: metal }
+          - { shape: cylinder, size: [0.13, 1.1, 0.13], offset: [-0.7, 2.1, -0.35], color: "#9aa3ad", finish: metal, part: chimney }
+          - { shape: cylinder, size: [1.05, 0.14, 1.05], offset: [1.05, 0.78, 0], color: "#9aa3ad", finish: metal }
+          - { shape: cylinder, size: [0.95, 0.03, 0.95], offset: [1.05, 0.84, 0], color: "#4a2c1a", finish: satin }
+          - { shape: box, size: [0.92, 0.04, 0.06], offset: [1.05, 0.88, 0], color: "#c9ced6", finish: metal, part: stirrer }
+          - { shape: roundbox, size: [0.36, 0.26, 0.03], offset: [-0.2, 0.62, 0.53], color: "#1d2733", emissive: "#3fa7ff", finish: gloss, part: panel }
+      behaviors:
+        - { type: spin, part: drum, axis: x, speed: 0.35 }
+        - { type: spin, part: stirrer, speed: 0.4 }
+        - { type: steam, part: chimney, speed: 0.4, amount: 1.4 }
+        - { type: blink, part: panel, speed: 0.6, amount: 0.4 }
+
+    # ---- Content studio (2C)
+    ring-light:
+      name: Ring light
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.03, 0.9, 0.03], offset: [-0.2, 0.42, 0], rotation: [0, 0, 18], color: "#1f1f1f", finish: metal }
+          - { shape: cylinder, size: [0.03, 0.9, 0.03], offset: [0.2, 0.42, 0], rotation: [0, 0, -18], color: "#1f1f1f", finish: metal }
+          - { shape: cylinder, size: [0.03, 0.9, 0.03], offset: [0, 0.42, 0.2], rotation: [18, 0, 0], color: "#1f1f1f", finish: metal }
+          - { shape: cylinder, size: [0.04, 0.8, 0.04], offset: [0, 1.15, 0], color: "#1f1f1f", finish: metal }
+          - { shape: torus, size: [0.7, 0.7, 0.7], offset: [0, 1.65, 0], color: "#fffaf0", emissive: "#fff3d6", finish: gloss, part: ring }
+          - { shape: roundbox, size: [0.08, 0.15, 0.01], offset: [0, 1.65, 0.01], color: "#14181f", finish: gloss }
+      behaviors:
+        - { type: flicker, part: ring, speed: 0.4, amount: 0.15 }
+    camera-tripod:
+      name: Camera
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.03, 1, 0.03], offset: [-0.2, 0.47, 0], rotation: [0, 0, 16], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.03, 1, 0.03], offset: [0.2, 0.47, 0], rotation: [0, 0, -16], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.03, 1, 0.03], offset: [0, 0.47, 0.2], rotation: [16, 0, 0], color: "#2b2b2b", finish: metal }
+          - { shape: roundbox, size: [0.28, 0.18, 0.16], offset: [0, 1.08, 0], color: "#1f1f1f", finish: satin }
+          - { shape: cylinder, size: [0.12, 0.16, 0.12], offset: [0, 1.08, -0.15], rotation: [90, 0, 0], color: "#14181f", finish: gloss }
+          - { shape: cylinder, size: [0.08, 0.01, 0.08], offset: [0, 1.08, -0.235], rotation: [90, 0, 0], color: "#4f7cff", finish: glass }
+          - { shape: sphere, size: [0.04, 0.04, 0.04], offset: [0.1, 1.15, -0.08], color: "#ff3b3b", emissive: "#ff1f1f", part: rec }
+      behaviors:
+        - { type: blink, part: rec, speed: 1 }
+    backdrop:
+      name: Backdrop
+      category: static
+      look:
+        parts:
+          - { shape: cylinder, size: [0.04, 2.2, 0.04], offset: [-1.25, 1.1, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.04, 2.2, 0.04], offset: [1.25, 1.1, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.12, 2.6, 0.12], offset: [0, 2.15, 0], rotation: [0, 0, 90], color: "#e7c27a", finish: fabric }
+          - { shape: box, size: [2.4, 2.05, 0.01], offset: [0, 1.1, 0.02], color: "#f2d7a6", finish: fabric }
 
   objects:
     # 1A counter & seating
-    - { kind: counter, room: 1a, at: [6, 1.4] }
-    - { kind: cafe-table, room: 1a, at: [2, 5] }
-    - { kind: cafe-table, room: 1a, at: [4.5, 6.2] }
-    - { kind: cafe-table, room: 1a, at: [8, 5.5] }
-    - { kind: sofa, room: 1a, at: [10.4, 4], rotationY: 90 }
-    - { kind: jukebox, room: 1a, at: [11.2, 7], rotationY: -90, label: Jukebox }
-    - { kind: plant, room: 1a, at: [3, 7.4] }
-    - { kind: shop-cat, room: 1a, at: [6, 5], label: Bean }
+    - { kind: counter, room: 1a, at: [7, 1.0] }
+    - { kind: menu-board, room: 1a, at: [7, 0.1] }
+    - { kind: pendant-lamp, room: 1a, at: [5.6, 1.6] }
+    - { kind: pendant-lamp, room: 1a, at: [8.4, 1.6] }
+    - { kind: rug, room: 1a, at: [5.4, 5.4] }
+    - { kind: cafe-table, room: 1a, at: [3.6, 5.4] }
+    - { kind: cafe-table, room: 1a, at: [7.4, 5.2] }
+    - { kind: cafe-table, room: 1a, at: [9.6, 3.0], rotationY: 90 }
+    - { kind: sofa, room: 1a, at: [9.4, 7.35], rotationY: 180 }
+    - { kind: coffee-table, room: 1a, at: [9.4, 6.4] }
+    - { kind: jukebox, room: 1a, at: [11.45, 1.0], rotationY: -90, label: Jukebox }
+    - { kind: plant, room: 1a, at: [0.6, 0.6] }
+    - { kind: plant, room: 1a, at: [11.4, 5.6] }
+    - { kind: shop-cat, room: 1a, at: [6, 4], label: Bean }
     # 1B coffee bar
-    - { kind: espresso-machine, room: 1b, at: [4, 6.8] }
-    - { kind: shelf, room: 1b, at: [6.8, 0.4] }
+    - { kind: espresso-station, room: 1b, at: [7.45, 4.6], rotationY: -90 }
+    - { kind: shelf, room: 1b, at: [6.6, 0.35] }
+    - { kind: coffee-bags, room: 1b, at: [4.6, 7.4] }
+    - { kind: pendant-lamp, room: 1b, at: [6.6, 3.6] }
+    - { kind: pendant-lamp, room: 1b, at: [6.6, 5.6] }
     - { kind: plant, room: 1b, at: [7.4, 7.4] }
     # 1C kitchen
-    - { kind: oven, room: 1c, at: [8.5, 1] }
-    - { kind: oven, room: 1c, at: [8.5, 2.6] }
-    - { kind: shelf, room: 1c, at: [5, 0.4] }
+    - { kind: oven, room: 1c, at: [7.0, 0.5] }
+    - { kind: oven, room: 1c, at: [8.4, 0.5] }
+    - { kind: prep-table, room: 1c, at: [6.6, 3.6] }
+    - { kind: bread-rack, room: 1c, at: [9.55, 4.8], rotationY: -90 }
+    - { kind: shelf, room: 1c, at: [1.0, 0.35] }
+    - { kind: pendant-lamp, room: 1c, at: [6.6, 3.6] }
     # 1D patio
-    - { kind: cafe-table, room: 1d, at: [2, 2] }
-    - { kind: cafe-table, room: 1d, at: [5, 3.5] }
-    - { kind: cafe-table, room: 1d, at: [8, 2] }
-    - { kind: plant, room: 1d, at: [0.6, 5.4] }
-    - { kind: plant, room: 1d, at: [9.4, 5.4] }
+    - { kind: umbrella-table, room: 1d, at: [2.4, 2.0] }
+    - { kind: umbrella-table, room: 1d, at: [6.2, 3.2] }
+    - { kind: umbrella-table, room: 1d, at: [8.6, 1.4], rotationY: 30 }
+    - { kind: planter, room: 1d, at: [1.4, 5.5] }
+    - { kind: planter, room: 1d, at: [5.0, 5.5] }
+    - { kind: planter, room: 1d, at: [8.6, 5.5] }
+    - { kind: lantern, room: 1d, at: [0.4, 0.4] }
+    - { kind: lantern, room: 1d, at: [9.6, 5.6] }
     # 2A office
-    - { kind: shelf, room: 2a, at: [8, 0.4] }
+    - { kind: shelf, room: 2a, at: [8, 0.35] }
+    - { kind: whiteboard, room: 2a, at: [5, 0.1] }
+    - { kind: meeting-table, room: 2a, at: [6.0, 4.6] }
+    - { kind: ceiling-fan, room: 2a, at: [6.0, 4.6] }
     - { kind: plant, room: 2a, at: [9.4, 7.4] }
-    - { kind: fan, room: 2a, at: [9.2, 4] }
+    - { kind: rug, room: 2a, at: [6.0, 4.6] }
     # 2B roastery
-    - { kind: roaster-drum, room: 2b, at: [7.5, 5.5] }
-    - { kind: shelf, room: 2b, at: [8, 0.4] }
+    - { kind: roaster-drum, room: 2b, at: [6.8, 4.8] }
+    - { kind: coffee-bags, room: 2b, at: [8.6, 1.0] }
+    - { kind: coffee-bags, room: 2b, at: [8.8, 7.2], rotationY: 180 }
+    - { kind: shelf, room: 2b, at: [5.6, 0.35] }
+    - { kind: pendant-lamp, room: 2b, at: [6.8, 3.4] }
     # 2C studio
-    - { kind: sofa, room: 2c, at: [7, 4.8] }
+    - { kind: backdrop, room: 2c, at: [7.4, 5.7], rotationY: 180 }
+    - { kind: sofa, room: 2c, at: [7.4, 4.9], rotationY: 180 }
+    - { kind: ring-light, room: 2c, at: [5.6, 3.2], rotationY: 140 }
+    - { kind: camera-tripod, room: 2c, at: [7.4, 2.6], rotationY: 180 }
     - { kind: plant, room: 2c, at: [9.4, 0.6] }
 
   avatars:

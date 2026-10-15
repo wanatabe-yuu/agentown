@@ -39,10 +39,14 @@ export interface PlacedRoom {
   cuts: WallCut[];
   floorTexture: string | null;
   wallTexture: string | null;
+  floorStyle: string | null;
+  wallStyle: string | null;
   textureRepeat: number;
   /** Seat positions in order; agents take them by their seat number. */
   seats: Seat[];
   auto: boolean;
+  /** Walls this room shares with a neighbor on the same floor: drawn half height so they hide nothing behind. */
+  shared: { north: boolean; west: boolean };
 }
 
 /** An opening in a wall, in meters along that wall from its west/north end. */
@@ -149,9 +153,12 @@ export function layoutWorld(world: World | null, departments: Dept[], agentsAll:
       cuts: [],
       floorTexture: r.floorTexture ?? null,
       wallTexture: r.wallTexture ?? null,
+      floorStyle: r.floorStyle ?? null,
+      wallStyle: r.wallStyle ?? null,
       textureRepeat: r.textureRepeat ?? 2,
       seats: [],
       auto: !world,
+      shared: { north: false, west: false },
     })),
   );
 
@@ -180,9 +187,12 @@ export function layoutWorld(world: World | null, departments: Dept[], agentsAll:
       cuts: [],
       floorTexture: null,
       wallTexture: null,
+      floorStyle: null,
+      wallStyle: null,
       textureRepeat: 2,
       seats: [],
       auto: true,
+      shared: { north: false, west: false },
     });
     extra += depth + 2;
   }
@@ -231,6 +241,15 @@ export function layoutWorld(world: World | null, departments: Dept[], agentsAll:
     const b = l.toAt ?? [B.w / 2, B.d / 2];
     return [{ from: [A.x + a[0], A.y, A.z + a[1]] as [number, number, number], to: [B.x + b[0], B.y, B.z + b[1]] as [number, number, number], kind: l.kind }];
   });
+  // A far wall (north, west) that backs onto another room would hide that room's near side.
+  for (const r of rooms) {
+    const same = rooms.filter((o) => o !== r && o.floorIndex === r.floorIndex);
+    const overlap = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0) > 0.5;
+    r.shared = {
+      west: same.some((o) => o.x + o.w <= r.x + 0.1 && o.x + o.w >= r.x - 2 && overlap(o.z, o.z + o.d, r.z, r.z + r.d)),
+      north: same.some((o) => o.z + o.d <= r.z + 0.1 && o.z + o.d >= r.z - 2 && overlap(o.x, o.x + o.w, r.x, r.x + r.w)),
+    };
+  }
   return { floors, rooms, seatOf, doors, links };
 }
 

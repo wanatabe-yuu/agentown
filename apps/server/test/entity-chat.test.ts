@@ -5,7 +5,7 @@ import { chatInstructionTemplate } from "@agentown/core";
 import { migrate } from "../src/db.ts";
 
 let env: Awaited<ReturnType<typeof setup>>;
-let key: string, worker: string, viewer: string, cat: string, dog: string;
+let key: string, worker: string, viewer: string, cat: string, dog: string, desk: string;
 let inputs: ModelInput[] = [];
 let plan: Message[] = [];
 const fake: ChatModel = {
@@ -32,9 +32,9 @@ beforeAll(async () => {
   for (const agent of ["ceo", "lead-eng", "lead-ops", worker]) expect((await env.call(env.owner, "PUT", `/api/agents/${agent}/config`, { credentialId: key, model: "claude-haiku-5-5", effort: "medium", instructions: agent === worker ? "Explain engineering tradeoffs." : "" })).status).toBe(200);
   viewer = (await env.call(env.owner, "POST", "/api/users", { displayName: "Member", roleId: "admin" })).body.token;
   const r = await setWorld({ floors: [{ id: "ground", name: "Ground", rooms: [{ id: "room", name: "Room", area: { x: 0, z: 0, w: 10, d: 10 } }] }],
-    kinds: { cat: { name: "Cat", category: "character", look: { character: "cat" }, chat: { instructions: "Enjoy coffee discussions." } }, dog: { name: "Dog", category: "character", look: { character: "dog" } }, desk: { name: "Desk", category: "static", look: { parts: [{ shape: "box" }] } } },
-    objects: [{ kind: "cat", room: "room", at: [1, 1], label: "Bean", chat: { instructions: "Be curious." } }, { kind: "dog", room: "room", at: [2, 2], label: "Bark" }] });
-  expect(r.status).toBe(200); [cat, dog] = r.body.world.objects.map((o: any) => o.id);
+    kinds: { cat: { name: "Cat", category: "character", look: { character: "cat" }, chat: { instructions: "Enjoy coffee discussions." } }, dog: { name: "Dog", category: "character", look: { character: "dog" }, chat: {} }, desk: { name: "Desk", category: "static", look: { parts: [{ shape: "box" }] } } },
+    objects: [{ kind: "cat", room: "room", at: [1, 1], label: "Bean", chat: { instructions: "Be curious." } }, { kind: "dog", room: "room", at: [2, 2], label: "Bark" }, { kind: "desk", room: "room", at: [3, 3] }] });
+  expect(r.status).toBe(200); [cat, dog, desk] = r.body.world.objects.map((o: any) => o.id);
   await env.settle();
 });
 beforeEach(() => { inputs = []; plan = []; });
@@ -60,6 +60,9 @@ describe("individual conversations", () => {
   it("isolates history and every write between subjects, owner chat, organizations and users", async () => {
     const id = await create("object", cat);
     await send("object", cat, id, "Only the cat knows this discussion");
+    // An object knows its own room only, and furniture does not talk at all.
+    expect(inputs.at(-1)!.tools.map(t => t.name)).toEqual(["look_around", "create_task", "task_action"]);
+    expect((await call("object", desk, "GET")).status).toBe(409);
     for (const [type, subject] of [["object", dog], ["agent", worker]]) {
       expect((await call(type!, subject!, "GET")).body.chats.some((c: any) => c.id === id)).toBe(false);
       for (const [method, suffix, b] of [["GET", `/${id}`, undefined], ["PUT", `/${id}/config`, config()], ["PUT", `/${id}/archive`, { archived: true }], ["DELETE", `/${id}`, undefined], ["POST", `/${id}/messages`, { requestId: crypto.randomUUID(), text: "Cross subject" }], ["POST", `/${id}/compact`, { requestId: crypto.randomUUID() }], ["POST", `/${id}/stop`, undefined], ["POST", `/${id}/actions/missing`, { approve: true }]] as const) expect((await call(type!, subject!, method, suffix, b)).status).toBe(404);

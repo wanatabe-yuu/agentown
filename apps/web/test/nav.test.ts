@@ -1,54 +1,45 @@
-import { describe, expect, it } from "vitest";
 import { worldSchema } from "@agentown/core/world";
-import { FLOOR_HEIGHT, layoutWorld } from "../src/office3d/layout.ts";
-import { allowedRooms, buildNav, reachable, route } from "../src/office3d/nav.ts";
+import { describe, expect, it } from "vitest";
+import { layoutWorld } from "../src/office3d/layout.ts";
+import { buildNav, footprints, freeSpot, route, walkInRoom } from "../src/office3d/nav.ts";
 
 const world = worldSchema.parse({
-  floors: [
-    {
-      id: "f1",
-      name: "Floor 1",
-      rooms: [
-        { id: "1a", name: "1A", department: "front", area: { x: 0, z: 0, w: 10, d: 8 }, doors: [{ to: "1b", side: "east", at: 4 }] },
-        { id: "1b", name: "1B", department: "bar", area: { x: 11, z: 0, w: 8, d: 8 } },
-        { id: "1c", name: "1C", department: "front", area: { x: 0, z: 9, w: 10, d: 6 } }, // no door: unreachable
-      ],
-    },
-    { id: "f2", name: "Floor 2", rooms: [{ id: "2a", name: "2A", department: "bar", area: { x: 0, z: 0, w: 10, d: 8 } }] },
-  ],
-  links: [{ from: "1b", to: "2a", fromAt: [6, 6], toAt: [2, 2] }],
-  zones: { "staff-only": ["1b", "2a"] },
+  floors: [{ id: "f", name: "F", rooms: [
+    { id: "a", name: "A", area: { x: 0, z: 0, w: 8, d: 6 }, seats: 0, doors: [{ to: "b", side: "east", at: 3 }] },
+    { id: "b", name: "B", area: { x: 9, z: 0, w: 6, d: 6 }, seats: 0 },
+  ] }],
+  kinds: {
+    table: { name: "Table", category: "static", look: { parts: [{ shape: "box", size: [2, 1, 2], offset: [0, 0.5, 0] }] } },
+    cat: { name: "Cat", category: "dynamic", look: { character: "cat" }, behaviors: [{ type: "roam" }] },
+  },
+  objects: [{ kind: "table", room: "a", at: [4, 3] }, { kind: "cat", room: "a", at: [1, 1] }],
 });
-const depts = ["front", "bar"].map((id) => ({ id, name: id, color: "#888888" }));
-const layout = layoutWorld(world, depts, []);
+const layout = layoutWorld(world, [], []);
 const nav = buildNav(world, layout);
-const all = new Set(layout.rooms.map((r) => r.id));
+const inTable = ([x, z]: [number, number]) => x > 3 && x < 5 && z > 2 && z < 4;
 
-describe("walking around", () => {
-  it("routes through doors and up the stairs", () => {
-    const path = route(nav, { room: "1a", x: 2, z: 2 }, { room: "2a", x: 5, z: 5 }, all)!;
-    expect(path.map((w) => w.room)).toEqual(["1a", "1b", "1b", "2a", "2a"]);
-    // Through the east door at z = 4, from just inside 1A to just inside 1B.
-    expect(path[0]).toMatchObject({ x: 9.5, z: 4 });
-    expect(path[1]).toMatchObject({ x: 11.5, z: 4 });
-    // Up the stairs: walk to the foot in 1B, arrive at the top in 2A.
-    expect(path[2]).toMatchObject({ x: 17, z: 6, y: 0 });
-    expect(path[3]).toMatchObject({ x: 2, z: 2, y: FLOOR_HEIGHT, jump: true });
-    expect(path.at(-1)).toMatchObject({ room: "2a", x: 5, z: 5 });
+describe("walking around furniture", () => {
+  it("knows what blocks: furniture yes, a roaming cat no", () => {
+    expect(footprints(world, layout).get("a")).toEqual([{ x0: 3, z0: 2, x1: 5, z1: 4 }]);
   });
 
-  it("never leaves the rooms it may enter", () => {
-    expect(route(nav, { room: "1a", x: 2, z: 2 }, { room: "2a", x: 5, z: 5 }, new Set(["1a", "1b"]))).toBeNull();
-    expect(route(nav, { room: "1a", x: 2, z: 2 }, { room: "1c", x: 5, z: 5 }, all)).toBeNull(); // no door
-    expect(reachable(nav, "1b", allowedRooms({ zone: "staff-only" }, "1b", null, world, layout)).sort()).toEqual(["1b", "2a"]);
+  it("goes around a table instead of through it", () => {
+    const pts = walkInRoom(nav, "a", [1, 3], [7, 3]);
+    expect(pts.length).toBeGreaterThan(1);
+    expect(pts.at(-1)).toEqual([7, 3]);
+    // Every leg stays clear of the table.
+    let at: [number, number] = [1, 3];
+    for (const p of pts) {
+      for (let k = 0; k <= 20; k++) expect(inTable([at[0] + ((p[0] - at[0]) * k) / 20, at[1] + ((p[1] - at[1]) * k) / 20])).toBe(false);
+      at = p;
+    }
+    expect(walkInRoom(nav, "a", [1, 1], [7, 1])).toEqual([[7, 1]]); // nothing in the way: straight
   });
 
-  it("access comes from the template", () => {
-    expect([...allowedRooms("all", "1a", null, world, layout)].sort()).toEqual(["1a", "1b", "1c", "2a"]);
-    expect([...allowedRooms("own-room", "1a", null, world, layout)]).toEqual(["1a"]);
-    expect([...allowedRooms("own-department", "1a", "front", world, layout)].sort()).toEqual(["1a", "1c"]);
-    // An object's department is its room's.
-    expect([...allowedRooms("own-department", "1b", null, world, layout)].sort()).toEqual(["1b", "2a"]);
-    expect([...allowedRooms({ rooms: ["1b"] }, "1a", null, world, layout)].sort()).toEqual(["1a", "1b"]);
+  it("picks free spots and routes through doors around furniture", () => {
+    expect(inTable(freeSpot(nav, "a", 4, 3))).toBe(false);
+    const path = route(nav, { room: "a", x: 1, z: 3 }, { room: "b", x: 12, z: 3 }, new Set(["a", "b"]))!;
+    expect(path.at(-1)).toMatchObject({ room: "b", x: 12, z: 3 });
+    expect(path.filter((w) => w.room === "a").some((w) => inTable([w.x, w.z]))).toBe(false);
   });
 });

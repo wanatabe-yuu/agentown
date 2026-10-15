@@ -12,12 +12,16 @@ const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, "color like #a1b2c3");
 const num = (min: number, max: number) => z.number().min(min).max(max);
 const vec3 = (min: number, max: number) => z.tuple([num(min, max), num(min, max), num(min, max)]);
 
-export const SHAPES = ["box", "cylinder", "sphere", "cone", "torus"] as const;
+export const SHAPES = ["box", "cylinder", "sphere", "cone", "torus", "capsule", "roundbox"] as const;
+/** How a surface reflects light. */
+export const FINISHES = ["matte", "satin", "gloss", "metal", "glass", "fabric"] as const;
 /** Built-in procedural characters an agent (or any object) can look like. */
 export const CHARACTERS = ["person", "cat", "dog", "robot"] as const;
 /** wander: drift near where it was placed. roam: walk between rooms through doors and stairs, within its access. */
-export const BEHAVIORS = ["spin", "bob", "pulse", "blink", "sway", "wander", "roam"] as const;
+export const BEHAVIORS = ["spin", "bob", "pulse", "blink", "sway", "wander", "roam", "steam", "flicker", "rock"] as const;
 export const SIDES = ["north", "south", "east", "west"] as const;
+export const FLOOR_STYLES = ["plain", "wood", "tile", "checker", "concrete", "deck"] as const;
+export const WALL_STYLES = ["plain", "brick", "panel", "stripe"] as const;
 export const OBJECT_CATEGORIES = ["character", "static", "dynamic"] as const;
 
 const primitiveSchema = z.object({
@@ -30,6 +34,7 @@ const primitiveSchema = z.object({
   rotation: vec3(-360, 360).default([0, 0, 0]),
   color: color.default("#9aa3ad"),
   emissive: color.optional(),
+  finish: z.enum(FINISHES).default("matte"),
   /** Name a part so a behavior can move just that part (a record on a turntable, a cat's tail). */
   part: idSchema.optional(),
 });
@@ -51,6 +56,8 @@ const behaviorSchema = z.object({
   speed: num(0, 20).default(1),
   /** How strong, as a multiple of a sensible default (wander: radius in meters; roam: walking speed). */
   amount: num(0, 20).default(1),
+  /** Which axis spin, sway and rock turn around (default: spin y, sway z, rock x). */
+  axis: z.enum(["x", "y", "z"]).optional(),
 });
 export type Behavior = z.infer<typeof behaviorSchema>;
 
@@ -74,7 +81,12 @@ const avatarOverrideSchema = z.object({
 });
 export type AvatarOverride = z.infer<typeof avatarOverrideSchema>;
 
-const objectChatSchema = z.object({ instructions: z.string().max(12000).optional() });
+/**
+ * Talking is opt-in: a kind with `chat` talks (unless it says enabled: false),
+ * and one placed object can be switched on or off on its own. Furniture that
+ * never says anything has no chat at all.
+ */
+const objectChatSchema = z.object({ enabled: z.boolean().optional(), instructions: z.string().max(12000).optional() });
 
 const objectKindSchema = z.object({
   chat: objectChatSchema.optional(),
@@ -102,6 +114,9 @@ const roomSchema = z.object({
   floorTexture: z.string().min(1).max(64).optional(),
   wallTexture: z.string().min(1).max(64).optional(),
   textureRepeat: num(0.25, 50).default(2),
+  /** A pattern drawn in floorColor / wallColor when there is no texture. */
+  floorStyle: z.enum(FLOOR_STYLES).optional(),
+  wallStyle: z.enum(WALL_STYLES).optional(),
   wallHeight: num(0.2, 10).default(2.6),
   /** Seats for agents; by default as many as fit. */
   seats: z.number().int().min(0).max(200).optional(),
@@ -132,6 +147,8 @@ const placementSchema = z.object({
 });
 
 export const worldSchema = z.object({
+  /** The interface takes these colors while this world is open (a café's caramel, a lab's teal). */
+  theme: z.object({ accent: color, surface: color.optional(), ink: color.optional() }).optional(),
   floors: z.array(floorSchema).min(1).max(20),
   /** Stairs or elevators between rooms on different floors; `at` is a spot in each room (default: its middle). */
   links: z
@@ -154,6 +171,12 @@ export const worldSchema = z.object({
 });
 export type World = z.infer<typeof worldSchema>;
 export type Room = World["floors"][number]["rooms"][number];
+
+/** Whether a placed object can be talked to (see objectChatSchema). */
+export function canTalk(world: Pick<World, "kinds">, o: { kind: string; chat?: { enabled?: boolean } }): boolean {
+  const kind = world.kinds[o.kind];
+  return o.chat?.enabled ?? kind?.chat?.enabled ?? !!kind?.chat;
+}
 
 /** Cross-references a world must satisfy, given the org's departments. */
 export function checkWorld(world: World, departments: Set<string>, issue: (message: string) => void) {
