@@ -66,7 +66,7 @@ export function seat(r: Roamer) {
   r.seated = true;
   r.lost = 0;
   r.errand = null;
-  swingLegs(r.body, 0);
+  sitLegs(r.body);
 }
 
 /** Turn smoothly the short way round, instead of snapping. */
@@ -81,6 +81,15 @@ export function swingLegs(body: THREE.Object3D, angle: number) {
   const rr = body.getObjectByName("leg-r");
   if (l) l.rotation.x = angle;
   if (rr) rr.rotation.x = -angle;
+}
+
+/** Seated: thighs forward along the seat (legs hang from the hips, characters face -z). Straight legs went through the chair. */
+const SIT = 1.45;
+export function sitLegs(body: THREE.Object3D) {
+  for (const n of ["leg-l", "leg-r"]) {
+    const leg = body.getObjectByName(n);
+    if (leg) leg.rotation.x = SIT;
+  }
 }
 
 /** One frame along the current path. Stairs and elevators are climbed too (slower), not jumped. */
@@ -170,6 +179,7 @@ export function stepRoamer(nav: Nav, r: Roamer, now: number, dt: number, goHome:
     if (advance(r, now, dt) === "arrived") {
       r.seated = true;
       r.obj.rotation.y = 0;
+      sitLegs(r.body);
     }
     return;
   }

@@ -5,9 +5,9 @@ import type { Agent, Department, ObjectActivity, WorkState } from "../types.ts";
 import { FLOOR_HEIGHT, type PlacedRoom, type Seat, type WorldLayout } from "./layout.ts";
 import { t } from "../i18n.ts";
 import { allowedRooms, type Nav } from "./nav.ts";
-import { errandSpot, type Roamer, seat, stepErrand, stepRoamer, swingLegs } from "./walk.ts";
+import { errandSpot, type Roamer, seat, sitLegs, stepErrand, stepRoamer, swingLegs } from "./walk.ts";
 
-export { swingLegs } from "./walk.ts";
+export { sitLegs, swingLegs } from "./walk.ts";
 import { loadModels, texture } from "./assets.ts";
 import { orgPath } from "../api.ts";
 import { chair, character, desk, lookObject, monitor, setToon, surface } from "./procedural.ts";
@@ -567,6 +567,7 @@ export function buildScene(
       errand: null,
     };
 
+    sitLegs(avatar);
     const ringMat = new THREE.MeshBasicMaterial({ color: "#38bdf8", transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
     disposables.push(ringMat);
     const ring = new THREE.Mesh(ringGeo, ringMat);

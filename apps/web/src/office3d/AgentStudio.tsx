@@ -12,7 +12,7 @@ import { StatusPill } from "../ui.tsx";
 import { loadModels } from "./assets.ts";
 import { lightRoom } from "./env.ts";
 import { chair } from "./procedural.ts";
-import { agentAvatar, animateAvatar, swingLegs } from "./scene.ts";
+import { agentAvatar, animateAvatar, sitLegs, swingLegs } from "./scene.ts";
 
 const BUILT_IN: Record<(typeof CHARACTERS)[number], string> = { person: "Person", cat: "Cat", dog: "Dog", robot: "Robot" };
 
@@ -173,7 +173,8 @@ export default function AgentStudio(p: {
       }
       if (avatar) {
         animateAvatar(avatar, walking ? "idle" : work, sec, walking ? -((avatar.userData.lift as number | undefined) ?? 0) * avatar.scale.y : 0, walking);
-        swingLegs(avatar, walking ? Math.sin(sec * 9) * 0.6 : 0);
+        if (walking) swingLegs(avatar, Math.sin(sec * 9) * 0.6);
+        else sitLegs(avatar);
       }
       const [text, tone] = work === "thinking" ? [".".repeat(1 + (Math.floor(now / 400) % 3)), "plain"] : (BUBBLE[work] ?? ["", ""]);
       if (bubbleEl.textContent !== text) bubbleEl.textContent = text;
