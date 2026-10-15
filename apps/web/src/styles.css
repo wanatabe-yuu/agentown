@@ -801,14 +801,6 @@ select {
 }
 
 @media (max-width: 700px) {
-  .grid.agents th:nth-child(3),
-  .grid.agents td:nth-child(3),
-  .grid.agents th:nth-child(4),
-  .grid.agents td:nth-child(4),
-  .grid.agents th:nth-child(7),
-  .grid.agents td:nth-child(7) {
-    display: none;
-  }
   .table-wrap {
     padding: 8px 16px;
   }
@@ -1040,6 +1032,9 @@ input.short {
   background: transparent;
   color: var(--muted);
   font-size: 16px;
+}
+.zoom-controls .edit-world-icon {
+  display: none;
 }
 .zoom-controls button:hover:not(:disabled) {
   color: var(--text);
@@ -2020,6 +2015,12 @@ input.short {
   /* the 3D canvas swallows touch drags, so leave room below it to scroll to the panel */
   .has-owner-chat .stage, .stage { height: max(320px, 70dvh); }
   .world-nav .edit-world { display: none; }
+  /* The editor as a bottom sheet: the office stays visible above it to pick objects and rooms. */
+  .world-editor { top: auto; height: 58%; border-radius: 14px 14px 10px 10px; }
+  .zoom-controls .edit-world-icon { display: block; color: var(--accent); border-bottom: 1px solid var(--border); border-radius: 0; }
+  /* Agent cards: name and a compact Chat pill on one line, details in two columns below. */
+  .grid.agents td:first-child { display: flex; align-items: center; gap: 8px; }
+  .grid.agents .agent-chat-shortcut { margin-left: auto; min-height: 36px; padding: 0 14px; border-radius: 999px; font-size: 13px; }
   .world-nav { right: 60px; flex-wrap: nowrap; }
   .world-nav select { min-width: 96px; }
   .hire .form-grid { grid-template-columns: 1fr; }
@@ -2476,3 +2477,4 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 
 /* While a chat is open the page behind does not scroll (iOS scrolls it to show the focused field). */
 html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: none; }
+.inbox-actions .btn { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); text-decoration: none; }

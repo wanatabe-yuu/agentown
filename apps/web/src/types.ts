@@ -162,6 +162,8 @@ export interface Snapshot {
   /** Latest notable events, newest first. */
   recent?: AgentEvent[];
   projects: Array<{ id: string; name: string }>;
+  /** Owner-only kernel settings: whether designers' world edits apply at once or wait for approval. */
+  kernel?: { worldEdits: "approve" | "auto" };
   /** Floors, rooms and objects from the organization's template; null = one room per department. */
   world: World | null;
   /** Actions on objects still running (the pet cat purrs for a while). */

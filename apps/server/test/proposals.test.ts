@@ -1,4 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { collectResults } from "../src/selfpatch.ts";
 import { setup } from "./helpers.ts";
 
 let env: Awaited<ReturnType<typeof setup>>;
@@ -112,6 +116,77 @@ describe("capability system", () => {
     const r = await env.call(env.owner, "POST", "/api/tools/agent_action/invoke", { args: { id: worker, action: "start" } });
     expect(r.status).toBe(200);
     expect((await env.service.getAgentRow(worker)).desired_runtime).toBe("running");
+  });
+
+  it("world edits: without org.design they wait and the owner applies them; designers wait or apply per the kernel setting", async () => {
+    const world = (name: string) => ({ floors: [{ id: "f1", name: "Floor 1", rooms: [{ id: "eng", name, department: "eng", area: { x: 0, z: 0, w: 10, d: 8 } }] }] });
+    const rev = async () => (await env.call(env.owner, "GET", "/api/world")).body.revision as number;
+    const roomName = async () => (await env.call(env.owner, "GET", "/api/office/snapshot")).body.world?.floors[0].rooms[0].name;
+
+    // No org.design: the tool is still offered, every call is a proposal, and the owner carries it out.
+    const tools = (await env.call(env.token(worker), "GET", "/api/tools")).body.tools;
+    expect(tools.find((t: any) => t.id === "replace_world")).toMatchObject({ approval: "always" });
+    const asked = await env.call(env.token(worker), "POST", "/api/tools/replace_world/invoke", { args: { revision: await rev(), world: world("Proposed") } });
+    expect(asked.status).toBe(202);
+    const p = (await proposals()).find((x) => x.id === asked.body.proposalId);
+    expect(p).toMatchObject({ kind: "world_change", status: "pending", payload: { runAs: "approver" } });
+    const decided = await env.call(env.owner, "POST", `/api/proposals/${p.id}/decide`, { verdict: "approve" });
+    expect(decided.body).toMatchObject({ proposal: { status: "applied" } });
+    expect(await roomName()).toBe("Proposed");
+
+    // A designer waits by default...
+    await env.call(env.owner, "POST", "/api/grants", { principalId: "lead-eng", action: "org.design", scope: { kind: "org" } });
+    const lead = env.token("lead-eng");
+    const waiting = await env.call(lead, "POST", "/api/tools/replace_world/invoke", { args: { revision: await rev(), world: world("Designed") } });
+    expect(waiting.status).toBe(202);
+    expect((await proposals()).find((x) => x.id === waiting.body.proposalId).payload.runAs).toBeUndefined();
+    await env.call(env.owner, "POST", `/api/proposals/${waiting.body.proposalId}/decide`, { verdict: "reject" });
+    expect(await roomName()).toBe("Proposed");
+
+    // ...until the owner lets designers apply directly; only the owner can change that.
+    expect((await env.call(lead, "PUT", "/api/kernel", { worldEdits: "auto" })).status).toBe(403);
+    expect((await env.call(env.owner, "PUT", "/api/kernel", { worldEdits: "auto" })).status).toBe(200);
+    expect((await env.call(env.owner, "GET", "/api/office/snapshot")).body.kernel).toEqual({ worldEdits: "auto" });
+    const direct = await env.call(lead, "POST", "/api/tools/replace_world/invoke", { args: { revision: await rev(), world: world("Designed") } });
+    expect(direct.body.status).toBe("applied");
+    expect(await roomName()).toBe("Designed");
+    // Agents cannot route around the gate through the plain REST endpoint.
+    expect((await env.call(lead, "PUT", "/api/world", { revision: await rev(), world: world("Sneaky") })).status).toBe(403);
+    // Without the permission, auto changes nothing.
+    expect((await env.call(env.token(worker), "POST", "/api/tools/replace_world/invoke", { args: { revision: await rev(), world: null } })).status).toBe(202);
+    await env.call(env.owner, "PUT", "/api/kernel", { worldEdits: "approve" });
+  });
+
+  it("self-patching: a code proposal waits for the owner, who reads the diff; approving queues it and the build result comes back", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "selfpatch-"));
+    process.env.AGENTOWN_SELFPATCH_DIR = dir;
+    const diff = "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n";
+    try {
+      // Without code.propose on "self", the tool is not offered.
+      expect((await env.call(env.token(worker), "POST", "/api/tools/propose_patch/invoke", { args: { title: "x", diff } })).status).toBe(403);
+      const g = await env.call(env.owner, "POST", "/api/grants", { principalId: worker, action: "code.propose", scope: { kind: "self" }, constraints: { repos: ["self"] } });
+      expect(g.status).toBe(201);
+      const r = await env.call(env.token(worker), "POST", "/api/tools/propose_patch/invoke", { args: { title: "Fix README", summary: "one line", diff } });
+      expect(r.body).toMatchObject({ status: "pending" });
+      expect((await env.call(env.token(worker), "GET", `/api/code/proposals/${r.body.proposalId}/diff`)).status).toBe(403);
+      const view = await env.app.inject({ method: "GET", url: `/api/orgs/${env.instance.defaultOrgId}/code/proposals/${r.body.proposalId}/diff`, headers: { authorization: `Bearer ${env.owner}` } });
+      expect(view.statusCode).toBe(200);
+      expect(view.body).toContain("+new");
+      // The host has not set up the builder: approving fails cleanly and queues nothing.
+      const off = await env.call(env.owner, "POST", `/api/proposals/${r.body.proposalId}/decide`, { verdict: "approve" });
+      expect(off.status).toBe(400);
+      writeFileSync(join(dir, "enabled"), "");
+      const again = await env.call(env.token(worker), "POST", "/api/tools/propose_patch/invoke", { args: { title: "Fix README", diff } });
+      await env.call(env.owner, "POST", `/api/proposals/${again.body.proposalId}/decide`, { verdict: "approve" });
+      const queued = join(dir, "queue", `proposal-${again.body.proposalId}.patch`);
+      expect(existsSync(queued) && readFileSync(queued, "utf8")).toBe(diff);
+      mkdirSync(join(dir, "results"), { recursive: true });
+      writeFileSync(join(dir, "results", `proposal-${again.body.proposalId}.json`), JSON.stringify({ status: "failed", log: "typecheck failed" }));
+      await collectResults(env.db);
+      expect((await proposals()).find((x) => x.id === again.body.proposalId)).toMatchObject({ status: "failed", receipt: { build: "failed" }, error: "typecheck failed" });
+    } finally {
+      delete process.env.AGENTOWN_SELFPATCH_DIR;
+    }
   });
 
   it("the Khác → Đề xuất feed reads the proposals", async () => {

@@ -310,7 +310,34 @@ AccuracySec=5s
 WantedBy=timers.target
 EOF
 fi
+# Optional (AGENTOWN_SELF_PATCH=1): agents with code.propose may propose patches to
+# this install's own source; each one the owner approves is built as the agentown
+# user, installed, health-checked and rolled back on failure (bin/agentown-selfpatch).
+if [ "${AGENTOWN_SELF_PATCH:-0}" = 1 ]; then
+  install -d -o agentown -g agentown -m 0750 "$STATE/selfpatch" "$STATE/selfpatch/queue"
+  touch "$STATE/selfpatch/enabled"
+  cat > /etc/systemd/system/agentown-selfpatch.service <<EOF
+[Unit]
+Description=Agentown self-patch builder (owner-approved patches)
+
+[Service]
+Type=oneshot
+TimeoutStartSec=30min
+ExecStart=/bin/bash $PREFIX/current/bin/agentown-selfpatch
+EOF
+  cat > /etc/systemd/system/agentown-selfpatch.path <<EOF
+[Unit]
+Description=Approved Agentown patches waiting to be built
+
+[Path]
+DirectoryNotEmpty=$STATE/selfpatch/queue
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
 systemctl daemon-reload
+if [ "${AGENTOWN_SELF_PATCH:-0}" = 1 ]; then systemctl enable --now agentown-selfpatch.path >/dev/null; fi
 systemctl enable agentown >/dev/null
 systemctl restart agentown
 if [ "$DRIVER" = kubernetes ]; then systemctl enable --now agentown-provision.timer >/dev/null; fi

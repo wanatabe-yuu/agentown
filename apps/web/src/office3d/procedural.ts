@@ -12,7 +12,7 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 type Finish = Primitive["finish"];
 type Shape = Primitive["shape"];
 const DEG = Math.PI / 180;
-const unit: Record<Shape, THREE.BufferGeometry> = {
+const unit: Record<Exclude<Shape, "extrude" | "lathe">, THREE.BufferGeometry> = {
   box: new THREE.BoxGeometry(1, 1, 1),
   roundbox: new RoundedBoxGeometry(1, 1, 1, 3, 0.14),
   cylinder: new THREE.CylinderGeometry(0.5, 0.5, 1, 24),
@@ -30,24 +30,91 @@ const FINISH: Record<Finish, Partial<THREE.MeshPhysicalMaterialParameters>> = {
   metal: { roughness: 0.28, metalness: 0.85 },
   glass: { roughness: 0.05, metalness: 0, transparent: true, opacity: 0.35, depthWrite: false },
 };
-const materials = new Map<string, THREE.MeshPhysicalMaterial>();
+const materials = new Map<string, THREE.MeshStandardMaterial | THREE.MeshToonMaterial>();
+/** Extrude and lathe outlines, built once per outline and stretched to a 1×1×1 box like the unit shapes. */
+const outlines = new Map<string, THREE.BufferGeometry>();
+function outlineGeometry(shape: "extrude" | "lathe", points: Array<[number, number]>): THREE.BufferGeometry {
+  const key = `${shape}|${JSON.stringify(points)}`;
+  let g = outlines.get(key);
+  if (g) return g;
+  g = shape === "extrude"
+    ? new THREE.ExtrudeGeometry(new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, y))), { depth: 1, bevelEnabled: false })
+    : new THREE.LatheGeometry(points.map(([r, y]) => new THREE.Vector2(Math.max(0, r), y)), 32);
+  g.computeBoundingBox();
+  const box = g.boundingBox!;
+  const span = box.getSize(new THREE.Vector3());
+  g.center();
+  g.scale(1 / Math.max(span.x, 1e-3), 1 / Math.max(span.y, 1e-3), 1 / Math.max(span.z, 1e-3));
+  g.computeVertexNormals();
+  outlines.set(key, g);
+  return g;
+}
+type Tune = Pick<Primitive, "roughness" | "metalness" | "opacity">;
 
-export function material(color: string, emissive?: string, own = false, finish: Finish = "matte"): THREE.MeshPhysicalMaterial {
-  const key = `${color}|${emissive ?? ""}|${finish}`;
+/**
+ * Anime style: cel shading in three flat tones and ink outlines. Set before
+ * building a scene; the material cache is per style.
+ */
+let toon = false;
+const INK = new THREE.MeshBasicMaterial({ color: "#2a1a14", side: THREE.BackSide });
+const OUTLINE = 0.012;
+let ramp: THREE.DataTexture | null = null;
+function toonRamp(): THREE.DataTexture {
+  if (ramp) return ramp;
+  // Shadow, mid, lit: hard steps instead of a smooth falloff.
+  ramp = new THREE.DataTexture(new Uint8Array([110, 110, 110, 255, 190, 190, 190, 255, 255, 255, 255, 255]), 3, 1);
+  ramp.minFilter = ramp.magFilter = THREE.NearestFilter;
+  ramp.needsUpdate = true;
+  return ramp;
+}
+export function setToon(on: boolean) {
+  if (on === toon) return;
+  disposeMaterials();
+  toon = on;
+}
+export const isToon = () => toon;
+
+/** A surface material for walls and floors that follows the style. */
+export function surface(params: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial | THREE.MeshToonMaterial {
+  if (!toon) return new THREE.MeshStandardMaterial(params);
+  const { roughness: _r, metalness: _m, ...rest } = params;
+  return new THREE.MeshToonMaterial({ ...rest, gradientMap: toonRamp() });
+}
+
+export function material(color: string, emissive?: string, own = false, finish: Finish = "matte", tune: Tune = {}): THREE.MeshStandardMaterial | THREE.MeshToonMaterial {
+  const key = `${color}|${emissive ?? ""}|${finish}|${tune.roughness ?? ""}|${tune.metalness ?? ""}|${tune.opacity ?? ""}`;
   if (!own && materials.has(key)) return materials.get(key)!;
-  const m = new THREE.MeshPhysicalMaterial({ color, ...FINISH[finish], ...(emissive ? { emissive, emissiveIntensity: 0.9 } : {}) });
+  const glow = emissive ? { emissive, emissiveIntensity: 0.9 } : {};
+  const see = tune.opacity !== undefined && tune.opacity < 1 ? { transparent: true, opacity: tune.opacity, depthWrite: false } : {};
+  const m = toon
+    ? new THREE.MeshToonMaterial({ color, gradientMap: toonRamp(), ...glow, ...(finish === "glass" ? { transparent: true, opacity: 0.35, depthWrite: false } : {}), ...see })
+    : new THREE.MeshPhysicalMaterial({
+        color, ...FINISH[finish], ...glow, ...see,
+        ...(tune.roughness !== undefined ? { roughness: tune.roughness } : {}),
+        ...(tune.metalness !== undefined ? { metalness: tune.metalness } : {}),
+      });
   if (!own) materials.set(key, m);
   return m;
 }
 
-function mesh(shape: Shape, size: [number, number, number], at: [number, number, number], mat: THREE.Material, rot: [number, number, number] = [0, 0, 0]) {
-  const m = new THREE.Mesh(unit[shape], mat);
+/** Inverted hull: a back-faced copy, a fixed world thickness larger on every axis. */
+function outline(m: THREE.Mesh) {
+  const ink = new THREE.Mesh(m.geometry, INK);
+  ink.scale.set(1 + (2 * OUTLINE) / Math.max(m.scale.x, 1e-3), 1 + (2 * OUTLINE) / Math.max(m.scale.y, 1e-3), 1 + (2 * OUTLINE) / Math.max(m.scale.z, 1e-3));
+  ink.raycast = () => {};
+  ink.userData.ink = true;
+  m.add(ink);
+}
+
+function mesh(shape: Shape, size: [number, number, number], at: [number, number, number], mat: THREE.Material, rot: [number, number, number] = [0, 0, 0], points?: Array<[number, number]>) {
+  const m = new THREE.Mesh(shape === "extrude" || shape === "lathe" ? outlineGeometry(shape, points ?? [[0, 0], [1, 0], [0, 1]]) : unit[shape], mat);
   m.scale.set(size[0], shape === "capsule" ? size[1] / 2 : size[1], size[2]);
   m.position.set(...at);
   m.rotation.set(rot[0] * DEG, rot[1] * DEG, rot[2] * DEG);
-  const see = !(mat as THREE.MeshPhysicalMaterial).transparent;
+  const see = !mat.transparent;
   m.castShadow = see;
   m.receiveShadow = true;
+  if (toon && see) outline(m);
   return m;
 }
 
@@ -56,7 +123,7 @@ export function partsObject(parts: Primitive[]): THREE.Group {
   const g = new THREE.Group();
   for (const [i, p] of parts.entries()) {
     // Emissive parts get their own material: blink and flicker change its intensity.
-    const m = mesh(p.shape, p.size, p.offset, material(p.color, p.emissive, !!p.emissive, p.finish ?? "matte"), p.rotation);
+    const m = mesh(p.shape, p.size, p.offset, material(p.color, p.emissive, !!p.emissive, p.finish ?? "matte", p), p.rotation, p.points);
     m.userData.partIndex = i; // the object panel outlines the part being edited
     if (p.part) {
       // Several primitives can share a part name: they move together.
@@ -113,7 +180,45 @@ export function character(kind: "person" | "cat" | "dog" | "robot", color: strin
     return e;
   };
 
-  if (kind === "person") {
+  /** Anime eyes: a tall iris with a white catch-light; the group still blinks by its y scale. */
+  const animeEyes = (y: number, z: number, spread: number, size: number, iris: THREE.Material) => {
+    const e = new THREE.Group();
+    e.name = "eyes";
+    const shine = material("#ffffff", "#ffffff", false, "gloss");
+    for (const x of [-spread, spread]) {
+      e.add(mesh("sphere", [size, size * 1.5, size * 0.35], [x, 0, 0], iris));
+      e.add(mesh("sphere", [size * 0.38, size * 0.38, size * 0.2], [x + size * 0.18, size * 0.32, -size * 0.14], shine));
+    }
+    e.position.set(0, y, z);
+    return e;
+  };
+
+  if (kind === "person" && toon) {
+    // Chibi proportions: a big head on a small body, big eyes, a fringe of hair.
+    const skin = material(SKIN[variant % SKIN.length]!, undefined, false, "satin");
+    const shoe = material("#2a2522", undefined, false, "gloss");
+    const blush = material("#f29a9a", undefined, false, "matte");
+    const irisColor = ["#3a5fb0", "#7a3b2e", "#2f7a4f", "#6b3fa0"][variant % 4]!;
+    for (const [name, x] of [["leg-l", -0.09], ["leg-r", 0.09]] as const) {
+      joint(name, [x, 0.52, 0], mesh("capsule", [0.13, 0.48, 0.13], [0, -0.24, 0], dark), mesh("roundbox", [0.14, 0.08, 0.2], [0, -0.5, -0.03], shoe));
+    }
+    g.add(mesh("capsule", [0.4, 0.56, 0.3], [0, 0.8, 0], body)); // torso
+    const head = joint("head", [0, 1.36, 0], mesh("sphere", [0.5, 0.48, 0.46], [0, 0, 0], skin), animeEyes(-0.02, -0.215, 0.1, 0.075, material(irisColor, undefined, false, "gloss")));
+    for (const x of [-0.16, 0.16]) head.add(mesh("sphere", [0.08, 0.035, 0.02], [x, -0.1, -0.21], blush)); // cheeks
+    head.add(mesh("sphere", [0.05, 0.02, 0.02], [0, -0.15, -0.225], material("#9c4a4a", undefined, false, "matte"))); // mouth
+    // Hair: a cap over the back of the head, a fringe of three locks, side locks, then a style.
+    head.add(mesh("sphere", [0.54, 0.46, 0.5], [0, 0.07, 0.03], dark));
+    for (const [x, r] of [[-0.14, -18], [0, 0], [0.14, 18]] as const) head.add(mesh("sphere", [0.2, 0.17, 0.1], [x, 0.13, -0.2], dark, [0, 0, r]));
+    for (const x of [-0.24, 0.24]) head.add(mesh("capsule", [0.08, 0.3, 0.08], [x, -0.08, -0.06], dark));
+    const style = Math.floor(variant / SKIN.length) % 4;
+    if (style === 1) for (const x of [-0.3, 0.3]) head.add(mesh("capsule", [0.12, 0.42, 0.12], [x, -0.12, 0.12], dark, [0, 0, x < 0 ? -12 : 12])); // twin tails
+    if (style === 2) head.add(mesh("capsule", [0.14, 0.4, 0.14], [0, 0.0, 0.3], dark, [-35, 0, 0])); // ponytail
+    if (style === 3) for (const x of [-0.14, 0, 0.14]) head.add(mesh("cone", [0.12, 0.2, 0.12], [x, 0.3, 0.06], dark, [-15, 0, x * -90])); // spiky
+    for (const [name, x] of [["arm-l", -0.24], ["arm-r", 0.24]] as const) {
+      const arm = joint(name, [x, 0.98, 0], mesh("capsule", [0.11, 0.38, 0.11], [0, -0.18, 0], body), mesh("sphere", [0.1, 0.1, 0.1], [0, -0.38, 0], skin));
+      arm.rotation.x = 35 * DEG;
+    }
+  } else if (kind === "person") {
     const skin = material(SKIN[variant % SKIN.length]!, undefined, false, "satin");
     const shoe = material("#2a2522", undefined, false, "gloss");
     for (const [name, x] of [["leg-l", -0.1], ["leg-r", 0.1]] as const) {
@@ -165,7 +270,8 @@ export function character(kind: "person" | "cat" | "dog" | "robot", color: strin
     const head = joint("head", [0, lift + 0.46 * big, -0.12 * big], mesh("sphere", [0.28 * big, 0.25 * big, 0.25 * big], [0, 0, 0], body));
     head.add(mesh("sphere", [0.15 * big, 0.1 * big, 0.12 * big], [0, -0.05 * big, -0.1 * big], light)); // muzzle
     head.add(mesh("sphere", [0.04 * big, 0.03 * big, 0.03 * big], [0, -0.02 * big, -0.165 * big], material("#e58a9a", undefined, false, "gloss"))); // nose
-    head.add(eyes(0.03 * big, -0.11 * big, 0.06 * big, 0.04 * big, kind === "cat" ? material("#9bd34a", undefined, false, "gloss") : eye));
+    const animalIris = kind === "cat" ? material("#9bd34a", undefined, false, "gloss") : eye;
+    head.add(toon ? animeEyes(0.03 * big, -0.12 * big, 0.065 * big, 0.055 * big, animalIris) : eyes(0.03 * big, -0.11 * big, 0.06 * big, 0.04 * big, animalIris));
     if (kind === "cat") {
       for (const [name, x] of [["ear-l", -0.08], ["ear-r", 0.08]] as const) {
         const ear = mesh("cone", [0.09, 0.14, 0.07], [x, 0.14, 0.01], body, [0, 0, x < 0 ? 12 : -12]);
@@ -249,4 +355,6 @@ export function chair(): THREE.Group {
 export function disposeMaterials() {
   for (const m of materials.values()) m.dispose();
   materials.clear();
+  for (const g of outlines.values()) g.dispose();
+  outlines.clear();
 }

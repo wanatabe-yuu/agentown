@@ -1,5 +1,5 @@
 import { chatSubjectSchema, type ChatSubject } from "./chat/subjects.ts";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { PassThrough, Readable } from "node:stream";
 import { ACTIONS, type Actor, EFFORTS, WORK_STATES, authHeaderSchema, termSchema } from "@agentown/core";
 import fastifyStatic from "@fastify/static";
@@ -11,7 +11,8 @@ import { PROVIDERS } from "./providers.ts";
 import type { RuntimeDriver } from "./runtime/driver.ts";
 import type { Instance, Principal } from "./instance.ts";
 import type { Service } from "./service.ts";
-import { ApiError, badRequest } from "./util.ts";
+import { ApiError, badRequest, deny, notFound } from "./util.ts";
+import { proposalDiff, SELF_REPO, sourceTarball } from "./selfpatch.ts";
 import { OwnerChat } from "./owner-chat.ts";
 import { FEED_KINDS, type FeedKind, feed, listTeamMessages, postTeamMessage } from "./conversations.ts";
 import { PROPOSAL_KINDS, PROPOSAL_STATUSES, ProposalEngine } from "./proposals.ts";
@@ -159,7 +160,7 @@ const S = {
     principalId: z.string(),
     action: z.enum(ACTIONS),
     scope: scopeSchema,
-    constraints: z.object({ templates: z.array(z.string()).optional() }).prefault({}),
+    constraints: z.object({ templates: z.array(z.string()).optional(), repos: z.array(z.string()).optional() }).prefault({}),
     delegable: z.boolean().default(false),
     expiresAt: z.string().datetime().nullable().optional(),
   }),
@@ -181,6 +182,12 @@ function parse<T extends z.ZodTypeAny>(schema: T, data: unknown): z.infer<T> {
   const r = schema.safeParse(data ?? {});
   if (!r.success) throw badRequest("invalid request body", z.flattenError(r.error));
   return r.data;
+}
+
+/** Agents change the world only through the capability gateway, where the owner's approval rules apply. */
+function peopleOnly(actor: Actor, tool: string): Actor {
+  if (actor.kind === "agent") throw deny(`agents edit the world through the ${tool} tool (agentown tool ${tool}), so the owner's approval rules apply`);
+  return actor;
 }
 
 function actorOf(req: FastifyRequest): Actor {
@@ -389,6 +396,7 @@ export async function buildApp(opts: AppOptions) {
       r.get("/me", async (req) => svcOf(req).me(actorOf(req)));
       // The organization's structure (owner only), and saving it as a template.
       r.get("/config", async (req) => svcOf(req).getConfig(actorOf(req)));
+      r.put("/kernel", async (req) => changed(await svcOf(req).setKernelSettings(actorOf(req), parse(z.object({ worldEdits: z.enum(["approve", "auto"]) }).strict(), req.body))));
       r.put("/language", async (req) => changed(await svcOf(req).setLanguage(actorOf(req), parse(z.object({ language: z.enum(LANGUAGES) }), req.body).language)));
       r.put("/config", async (req) => changed(await instance.updateOrgConfig(svcOf(req), actorOf(req), parse(S.orgConfig, req.body))));
       r.post("/templates", async (req, reply) => {
@@ -398,7 +406,7 @@ export async function buildApp(opts: AppOptions) {
 
       // The world (org.design) and its art. Uploads are raw bytes with their own size limit.
       r.get("/world", async (req) => svcOf(req).getWorld(actorOf(req)));
-      r.put("/world", async (req) => changed(await instance.updateOrgWorld(svcOf(req), actorOf(req), parse(S.orgWorld, req.body))));
+      r.put("/world", async (req) => changed(await instance.updateOrgWorld(svcOf(req), peopleOnly(actorOf(req), "replace_world"), parse(S.orgWorld, req.body))));
       r.addContentTypeParser(["application/octet-stream", "model/gltf-binary", "image/png", "image/jpeg", "image/webp"], { parseAs: "buffer", bodyLimit: MODEL_MAX + 1 }, (_req, body, done) =>
         done(null, body),
       );
@@ -407,7 +415,7 @@ export async function buildApp(opts: AppOptions) {
         if (!Buffer.isBuffer(req.body)) throw badRequest("send the file's bytes (content-type application/octet-stream)");
         const q = parse(S.assetQuery, req.query);
         reply.status(201);
-        return svcOf(req).uploadAsset(actorOf(req), { kind: q.kind, name: q.name, content: req.body });
+        return svcOf(req).uploadAsset(peopleOnly(actorOf(req), "upload_asset"), { kind: q.kind, name: q.name, content: req.body });
       });
       r.get<{ Params: { id: string } }>("/assets/:id", async (req, reply) => {
         const a = await svcOf(req).getAsset(actorOf(req), req.params.id);
@@ -479,7 +487,22 @@ export async function buildApp(opts: AppOptions) {
 
   // ---- capability system (registry, discovery, gateway) and proposals
   r.get("/tools", async (req) => ({ tools: await gateway.discover(svcOf(req), actorOf(req)) }));
-  r.post<{ Params: { id: string } }>("/tools/:id/invoke", async (req, reply) => {
+  // ---- self-patching: this install's own source, and code proposals' diffs for review
+  r.get("/code/source", async (req, reply) => {
+    const actor = actorOf(req);
+    await svcOf(req).require(actor, "code.read", { repoId: SELF_REPO, ...(actor.kind === "agent" ? { agentId: actor.id } : {}) }, { auditAs: "code.read" });
+    const file = sourceTarball();
+    if (!existsSync(file)) throw notFound("source (this build was packaged without it)");
+    return reply.header("content-type", "application/gzip").header("content-disposition", 'attachment; filename="agentown-source.tar.gz"').send(createReadStream(file));
+  });
+  r.get<{ Params: { id: string } }>("/code/proposals/:id/diff", async (req, reply) => {
+    const svc = svcOf(req);
+    const actor = actorOf(req);
+    if (!(actor.kind === "human" && actor.owner)) throw deny("only the owner reviews code proposals");
+    return reply.header("content-type", "text/plain; charset=utf-8").header("content-security-policy", "sandbox").send(await proposalDiff(svc.db, svc.orgId, req.params.id));
+  });
+  // Room for a base64 model (upload_asset) or a whole world.
+  r.post<{ Params: { id: string } }>("/tools/:id/invoke", { bodyLimit: Math.ceil(MODEL_MAX * 1.4) + 4096 }, async (req, reply) => {
     const body = parse(S.invoke, req.body);
     const out = await gateway.invoke(svcOf(req), actorOf(req), req.params.id, body.args, body.idempotencyKey);
     reply.status(out.status === "pending" ? 202 : 200);

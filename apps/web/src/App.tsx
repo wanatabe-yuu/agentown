@@ -422,7 +422,7 @@ function OrgApp({
         />
       )}
       {showAudit && <AuditDialog onClose={() => setShowAudit(false)} now={now} />}
-      {showSettings && <SettingsDialog org={snapshot.organization} owner={!!me.actor.owner} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsDialog org={snapshot.organization} kernel={snapshot.kernel} owner={!!me.actor.owner} onClose={() => setShowSettings(false)} />}
       {showKeys && <CredentialsDialog catalog={catalog} onClose={() => setShowKeys(false)} notify={notify} now={now} />}
       {entityChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} key={`${orgId}:${entityChat.type}:${entityChat.id}`} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} subject={entityChat} onClose={() => setEntityChat(null)} onKeys={() => { setEntityChat(null); setShowKeys(true); }} onOpenChat={openChat} />}
       {showOwnerChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} onClose={() => setShowOwnerChat(false)} onKeys={() => { setShowOwnerChat(false); setShowKeys(true); }} onOpenChat={openChat} />}

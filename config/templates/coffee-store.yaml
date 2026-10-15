@@ -31,7 +31,7 @@ policyProfiles:
     - { action: runtime.control, scope: descendants }
     - { action: runtime.logs, scope: descendants }
     - { action: agent.configure, scope: descendants }
-    - { action: agent.spawn, scope: team, templates: [shift-lead-v1, barista-v1, baker-v1, roaster-v1, marketer-claude-v1, mascot-claude-v1] }
+    - { action: agent.spawn, scope: team, templates: [shift-lead-v1, barista-v1, baker-v1, roaster-v1, marketer-claude-v1, mascot-claude-v1, designer-v1] }
   lead:
     - { action: org.view, scope: team }
     - { action: task.view, scope: team }
@@ -41,6 +41,13 @@ policyProfiles:
     - { action: agent.spawn, scope: self, templates: [barista-v1, baker-v1] }
     - { action: runtime.control, scope: direct-reports }
     - { action: runtime.logs, scope: direct-reports }
+  # Decorates the café: edits rooms, objects and art through the world tools.
+  designer:
+    - { action: org.view, scope: org }
+    - { action: org.design, scope: org }
+    - { action: task.view, scope: self }
+    - { action: task.create, scope: self }
+    - { action: runtime.logs, scope: self }
   worker:
     - { action: org.view, scope: self }
     - { action: task.view, scope: self }
@@ -55,6 +62,7 @@ agentTemplates:
   - { id: roaster-v1, jobRole: roaster, runtimePreset: claude-v1, policyProfile: worker }
   - { id: marketer-claude-v1, jobRole: marketer, runtimePreset: claude-v1, policyProfile: worker }
   - { id: mascot-claude-v1, jobRole: mascot, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: designer-v1, jobRole: designer, runtimePreset: claude-v1, policyProfile: designer }
 
 humanRoles:
   shift-supervisor:
@@ -80,10 +88,13 @@ bootstrap:
     - { key: baker, displayName: Ines, template: baker-v1, department: kitchen, reportsTo: shift-lead }
     - { key: roaster, displayName: Bao, template: roaster-v1, department: roastery, reportsTo: manager }
     - { key: mocha, displayName: Mocha, template: mascot-claude-v1, department: studio, reportsTo: manager }
+    - { key: designer, displayName: Mai, template: designer-v1, department: studio, reportsTo: manager }
 
 world:
   # The café's own look in the interface: warm espresso and caramel.
   theme: { accent: "#c0773a", surface: "#fbf6ef", ink: "#2b1d14" }
+  # Drawn anime-style: flat cel shading, ink outlines, big-eyed staff.
+  style: anime
   floors:
     - id: f1
       name: Floor 1

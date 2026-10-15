@@ -109,6 +109,12 @@ export const orgConfigSchema = z
     bootstrap: z.object({ agents: z.array(bootstrapAgentSchema) }),
     /** Floors, rooms and objects; without it the office lays out one room per department. */
     world: worldSchema.optional(),
+    /**
+     * Owner-only kernel settings. worldEdits: whether agents allowed to design
+     * (org.design) change the world at once ("auto") or each change waits for
+     * the owner ("approve"). Callers without org.design always wait for the owner.
+     */
+    kernel: z.object({ worldEdits: z.enum(["approve", "auto"]).default("approve") }).prefault({}),
   })
   .superRefine((cfg, ctx) => {
     const presets = new Set(cfg.runtimeCatalog.map((p) => p.id));

@@ -11,6 +11,7 @@ import { KubernetesDriver } from "./runtime/kubernetes.ts";
 import { listModels } from "./providers.ts";
 import { SecretBox } from "./secrets.ts";
 import { Instance } from "./instance.ts";
+import { collectResults } from "./selfpatch.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const env = process.env;
@@ -59,6 +60,8 @@ bus.subscribe((e) => {
   if (RECHECK_ON.has(e.type)) void recheckTerminals().catch(() => {});
 });
 const terminalSweep = setInterval(() => void recheckTerminals().catch(() => {}), 5000);
+// The host's self-patch builder leaves results; put them on their proposals.
+const patchSweep = setInterval(() => void collectResults(db).catch(() => {}), 10000);
 
 if (controller) controller.start();
 const leaseSweep = !controller ? setInterval(() => void instance.sweepLeases().catch(() => {}), 5000) : null;
@@ -74,6 +77,7 @@ const shutdown = async () => {
   closing = true;
   controller?.stop();
   clearInterval(terminalSweep);
+  clearInterval(patchSweep);
   if (leaseSweep) clearInterval(leaseSweep);
   await app.close();
   await db.end();

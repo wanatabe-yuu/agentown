@@ -7,7 +7,20 @@ const browserLang = (): Lang => (navigator.language?.toLowerCase().startsWith("v
 const nameOf = (id: Lang) => LANGUAGES.find((l) => l.id === id)!.name;
 
 /** Per-person interface language, and the organization's template language (owner only). */
-export function SettingsDialog({ org, owner, onClose }: { org: { name: string; language: Lang; term?: string }; owner: boolean; onClose: () => void }) {
+export function SettingsDialog({ org, kernel, owner, onClose }: { org: { name: string; language: Lang; term?: string }; kernel?: { worldEdits: "approve" | "auto" }; owner: boolean; onClose: () => void }) {
+  const [worldEdits, setWorldEdits] = useState(kernel?.worldEdits ?? "approve");
+  const [kernelError, setKernelError] = useState("");
+  const saveWorldEdits = async (value: "approve" | "auto") => {
+    const before = worldEdits;
+    setWorldEdits(value);
+    setKernelError("");
+    try {
+      await api("PUT", "/api/kernel", { worldEdits: value });
+    } catch (e) {
+      setWorldEdits(before);
+      setKernelError((e as Error).message);
+    }
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState<Lang | null>(null);
@@ -60,6 +73,20 @@ export function SettingsDialog({ org, owner, onClose }: { org: { name: string; l
         {!owner && <p className="muted small">{t("Only the owner can change it.")}</p>}
         {saved && <p className="small ok" role="status">{org.term ? t("{term} language set to {lang}", { term: t(org.term), lang: nameOf(saved) }) : t("Template language set to {lang}", { lang: nameOf(saved) })}</p>}
         {error && <p className="error small" role="alert">{error}</p>}
+      </section>
+      <section className="settings-section">
+        <label htmlFor="world-edits">
+          <h3>{t("Agents editing the world")}</h3>
+        </label>
+        <p className="muted small">
+          {t("Agents allowed to design can change rooms, objects and art. Agents without that permission can only propose changes, which always wait for you.")}
+        </p>
+        <select id="world-edits" value={worldEdits} disabled={!owner} onChange={(e) => void saveWorldEdits(e.target.value as "approve" | "auto")}>
+          <option value="approve">{t("Ask me to approve every change")}</option>
+          <option value="auto">{t("Designers apply changes directly")}</option>
+        </select>
+        {!owner && <p className="muted small">{t("Only the owner can change it.")}</p>}
+        {kernelError && <p className="error small" role="alert">{kernelError}</p>}
       </section>
     </Modal>
   );

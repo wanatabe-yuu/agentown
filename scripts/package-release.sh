@@ -38,8 +38,11 @@ cp -r "$ROOT/config/templates" "$DIR/config/templates"
 cp "$ROOT/deploy/install.sh" "$DIR/install.sh"
 cp "$ROOT/deploy/uninstall.sh" "$DIR/uninstall.sh"
 cp "$ROOT/deploy/agentownctl" "$DIR/bin/agentownctl"
+cp "$ROOT/deploy/agentown-selfpatch" "$DIR/bin/agentown-selfpatch"
+# The install's own source, for agents that propose patches to it (self-patching).
+(cd "$ROOT" && git ls-files -co --exclude-standard -z | tar --null -T - -czf "$DIR/source.tar.gz")
 cp "$ROOT/LICENSE" "$DIR/"
-chmod 0755 "$DIR/install.sh" "$DIR/uninstall.sh" "$DIR/bin/agentownctl"
+chmod 0755 "$DIR/install.sh" "$DIR/uninstall.sh" "$DIR/bin/agentownctl" "$DIR/bin/agentown-selfpatch"
 cat > "$DIR/VERSION" <<EOF
 version=$TAG
 commit=$(git -C "$ROOT" rev-parse HEAD)

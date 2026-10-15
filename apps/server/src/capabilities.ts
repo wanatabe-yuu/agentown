@@ -5,6 +5,7 @@ import type { ChatTool, ToolContext } from "./chat/types.ts";
 import { postTeamMessage } from "./conversations.ts";
 import type { Instance } from "./instance.ts";
 import { openProposal, type ProposalEngine, type ProposalRow, recordProposal } from "./proposals.ts";
+import { queuePatch } from "./selfpatch.ts";
 import type { Service } from "./service.ts";
 import { actorRef, ApiError, badRequest, deny, newId, notFound } from "./util.ts";
 
@@ -53,7 +54,15 @@ const TOOL_PERMISSION: Record<string, Action | "owner" | null> = {
   delegate_permission: "permission.delegate",
   credential_action: "credential.manage",
   delete_asset: "org.design",
+  upload_asset: "org.design",
 };
+
+/**
+ * World tools never bounce off a missing permission: a caller without
+ * org.design proposes the change and the owner applies it. With org.design the
+ * kernel setting decides: "approve" (default) waits for the owner, "auto" applies.
+ */
+const WORLD_TOOLS = new Set(["patch_world", "replace_world", "upload_asset"]);
 
 /** The registry: the organization tools (the same Service operations the UI uses) plus team and runtime tools. */
 export function capabilityRegistry(tools: ChatTool[]): CapabilityDescriptor[] {
@@ -71,6 +80,18 @@ export function capabilityRegistry(tools: ChatTool[]): CapabilityDescriptor[] {
   }));
   return [
     ...fromTools,
+    {
+      id: "propose_patch",
+      title: "propose patch",
+      description:
+        "Propose a change to this install's own source code as a unified diff (get the source with `agentown code checkout DIR`, edit, then `agentown code propose`). The owner reviews and approves every patch; the host then builds, installs and health-checks it, rolling back on failure.",
+      input: z.object({ title: z.string().trim().min(1).max(200), summary: z.string().max(4000).default(""), diff: z.string().min(1).max(2_000_000) }).strict(),
+      permission: "code.propose",
+      effect: "destructive",
+      approval: "always",
+      executor: "kernel",
+      execute: async ({ service, idempotencyKey }, a) => queuePatch(service.orgId, idempotencyKey, a),
+    },
     {
       id: "team_say",
       title: "team say",
@@ -117,21 +138,35 @@ export class CapabilityGateway {
     return d;
   }
 
-  /** Discovery: what this caller may use, with input schemas. */
-  async discover(service: Service, actor: Actor) {
+  /** Does the caller hold this permission somewhere in the organization? */
+  private async permits(service: Service, actor: Actor) {
     const { permissions, rules } = service.kernel;
     const policy = await permissions.load();
     const where = { agentIds: [...policy.graph.agents.values()].filter((a) => a.lifecycleState !== "retired").map((a) => a.id), templateIds: rules.config.agentTemplates.map((t) => t.id) };
-    const has = (perm: CapabilityDescriptor["permission"]) => {
+    return (perm: CapabilityDescriptor["permission"]) => {
       if (perm === null) return true;
       if (actor.kind === "human" && actor.owner) return true;
       if (perm === "owner") return false;
       return permissions.allowedAnywhere(actor, perm, policy, where);
     };
+  }
+
+  /** For a world tool: who must approve, and as whom the change runs once approved. */
+  private worldGate(service: Service, actor: Actor, permitted: boolean): { approval: "never" | "always"; runAs: "proposer" | "approver" } {
+    if (actor.kind === "human" && actor.owner) return { approval: "never", runAs: "proposer" };
+    if (!permitted) return { approval: "always", runAs: "approver" };
+    return { approval: service.config.kernel.worldEdits === "auto" ? "never" : "always", runAs: "proposer" };
+  }
+
+  /** Discovery: what this caller may use, with input schemas. */
+  async discover(service: Service, actor: Actor) {
+    const has = await this.permits(service, actor);
     return this.registry
-      .filter((d) => has(d.permission))
+      .filter((d) => has(d.permission) || WORLD_TOOLS.has(d.id))
       .map((d) => ({
-        id: d.id, title: d.title, description: d.description, effect: d.effect, approval: d.approval, executor: d.executor,
+        id: d.id, title: d.title, description: d.description, effect: d.effect,
+        approval: WORLD_TOOLS.has(d.id) ? this.worldGate(service, actor, has(d.permission)).approval : d.approval,
+        executor: d.executor,
         permission: d.permission, input: z.toJSONSchema(d.input, { target: "draft-7", unrepresentable: "any" }),
       }));
   }
@@ -147,14 +182,19 @@ export class CapabilityGateway {
       throw deny(`${id} is not available to you`);
     }
     const owner = actor.kind === "human" && actor.owner;
-    const needs = d.approval === "always" || (d.approval === "policy" && !!d.requiresApproval?.(parsed.data));
+    const world = WORLD_TOOLS.has(id) ? this.worldGate(service, actor, (await this.permits(service, actor))(d.permission)) : null;
+    const needs = world ? world.approval === "always" : d.approval === "always" || (d.approval === "policy" && !!d.requiresApproval?.(parsed.data));
     if (needs && !owner) {
+      const rule = world ? (world.runAs === "approver" ? "world:no_permission" : "world:approve") : d.approval === "always" ? "always" : `effect:${d.effect}`;
+      const reason = world
+        ? world.runAs === "approver" ? "the caller may not design the world; the owner applies the change if they approve it" : "world edits wait for the owner (kernel setting worldEdits: approve)"
+        : "this call changes the organization and needs the owner's approval";
       const p = await openProposal(service.db, {
-        orgId: service.orgId, kind: "capability_call", title: `${d.title}`, proposer: actorRef(actor),
+        orgId: service.orgId, kind: world ? "world_change" : "capability_call", title: `${d.title}`, proposer: actorRef(actor),
         subject: actor.kind === "agent" ? { type: "agent", id: actor.id } : null,
-        payload: { capability: id, args: parsed.data, idempotencyKey: idempotencyKey ?? null },
-        source: { type: "gateway", id: newId("cg") }, approvers: { kind: "owner" },
-        evaluation: [{ rule: d.approval === "always" ? "always" : `effect:${d.effect}`, verdict: "require_approval", reason: "this call changes the organization and needs the owner's approval" }],
+        payload: { capability: id, args: parsed.data, idempotencyKey: idempotencyKey ?? null, ...(world?.runAs === "approver" ? { runAs: "approver" } : {}) },
+        source: { type: "gateway", id: newId("cg") }, approvers: { kind: "owner" }, exact: true,
+        evaluation: [{ rule, verdict: "require_approval", reason }],
       });
       await service.kernel.permissions.audit(service.db, actor, "capability.propose", id, true, "awaiting approval", { proposalId: p.id });
       return { status: "pending" as const, proposalId: p.id };
@@ -181,10 +221,11 @@ export class CapabilityGateway {
     const decision = { by: actorRef(actor), verdict, ...(note ? { note } : {}) };
     if (verdict === "reject") return recordProposal(service.db, source, { status: "rejected", decision });
     await recordProposal(service.db, source, { status: "applying", decision });
-    const proposer = await service.kernel.identity.parseActorRef(p.proposer);
+    // A caller without the permission proposed it: the approving owner carries it out.
+    const runner = p.payload.runAs === "approver" ? actor : await service.kernel.identity.parseActorRef(p.proposer);
     const d = this.find(String(p.payload.capability));
     try {
-      const result = await this.run(service, proposer, d, d.input.parse(p.payload.args), (p.payload.idempotencyKey as string | null) ?? `proposal-${p.id}`);
+      const result = await this.run(service, runner, d, d.input.parse(p.payload.args), (p.payload.idempotencyKey as string | null) ?? `proposal-${p.id}`);
       await recordProposal(service.db, source, { status: "applied", receipt: result });
       return result;
     } catch (err) {

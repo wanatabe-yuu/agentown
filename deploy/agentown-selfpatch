@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Self-patch builder, run as root by agentown-selfpatch.path whenever an
+# owner-approved patch lands in the queue. For each patch, oldest first:
+#   1. as the unprivileged agentown user: unpack this release's own source,
+#      apply the patch, typecheck and package a release (no root, no docker)
+#   2. as root: install it as a new release, switch to it, restart, and
+#      health-check; if the server does not come up, switch back
+#   3. leave results/<id>.json for the server to put on the proposal
+# Changes to the agent image (apps/harness) need a full release and are refused.
+set -uo pipefail
+
+DIR=/var/lib/agentown/selfpatch
+PREFIX=/opt/agentown
+TAG="$(sed -n 's/^version=//p' "$PREFIX/current/VERSION")"
+# pnpm through corepack (package-release.sh calls plain `pnpm`), quietly.
+AS_AGENTOWN=(runuser -u agentown -- env HOME="$DIR/home" COREPACK_HOME="$DIR/home/.corepack" COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+  NPM_CONFIG_UPDATE_NOTIFIER=false PATH="$DIR/home/bin:/usr/local/bin:/usr/bin:/bin")
+
+result() { # id status log
+  local tmp="$DIR/results/$1.json.tmp"
+  node -e 'process.stdout.write(JSON.stringify({ status: process.argv[1], log: process.argv[2], at: new Date().toISOString() }))' "$2" "$3" > "$tmp"
+  chown agentown:agentown "$tmp"
+  mv "$tmp" "$DIR/results/$1.json"
+}
+
+build() { # patch -> prints the bundle path; runs as agentown
+  local patch=$1 src="$DIR/build/src" out="$DIR/build/out"
+  {
+    rm -rf "$src" "$out" && mkdir -p "$src" "$out" &&
+      tar -xzf "$PREFIX/current/source.tar.gz" -C "$src" &&
+      cd "$src" &&
+      git init -q && git add -A && git -c user.name=agentown -c user.email=agentown@localhost commit -qm base &&
+      git apply --check "$patch" && git apply "$patch" &&
+      git add -A && git -c user.name=agentown -c user.email=agentown@localhost commit -qm patch &&
+      pnpm install --frozen-lockfile &&
+      pnpm typecheck &&
+      AGENTOWN_SKIP_IMAGE=1 scripts/package-release.sh "$TAG" "$out"
+  } >&2 && echo "$out/agentown-$TAG.tar.gz"
+}
+
+healthy() {
+  for _ in $(seq 1 30); do
+    curl -fsS --max-time 2 http://127.0.0.1:8080/healthz >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
+
+mkdir -p "$DIR/queue" "$DIR/work" "$DIR/results" "$DIR/home/bin"
+printf '#!/bin/sh\nexec corepack pnpm "$@"\n' > "$DIR/home/bin/pnpm" && chmod 0755 "$DIR/home/bin/pnpm"
+chown agentown:agentown "$DIR/queue" "$DIR/results" "$DIR/home" "$DIR/home/bin"
+
+for queued in $(ls -1tr "$DIR/queue"/*.patch 2>/dev/null); do
+  id="$(basename "$queued" .patch)"
+  patch="$DIR/work/$id.patch"
+  mv "$queued" "$patch"
+  rm -f "$DIR/queue/$id.json"
+  chown agentown:agentown "$patch"
+  log="$DIR/work/$id.log"
+
+  if grep -qE '^diff --git a/apps/harness/' "$patch"; then
+    result "$id" failed "changes to apps/harness need a new agent image: ship them as a full release"
+    continue
+  fi
+  install -d -o agentown -g agentown "$DIR/build"
+  if ! bundle="$("${AS_AGENTOWN[@]}" bash -c "$(declare -f build); DIR='$DIR' PREFIX='$PREFIX' TAG='$TAG' build '$patch'" 2>"$log" | tail -1)" || [ ! -f "$bundle" ]; then
+    result "$id" failed "build failed: $(tail -c 1500 "$log")"
+    continue
+  fi
+
+  release="$PREFIX/releases/$TAG-$id"
+  rm -rf "$release" && mkdir -p "$release"
+  tar -xzf "$bundle" -C "$release" --strip-components=1 --no-same-owner
+  previous="$(readlink "$PREFIX/current")"
+  ln -sfn "releases/$TAG-$id" "$PREFIX/current.new" && mv -T "$PREFIX/current.new" "$PREFIX/current"
+  systemctl restart agentown
+  if healthy; then
+    result "$id" installed "installed as $release (previous: $previous)"
+    # Keep the three newest patched releases besides the one running.
+    ls -1dt "$PREFIX/releases/$TAG"-* 2>/dev/null | grep -vxF "$release" | tail -n +3 | xargs -r rm -rf || true
+  else
+    ln -sfn "$previous" "$PREFIX/current.new" && mv -T "$PREFIX/current.new" "$PREFIX/current"
+    systemctl restart agentown
+    result "$id" failed "the patched server did not come up; rolled back to $previous. $(journalctl -u agentown -n 30 --no-pager 2>/dev/null | tail -c 1200)"
+    rm -rf "$release"
+  fi
+done
+
+# Each result is reported on its proposal; the unit itself only fails if this script breaks.
+exit 0

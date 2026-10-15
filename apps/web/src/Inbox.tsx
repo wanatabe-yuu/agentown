@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.ts";
+import { api, orgPath } from "./api.ts";
 import { t } from "./i18n.ts";
 import type { Proposal, Snapshot } from "./types.ts";
 import { ago } from "./ui.tsx";
@@ -80,6 +80,12 @@ export function NeedsYou({ snapshot, now, refreshKey, onOpenTask, onAgents }: { 
                   </span>
                 </button>
                 <div className="inbox-actions">
+                  {p.payload.capability === "propose_patch" && (
+                    // Read the whole patch before approving: approved code is built and installed on this host.
+                    <a className="btn" href={orgPath(`/api/code/proposals/${encodeURIComponent(p.id)}/diff`)} target="_blank" rel="noreferrer">
+                      {t("View diff")}
+                    </a>
+                  )}
                   <button type="button" className="primary" disabled={busy === p.id} onClick={() => void decide(p, "approve")}>
                     {t("Approve")}
                   </button>

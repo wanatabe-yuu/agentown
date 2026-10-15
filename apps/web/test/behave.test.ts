@@ -59,3 +59,32 @@ describe("coffee template animations", () => {
     expect(poses.size).toBe(6);
   });
 });
+
+describe("data-driven shapes and motion", () => {
+  const kind = (k: unknown) => worldSchema.parse({ floors: [{ id: "f", name: "F", rooms: [{ id: "r", name: "R", area: { x: 0, z: 0, w: 4, d: 4 } }] }], kinds: { k } }).kinds.k!;
+
+  it("extrude and lathe outlines become parts stretched to their size", () => {
+    const k = kind({ name: "Vase", category: "static", look: { parts: [
+      { shape: "lathe", points: [[0, 0], [0.4, 0.1], [0.2, 0.8], [0.3, 1]], size: [0.3, 0.5, 0.3], opacity: 0.6, roughness: 0.2 },
+      { shape: "extrude", points: [[0, 0], [1, 0], [0.5, 1]], size: [0.4, 0.4, 0.05], offset: [0, 0.8, 0] },
+    ] } });
+    const o = lookObject(k.look, "#888");
+    const box = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+    expect(box.y).toBeCloseTo(0.75, 2); // lathe 0.25–0.75, extrude 0.6–1.0
+    expect(((o.children[0] as THREE.Mesh).material as THREE.Material).transparent).toBe(true);
+    expect(() => kind({ name: "Bad", category: "static", look: { parts: [{ shape: "extrude", points: [[0, 0], [1, 1]] }] } })).toThrow(/3 points/);
+  });
+
+  it("keyframes loop through their poses, eased, back to the start", () => {
+    const k = kind({ name: "Bird", category: "dynamic", look: { parts: [{ shape: "sphere" }] }, behaviors: [{ type: "keyframes", speed: 1, keys: [{ t: 0 }, { t: 0.5, position: [0, 1, 0], rotation: [0, 90, 0] }] }] });
+    const o = lookObject(k.look, "#888");
+    const [an] = prepareBehaviors(o, k, 0, null);
+    applyBehavior(an!, 0.5);
+    expect(o.position.y).toBeCloseTo(1, 5);
+    expect(o.rotation.y).toBeCloseTo(Math.PI / 2, 5);
+    applyBehavior(an!, 0.25);
+    expect(o.position.y).toBeCloseTo(0.5, 5);
+    applyBehavior(an!, 1);
+    expect(o.position.y).toBeCloseTo(0, 5);
+  });
+});

@@ -97,6 +97,25 @@ export function applyBehavior(an: Animated, sec: number) {
         p.scale.setScalar((0.07 + k * 0.16) * Math.sin(Math.PI * k) * b.amount + 0.001);
       }
       break;
+    case "keyframes": {
+      // Find the two keys around this moment of the loop and ease between them.
+      const keys = [...(b.keys ?? [])].sort((x, y) => x.t - y.t);
+      if (keys.length < 2) break;
+      const k = (sec * b.speed + an.seed / TAU) % 1;
+      let i = keys.findIndex((key) => key.t > k);
+      if (i <= 0) i = keys.length; // past the last key (or before the first): wrap from last to first
+      const a = keys[i - 1]!;
+      const z = keys[i % keys.length]!;
+      const span = (z.t - a.t + 1) % 1 || 1;
+      const f = ((k - a.t + 1) % 1) / span;
+      const s = f * f * (3 - 2 * f);
+      const mix = (u = 0, v = 0) => u + (v - u) * s;
+      const DEG = Math.PI / 180;
+      o.position.set(base.position.x + mix(a.position?.[0], z.position?.[0]), base.position.y + mix(a.position?.[1], z.position?.[1]), base.position.z + mix(a.position?.[2], z.position?.[2]));
+      o.rotation.set(base.rotation.x + mix(a.rotation?.[0], z.rotation?.[0]) * DEG, base.rotation.y + mix(a.rotation?.[1], z.rotation?.[1]) * DEG, base.rotation.z + mix(a.rotation?.[2], z.rotation?.[2]) * DEG);
+      o.scale.copy(base.scale).multiplyScalar(mix(a.scale ?? 1, z.scale ?? 1));
+      break;
+    }
     case "wander": {
       // A smooth, seeded stroll around where it was placed, staying inside the room.
       const k = sec * b.speed * 0.25;

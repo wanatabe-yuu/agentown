@@ -12,13 +12,15 @@ const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, "color like #a1b2c3");
 const num = (min: number, max: number) => z.number().min(min).max(max);
 const vec3 = (min: number, max: number) => z.tuple([num(min, max), num(min, max), num(min, max)]);
 
-export const SHAPES = ["box", "cylinder", "sphere", "cone", "torus", "capsule", "roundbox"] as const;
+/** extrude: a 2D outline (points x,y) pushed into depth. lathe: a profile (points radius,y) turned around the y axis. */
+export const SHAPES = ["box", "cylinder", "sphere", "cone", "torus", "capsule", "roundbox", "extrude", "lathe"] as const;
 /** How a surface reflects light. */
 export const FINISHES = ["matte", "satin", "gloss", "metal", "glass", "fabric"] as const;
 /** Built-in procedural characters an agent (or any object) can look like. */
 export const CHARACTERS = ["person", "cat", "dog", "robot"] as const;
 /** wander: drift near where it was placed. roam: walk between rooms through doors and stairs, within its access. */
-export const BEHAVIORS = ["spin", "bob", "pulse", "blink", "sway", "wander", "roam", "steam", "flicker", "rock"] as const;
+/** keyframes: loop through the behavior's keys (offsets from where the part rests). */
+export const BEHAVIORS = ["spin", "bob", "pulse", "blink", "sway", "wander", "roam", "steam", "flicker", "rock", "keyframes"] as const;
 export const SIDES = ["north", "south", "east", "west"] as const;
 export const FLOOR_STYLES = ["plain", "wood", "tile", "checker", "concrete", "deck"] as const;
 export const WALL_STYLES = ["plain", "brick", "panel", "stripe"] as const;
@@ -39,8 +41,17 @@ const primitiveSchema = z.object({
   color: color.default("#9aa3ad"),
   emissive: color.optional(),
   finish: z.enum(FINISHES).default("matte"),
+  /** Fine-tune the finish (0–1); opacity below 1 makes the part see-through. */
+  roughness: num(0, 1).optional(),
+  metalness: num(0, 1).optional(),
+  opacity: num(0.05, 1).optional(),
+  /** For extrude and lathe: the outline, in any units; it is stretched to `size`. */
+  points: z.array(z.tuple([num(-100, 100), num(-100, 100)])).min(2).max(64).optional(),
   /** Name a part so a behavior can move just that part (a record on a turntable, a cat's tail). */
   part: idSchema.optional(),
+}).refine((p) => (p.shape !== "extrude" && p.shape !== "lathe") || (p.points?.length ?? 0) >= (p.shape === "extrude" ? 3 : 2), {
+  message: "extrude needs at least 3 points, lathe at least 2",
+  path: ["points"],
 });
 export type Primitive = z.infer<typeof primitiveSchema>;
 
@@ -62,7 +73,13 @@ const behaviorSchema = z.object({
   amount: num(0, 20).default(1),
   /** Which axis spin, sway and rock turn around (default: spin y, sway z, rock x). */
   axis: z.enum(["x", "y", "z"]).optional(),
-});
+  /** For keyframes: poses over one loop (t from 0 to 1), as offsets from the resting pose; in between is smoothed. */
+  keys: z
+    .array(z.object({ t: num(0, 1), position: vec3(-20, 20).optional(), rotation: vec3(-360, 360).optional(), scale: num(0.01, 20).optional() }))
+    .min(2)
+    .max(16)
+    .optional(),
+}).refine((b) => b.type !== "keyframes" || !!b.keys, { message: "keyframes needs keys", path: ["keys"] });
 export type Behavior = z.infer<typeof behaviorSchema>;
 
 /**
@@ -131,6 +148,12 @@ const objectKindSchema = z.object({
   access: accessSchema.default("own-room"),
   states: z.array(stateSchema).max(12).default([]),
   actions: z.array(actionSchema).max(12).default([]),
+  /**
+   * JavaScript run in a locked sandbox in each viewer's browser (no network, no
+   * page, no cookies). It calls api.onTick((obj, t) => obj.set(part, pose)) with
+   * poses as offsets: position [m], rotation [deg], scale, color, visible.
+   */
+  script: z.string().max(8000).optional(),
 });
 export type ObjectKind = z.infer<typeof objectKindSchema>;
 
@@ -184,6 +207,8 @@ const placementSchema = z.object({
 export const worldSchema = z.object({
   /** The interface takes these colors while this world is open (a café's caramel, a lab's teal). */
   theme: z.object({ accent: color, surface: color.optional(), ink: color.optional() }).optional(),
+  /** How the 3D office is drawn: lit and soft (default), or anime (flat cel shading, ink outlines, big-eyed characters). */
+  style: z.enum(["realistic", "anime"]).optional(),
   floors: z.array(floorSchema).min(1).max(20),
   /** Stairs or elevators between rooms on different floors; `at` is a spot in each room (default: its middle). */
   links: z

@@ -325,11 +325,18 @@ function FloorsTab(p: EditorProps) {
   const zones = Object.entries(p.draft.zones ?? {}) as Array<[string, string[]]>;
   return (
     <section>
+      <h4>{tr("3D style")}</h4>
+      <div className="form-row">
+        <select value={p.draft.style ?? "realistic"} onChange={(e) => p.edit((w) => (w.style = e.target.value === "realistic" ? undefined : e.target.value))} aria-label={tr("3D style")}>
+          <option value="realistic">{tr("Realistic")}</option>
+          <option value="anime">{tr("Anime")}</option>
+        </select>
+      </div>
       <h4>{tr("Floors")}</h4>
       {(p.draft.floors ?? []).map((f: Draft, i: number) => (
         <div key={f.id} className="form-row">
           <input value={f.name} maxLength={60} onChange={(e) => p.edit((w) => (w.floors[i].name = e.target.value))} aria-label={tr("Floor name")} />
-          <span className="muted small">{f.rooms.length} rooms</span>
+          <span className="muted small">{tr("{n} rooms", { n: f.rooms.length })}</span>
           <button type="button" className="danger" disabled={p.draft.floors.length < 2 || f.rooms.length > 0} title={tr("Only empty floors can be removed")} onClick={() => p.edit((w) => w.floors.splice(i, 1))}>
             ×
           </button>

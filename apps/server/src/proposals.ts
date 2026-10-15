@@ -64,6 +64,8 @@ export interface OpenProposal {
   evaluation?: Evaluation[];
   approvers?: ApproverRule;
   receipt?: unknown;
+  /** Store the payload as given: it is replayed on approval (a whole world, an image), so trimming it would break it. Shown trimmed. */
+  exact?: boolean;
 }
 
 /** Open (or re-open) the proposal for a domain record. */
@@ -76,7 +78,7 @@ export async function openProposal(q: Queryable, p: OpenProposal): Promise<Propo
      RETURNING *`,
     [
       newId("p"), p.orgId, p.kind, p.title.slice(0, 300), p.proposer, p.subject?.type ?? null, p.subject?.id ?? null,
-      JSON.stringify(sanitize(p.payload ?? {})), p.source.type, p.source.id, p.status ?? "pending",
+      JSON.stringify(p.exact ? (p.payload ?? {}) : sanitize(p.payload ?? {})), p.source.type, p.source.id, p.status ?? "pending",
       JSON.stringify(p.evaluation ?? []), JSON.stringify(p.approvers ?? { kind: "owner" }), p.receipt === undefined ? null : JSON.stringify(sanitize(p.receipt)),
     ],
   );
@@ -161,7 +163,7 @@ export function present(p: ProposalRow) {
     title: p.title,
     proposer: p.proposer,
     subject: p.subject_type ? { type: p.subject_type, id: p.subject_id } : null,
-    payload: p.payload,
+    payload: sanitize(p.payload),
     source: { type: p.source_type, id: p.source_id },
     status: p.status,
     evaluation: p.evaluation,

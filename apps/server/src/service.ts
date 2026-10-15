@@ -390,6 +390,24 @@ export class Service {
     });
   }
 
+  /** Kernel settings (owner only): how agents' world edits are approved. */
+  async setKernelSettings(actor: Actor, change: { worldEdits: "approve" | "auto" }) {
+    this.requireOrgOwner(actor, "org.kernel");
+    return this.withTx(async (ctx) => {
+      const { rows } = await ctx.c.query<{ config: Record<string, unknown> }>("SELECT config FROM organizations WHERE id=$1 FOR UPDATE", [this.orgId]);
+      const config = rows[0]!.config;
+      const kernel = { ...((config.kernel as Record<string, unknown> | undefined) ?? {}), ...change };
+      const upd = await ctx.c.query<{ config_revision: number }>(
+        "UPDATE organizations SET config=$2, config_revision=config_revision+1 WHERE id=$1 RETURNING config_revision",
+        [this.orgId, JSON.stringify({ ...config, kernel })],
+      );
+      const revision = upd.rows[0]!.config_revision;
+      await this.audit(ctx.c, actor, "org.kernel", this.orgId, true, "organization owner", { ...change, revision });
+      await this.emit(ctx, { type: "org.config", payload: { revision, part: "kernel" } });
+      return { kernel, revision };
+    });
+  }
+
   /** Every asset a world uses must be in this organization's library. */
   private async requireAssets(q: Queryable, world: World | undefined) {
     const ids = worldAssets(world);
@@ -2235,6 +2253,7 @@ export class Service {
       teams,
       recent,
       projects: this.config.projects,
+      kernel: this.config.kernel,
       world: this.config.world ?? null,
       objectStates: await this.objectStates(),
       agents,

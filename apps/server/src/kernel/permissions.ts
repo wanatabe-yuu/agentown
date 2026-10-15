@@ -111,7 +111,8 @@ export class Permissions {
   /** Does the actor hold this permission anywhere: org-wide, on some agent, or for some template? */
   allowedAnywhere(actor: Actor, action: Action, policy: LoadedPolicy, where: { agentIds: string[]; templateIds?: string[] }): boolean {
     if (actor.kind === "human" && actor.owner) return true;
-    const targets: Target[] = action === "agent.spawn" ? (where.templateIds ?? []).map((templateId) => ({ templateId })) : [{}];
+    // Code grants name their repositories; the only one is this install's own source.
+    const targets: Target[] = action === "agent.spawn" ? (where.templateIds ?? []).map((templateId) => ({ templateId })) : action.startsWith("code.") ? [{ repoId: "self" }] : [{}];
     return targets.some((t) => authorize(actor, action, t, policy).allowed || where.agentIds.some((agentId) => authorize(actor, action, { ...t, agentId }, policy).allowed));
   }
 }

@@ -10,8 +10,9 @@ import { errandSpot, type Roamer, seat, stepErrand, stepRoamer, swingLegs } from
 export { swingLegs } from "./walk.ts";
 import { loadModels, texture } from "./assets.ts";
 import { orgPath } from "../api.ts";
-import { chair, character, desk, lookObject, monitor } from "./procedural.ts";
+import { chair, character, desk, lookObject, monitor, setToon, surface } from "./procedural.ts";
 import { ObjectLife } from "./behave.ts";
+import { ScriptHost } from "./scripts.ts";
 import { pattern } from "./patterns.ts";
 import { type DeskState, deskStates } from "./live.ts";
 // ?debug: what each workstation shows, readable from the console.
@@ -59,6 +60,7 @@ export interface AgentNode {
 /** A placed object, living through its states. */
 export interface PlacedLife {
   id: string;
+  kindId: string;
   life: ObjectLife;
   /** Where it is placed (a roamer tracks its current room itself). */
   roomId: string;
@@ -84,6 +86,8 @@ export interface OfficeScene {
   /** Animations that came with uploaded models. */
   mixers: THREE.AnimationMixer[];
   paper: THREE.Mesh;
+  /** Object scripts, when any kind has one. */
+  scripts: ScriptHost | null;
   dispose(): void;
 }
 
@@ -218,7 +222,7 @@ function roomMesh(room: PlacedRoom): THREE.Group {
   g.position.set(room.x, room.y, room.z);
   const floor = new THREE.Mesh(
     new THREE.BoxGeometry(room.w, 0.12, room.d),
-    new THREE.MeshStandardMaterial(
+    surface(
       room.floorTexture
         ? { map: texture(room.floorTexture, room.w, room.d, room.textureRepeat), roughness: 0.9 }
         : { color: room.floorStyle && room.floorStyle !== "plain" ? "#ffffff" : room.floorColor, map: pattern(room.floorStyle, room.floorColor, room.w, room.d), roughness: room.floorStyle === "tile" || room.floorStyle === "checker" ? 0.45 : 0.85 },
@@ -230,15 +234,15 @@ function roomMesh(room: PlacedRoom): THREE.Group {
   g.add(floor);
   // Dollhouse cut: full walls on the north and west sides, a low rim on the south and east.
   // Doors are gaps in a wall.
-  const plainWall = new THREE.MeshStandardMaterial(
+  const plainWall = surface(
     room.wallTexture ? { map: texture(room.wallTexture, Math.max(room.w, room.d), room.wallHeight, room.textureRepeat), roughness: 0.85 } : { color: room.wallColor, roughness: 0.85 },
   );
   // A patterned wall gets its own texture per segment, so bricks keep their size.
   const wallFor = (length: number, height: number) =>
     room.wallTexture || !room.wallStyle || room.wallStyle === "plain"
       ? plainWall
-      : new THREE.MeshStandardMaterial({ color: "#ffffff", map: pattern(room.wallStyle, room.wallColor, length, height), roughness: 0.85 });
-  const trim = new THREE.MeshStandardMaterial({ color: new THREE.Color(room.wallColor).lerp(new THREE.Color("#000000"), 0.35), roughness: 0.6 });
+      : surface({ color: "#ffffff", map: pattern(room.wallStyle, room.wallColor, length, height), roughness: 0.85 });
+  const trim = surface({ color: new THREE.Color(room.wallColor).lerp(new THREE.Color("#000000"), 0.35), roughness: 0.6 });
   const t = 0.12;
   const h = room.wallHeight;
   const low = Math.min(0.35, h);
@@ -364,6 +368,7 @@ export function buildScene(
   /** The scene this one replaces: whoever was walking keeps walking from where they were. */
   previous?: OfficeScene | null,
 ): OfficeScene {
+  setToon(world?.style === "anime");
   const root = new THREE.Group();
   const floors = new Map<number, THREE.Group>();
   const disposables: Array<{ dispose(): void }> = [];
@@ -394,8 +399,8 @@ export function buildScene(
   }
 
   // Thresholds between doors, and stairs or elevators between floors.
-  const threshold = new THREE.MeshStandardMaterial({ color: "#a08c74", roughness: 0.9 });
-  const step = new THREE.MeshStandardMaterial({ color: "#8a7a68", roughness: 0.8 });
+  const threshold = surface({ color: "#a08c74", roughness: 0.9 });
+  const step = surface({ color: "#8a7a68", roughness: 0.8 });
   disposables.push(threshold, step);
   const floorOfY = (y: number) => Math.round(y / FLOOR_HEIGHT);
   for (const d of layout.doors) {
@@ -508,7 +513,7 @@ export function buildScene(
     pic.scale.divideScalar(carrier === obj ? o.scale : 1);
     pic.position.y = BADGE_Y / (carrier === obj ? o.scale : 1);
     carrier.add(pic);
-    lives.push({ id: o.id ?? `#${i}`, life: new ObjectLife(obj, kind, seed * 100, room), roomId: room.id, root: carrier, roamer, badge: pic });
+    lives.push({ id: o.id ?? `#${i}`, kindId: o.kind, life: new ObjectLife(obj, kind, seed * 100, room), roomId: room.id, root: carrier, roamer, badge: pic });
   }
 
   // Agents: desk, monitor, chair, avatar, labels.
@@ -618,6 +623,8 @@ export function buildScene(
   const mixers: THREE.AnimationMixer[] = [];
   let alive = true;
   loadModels(root, mixers, () => alive);
+  const scripted = Object.fromEntries(Object.entries(world?.kinds ?? {}).flatMap(([id, k]) => (k.script ? [[id, k.script]] : [])));
+  const scripts = Object.keys(scripted).length ? new ScriptHost(scripted) : null;
 
   return {
     root,
@@ -629,8 +636,10 @@ export function buildScene(
     nav,
     mixers,
     paper,
+    scripts,
     dispose() {
       alive = false;
+      scripts?.dispose();
       root.traverse((o) => {
         if (o instanceof CSS2DObject) o.element.remove();
       });
@@ -780,6 +789,12 @@ export function updateScene(s: OfficeScene, f: FrameInput) {
   }
 
   if (!f.frozen) for (const m of s.mixers) m.update(Math.min(f.dt, 0.1));
+
+  if (s.scripts && !f.frozen) {
+    s.scripts.tick(f.t, sec, s.lives.map((l) => ({ id: l.id, kind: l.kindId })));
+    const byId = new Map(s.lives.map((l) => [l.id, l.life.obj]));
+    s.scripts.apply((id) => byId.get(id));
+  }
 
   // Hand-offs: show the newest flight in progress.
   const flight = f.flights.filter((x) => f.t - x.start < 1400).at(-1);

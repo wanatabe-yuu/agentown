@@ -67,14 +67,14 @@ export function ownerTools(s: Record<string, z.ZodType>): ChatTool[] {
           case "logs": if (!b.id) throw badRequest("id required"); return (await v.logs(a, b.id, 0)).slice(-80);
         }
       } },
-    { name: "patch_world", description: "Edit current world with JSON Patch add/replace/remove operations and the revision from inspect world. Includes rooms, buildings, floors, furniture, placements, lights and art. Server validates the entire result. Removing items requires owner confirmation.",
+    { name: "patch_world", description: "Edit current world with JSON Patch add/replace/remove operations and the revision from inspect world. Includes rooms, buildings, floors, furniture, placements, lights and art. Server validates the entire result. Removing items requires owner confirmation; an agent's edits may wait for the owner's approval (kernel setting).",
       schema: patchSchema, mutates: true,
       execute: async ({ instance, service, actor }, b) => {
         const current = await service.getWorld(actor);
         if (!current.world) throw badRequest("world has no custom layout; use replace_world to create one");
         return instance.updateOrgWorld(service, actor, { revision: b.revision, world: patchDocument(current.world, b.operations) });
       } },
-    { name: "replace_world", description: "Create or replace the complete custom world (null resets to default). Read world/config and use their revision. Requires owner confirmation.",
+    { name: "replace_world", description: "Create or replace the complete custom world (null resets to default). Read world/config and use their revision. Requires owner confirmation unless the owner lets designers apply directly.",
       schema: s.orgWorld!, mutates: true, important: true,
       execute: ({ instance, service, actor }, b) => instance.updateOrgWorld(service, actor, b) },
     { name: "patch_config", description: "Edit departments, projects, roles, permission profiles or job templates using JSON Patch and current config revision. Existing grants are copies; do not imply they automatically change. Requires owner confirmation.",
@@ -118,6 +118,9 @@ export function ownerTools(s: Record<string, z.ZodType>): ChatTool[] {
     { name: "credential_action", description: "Refresh model metadata or revoke an existing credential. Never creates or reveals raw keys. Revocation requires confirmation.",
       schema: z.object({ id, action: z.enum(["refresh", "revoke"]) }).strict(), mutates: true,
       execute: ({ service, actor }, b) => b.action === "refresh" ? service.refreshCredentialModels(actor, b.id) : service.revokeCredential(actor, b.id) },
+    { name: "upload_asset", description: "Add art to the organization's library: a texture/image (PNG, JPEG, WebP) or a 3D model (GLB), base64-encoded, up to 20 MB. Returns its id; place it in the world with patch_world (a kind's look { asset: id }, a room's floorTexture/wallTexture, or an object's image).",
+      schema: z.object({ kind: z.enum(["texture", "model"]), name: z.string().trim().min(1).max(80), contentBase64: z.string().min(1).max(28_000_000) }).strict(), mutates: true,
+      execute: ({ service, actor }, b) => service.uploadAsset(actor, { kind: b.kind, name: b.name, content: Buffer.from(b.contentBase64, "base64") }) },
     { name: "delete_asset", description: "Delete art in the current organization; assets still used by the world cannot be deleted. Requires confirmation.", schema: z.object({ id }).strict(), mutates: true, important: true,
       execute: ({ service, actor }, b) => service.deleteAsset(actor, b.id) },
   ];

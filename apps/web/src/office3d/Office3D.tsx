@@ -168,6 +168,8 @@ export default function Office3D(props: Props) {
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.radius = 4;
     sun.shadow.bias = -0.0004;
+    // Keeps flat toon shading free of self-shadow speckles on curved parts.
+    sun.shadow.normalBias = 0.02;
     Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, far: 200 });
     const fill = new THREE.DirectionalLight("#cfe0ff", 0.45);
     fill.position.set(-30, 25, -20);
@@ -367,6 +369,8 @@ export default function Office3D(props: Props) {
       if (room) focus([room]);
     }, previous);
     previous?.dispose();
+    // Anime keeps its flat colors as painted; filmic tone mapping would wash them out.
+    e.renderer.toneMapping = snapshot.world?.style === "anime" ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
     e.scene.add(office.root);
     e.office = office;
     e.officeKey = layoutKey;
@@ -617,6 +621,12 @@ export default function Office3D(props: Props) {
         </div>
       )}
       <div className={`zoom-controls ${editing ? "editing" : ""}`}>
+        {/* Phones have no room for the text button in the top bar: the same action as an icon here. */}
+        {props.canDesign && !editing && (
+          <button type="button" className="edit-world-icon" onClick={() => void startEditing()} aria-label={t("Edit world")} title={t("Edit world")}>
+            ✎
+          </button>
+        )}
         <button type="button" onClick={() => zoomBy(1.25)} aria-label={tr("Zoom in")}>
           +
         </button>

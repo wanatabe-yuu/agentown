@@ -1,5 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { AgentownClient, ApiError } from "./client.ts";
 
 /**
@@ -22,8 +23,17 @@ const HELP = `agentown <command>
                                            hire a new agent from an approved template; it joins
                                            TEAM's runtime and adds the declared cpu/memory to it
   tools                                    capabilities you may call (id, effect, approval)
-  tool ID [JSON_ARGS]                      call a capability through the gateway; a call that needs
+  tool ID [JSON_ARGS | @FILE]              call a capability through the gateway; a call that needs
                                            approval prints {"status":"pending","proposalId":...}
+                                           @FILE reads the JSON arguments from a file (large worlds)
+  asset upload FILE [--name N]             add a PNG/JPEG/WebP texture or a GLB model to the art
+                                           library (upload_asset); prints its id or a proposal
+  code checkout DIR                        download this install's own source into DIR as a git
+                                           repository (needs code.read on "self")
+  code propose --title T [--summary S] [DIR]
+                                           propose the changes in DIR (git diff against the
+                                           checkout) as a patch; the owner reviews and approves,
+                                           then the host builds, installs and health-checks it
   proposals [--status pending]             proposals you made or may decide
   team                                     your team's channel (latest messages)
   team say TEXT                            post to your team's channel
@@ -108,12 +118,46 @@ async function main() {
       let args: unknown = {};
       if (rest.length) {
         try {
-          args = JSON.parse(rest.join(" "));
+          args = JSON.parse(rest[0]!.startsWith("@") ? readFileSync(rest[0]!.slice(1), "utf8") : rest.join(" "));
         } catch {
           throw new Error("tool arguments must be one JSON object");
         }
       }
       return out(await api.post(`/api/tools/${encodeURIComponent(sub)}/invoke`, { args }));
+    }
+    case "asset": {
+      if (sub !== "upload" || !rest[0]) throw new Error("usage: agentown asset upload FILE [--name N]");
+      const file = rest[0];
+      const { one } = parseFlags(rest.slice(1));
+      const content = readFileSync(file);
+      // GLB files start with "glTF"; everything else is treated as an image.
+      const kind = content.subarray(0, 4).toString("latin1") === "glTF" ? "model" : "texture";
+      return out(await api.post("/api/tools/upload_asset/invoke", { args: { kind, name: one("name") ?? basename(file), contentBase64: content.toString("base64") } }));
+    }
+    case "code": {
+      const git = (dir: string, ...args: string[]) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+      if (sub === "checkout") {
+        const dir = rest[0];
+        if (!dir) throw new Error("usage: agentown code checkout DIR");
+        const tgz = await api.request<Buffer>("GET", "/api/code/source", undefined, true);
+        mkdirSync(dir, { recursive: true });
+        execFileSync("tar", ["-xzf", "-", "-C", dir], { input: tgz });
+        git(dir, "init", "-q");
+        git(dir, "add", "-A");
+        git(dir, "-c", "user.name=agentown", "-c", "user.email=agentown@localhost", "commit", "-qm", "checkout");
+        return out(`checked out into ${dir}; edit, then: agentown code propose --title "..." ${dir}`);
+      }
+      if (sub === "propose") {
+        const { one, pos } = parseFlags(rest);
+        const dir = pos[0] ?? ".";
+        const title = one("title");
+        if (!title) throw new Error("code propose requires --title");
+        git(dir, "add", "-A", "-N"); // new files show up in the diff too
+        const diff = git(dir, "diff", "--binary", "HEAD");
+        if (!diff.trim()) throw new Error("no changes to propose");
+        return out(await api.post("/api/tools/propose_patch/invoke", { args: { title, summary: one("summary") ?? "", diff } }));
+      }
+      throw new Error("usage: agentown code checkout DIR | agentown code propose --title T [--summary S] [DIR]");
     }
     case "proposals": {
       const { one } = parseFlags([sub ?? "", ...rest].filter(Boolean));
