@@ -15,7 +15,7 @@ export class HttpError extends Error {
 }
 
 /** Install-level routes; everything else under /api/ runs in the chosen organization. */
-const INSTANCE = /^\/api\/(me|session|admin|templates|orgs)(\/|$|\?)/;
+const INSTANCE = /^\/api\/(me|session|admin|templates|marketplace|orgs)(\/|$|\?)/;
 let orgBase: string | null = null;
 
 /** Point org routes at this organization (`/api/x` → `/api/orgs/<id>/x`). */

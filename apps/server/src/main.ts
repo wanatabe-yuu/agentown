@@ -26,7 +26,9 @@ await migrate(db);
 
 const bus = new EventBus();
 const secrets = SecretBox.fromEnvOrFile(env.AGENTOWN_SECRET_KEY, resolve(stateDir, "secret-key"));
-const instance = new Instance(db, configText, bus, secrets, listModels, env.AGENTOWN_TEMPLATES ?? resolve(root, "config/templates"));
+// Where new worlds come from (off: only the built-in one and uploaded files).
+const marketplace = env.AGENTOWN_MARKETPLACE === "off" ? null : { indexUrl: env.AGENTOWN_MARKETPLACE ?? "https://raw.githubusercontent.com/wanatabe-yuu/agentown-marketplace/main/index.json" };
+const instance = new Instance(db, configText, bus, secrets, listModels, env.AGENTOWN_TEMPLATES ?? resolve(root, "config/templates"), marketplace);
 const { ownerToken } = await instance.bootstrap({ ownerToken: env.AGENTOWN_OWNER_TOKEN });
 if (ownerToken && !env.AGENTOWN_OWNER_TOKEN) {
   mkdirSync(stateDir, { recursive: true });
@@ -67,7 +69,7 @@ if (env.AGENTOWN_REMOTE_PORT !== "off") {
   }
 }
 
-const { app, recheckTerminals } = await buildApp({
+const { app, recheckTerminals, cleanup, calendar } = await buildApp({
   instance,
   driver,
   webDist: env.AGENTOWN_WEB_DIST ?? resolve(root, "apps/web/dist"),
@@ -101,6 +103,9 @@ const driveCampaigns = () => {
     .finally(() => (driving = null));
 };
 const campaignSweep = setInterval(driveCampaigns, 15000);
+// Cleaning robots and trash cans whose time has come (checked every minute).
+const cleanupSweep = setInterval(() => void cleanup.tick().catch((err) => console.warn("[cleanup]", (err as Error).message)), 60_000);
+const calendarTick = setInterval(() => void calendar.tick().catch((err) => console.warn("[calendar]", (err as Error).message)), 60_000);
 // Pausing organizations stop once their runs have finished.
 const pauseSweep = setInterval(() => void instance.settlePausing().catch((err) => console.warn("[pause]", (err as Error).message)), 5000);
 bus.subscribe((e) => {
@@ -124,6 +129,8 @@ const shutdown = async () => {
   clearInterval(patchSweep);
   clearInterval(campaignSweep);
   clearInterval(pauseSweep);
+  clearInterval(cleanupSweep);
+  clearInterval(calendarTick);
   if (leaseSweep) clearInterval(leaseSweep);
   remoteServer?.close();
   await app.close();

@@ -53,7 +53,7 @@ describe("individual conversations", () => {
     expect(result.chat.usage.requests).toBe(1);
     expect((await env.db.query("SELECT count(*)::int n FROM tasks")).rows[0].n).toBe(count);
     expect(inputs[0]!.system).toContain("Explain engineering tradeoffs.");
-    expect(inputs[0]!.tools.map(t => t.name)).toEqual(["inspect", "objects", "interact", "create_task", "task_action", "prepare_self_runtime"]);
+    expect(inputs[0]!.tools.map(t => t.name)).toEqual(["inspect", "objects", "interact", "calendar", "schedule", "cleanup", "create_task", "task_action", "prepare_self_runtime"]);
     expect(JSON.stringify(inputs)).not.toContain("sk-test-small-entity");
     expect(JSON.stringify(result)).not.toContain("sk-test-small-entity");
   });

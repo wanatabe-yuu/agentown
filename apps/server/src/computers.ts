@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { type Actor, type Computer as ComputerSettings, computerOf, type ObjectKind } from "@agentown/core";
 import type http from "node:http";
 import { z } from "zod";
@@ -142,13 +143,15 @@ class Computer {
 /** What a computer can be asked: in words (its model decides), or exactly, for one app. */
 export const computerRequestSchema = z.union([
   z.object({ app: z.literal("terminal"), action: z.literal("run"), command: z.string().trim().min(1).max(4000) }).strict(),
+  // Look at one of its own pictures (a frame, a contact sheet of a video) with its model's eyes.
+  z.object({ app: z.literal("terminal"), action: z.literal("look"), path: z.string().min(1).max(400), question: z.string().max(1000).optional() }).strict(),
   z.object({ text: z.string().trim().min(1).max(4000) }).strict(),
   z.object({ app: z.literal("screen"), show: z.enum(SCREEN_APPS) }).strict(),
   z.object({ app: z.literal("mcp"), action: z.literal("tools"), connector: z.string().min(1).max(64) }).strict(),
   z.object({ app: z.literal("mcp"), action: z.literal("call"), connector: z.string().min(1).max(64), tool: z.string().min(1).max(200), args: z.record(z.string(), z.unknown()).default({}) }).strict(),
   z.object({ app: z.literal("stream"), action: z.enum(["play", "stop"]), url: z.string().max(1000).optional() }).strict(),
   z.object({ app: z.literal("camera"), action: z.literal("look"), question: z.string().max(1000).optional() }).strict(),
-  z.object({ app: z.literal("browser"), action: z.enum(["look", "open", "click", "type", "key", "scroll", "back", "tab"]) }).passthrough(),
+  z.object({ app: z.literal("browser"), action: z.enum(["look", "open", "click", "type", "key", "scroll", "back", "tab", "upload"]) }).passthrough(),
 ]);
 export type ComputerRequest = z.infer<typeof computerRequestSchema>;
 
@@ -160,7 +163,11 @@ export type BrowserAction =
   | { action: "key"; key: string }
   | { action: "scroll"; dy?: number }
   | { action: "back" }
-  | { action: "tab"; index: number };
+  | { action: "tab"; index: number }
+  | { action: "upload"; path: string; ref?: string };
+
+/** A file of the computer's own to hand to a page's file picker: under /workspace, no way out of it. */
+const uploadable = (p: string | undefined) => !!p && p.length <= 400 && !/[\0\n]/.test(p) && posix.normalize(p) === p && p.startsWith("/workspace/") && !p.split("/").includes("..");
 
 /** Roles an agent can act on: they get a ref in a look. */
 const INTERACTIVE = new Set(["link", "button", "textbox", "searchbox", "combobox", "checkbox", "radio", "menuitem", "menuitemcheckbox", "menuitemradio", "tab", "option", "switch", "slider", "spinbutton", "listbox", "treeitem"]);
@@ -804,6 +811,21 @@ export class Computers {
         }
         break;
       }
+      case "upload": {
+        // The page's file picker gets one of this computer's files (a render to publish), as if chosen.
+        if (!uploadable(a.path)) throw badRequest("upload a file of this computer's own, under /workspace");
+        let backendNodeId = a.ref ? this.ref(c, a.ref) : 0;
+        if (!backendNodeId) {
+          // Pickers are usually hidden behind a button: the page's first file input.
+          const { root } = await this.cdp(c, "DOM.getDocument", { depth: 0, pierce: true }, s());
+          const { nodeId } = await this.cdp(c, "DOM.querySelector", { nodeId: root.nodeId, selector: "input[type=file]" }, s());
+          if (!nodeId) throw badRequest("this page has no file input: open the upload page (or its upload dialog) first");
+          backendNodeId = (await this.cdp(c, "DOM.describeNode", { nodeId }, s())).node.backendNodeId;
+        }
+        await this.cdp(c, "DOM.setFileInputFiles", { files: [a.path], backendNodeId }, s());
+        await sleep(1200);
+        break;
+      }
       case "tab": {
         const page = c.tabs[a.index];
         if (!page) throw badRequest(`there is no tab ${a.index} (tabs: 0–${c.tabs.length - 1})`);
@@ -987,6 +1009,7 @@ export class Computers {
     if ("app" in input) {
       const app = input.app === "screen" ? input.show : input.app;
       if (!computer.apps.includes(app)) throw badRequest(`this computer has no ${app} app (it has ${computer.apps.join(", ")})`);
+      if (input.app === "terminal" && input.action === "look" && (!uploadable(input.path) || input.path.includes("'"))) throw badRequest("look at a picture of this computer's own, under /workspace");
       if (input.app === "mcp" && !computer.connectors.includes(input.connector)) {
         throw badRequest(`connector ${input.connector} is not attached to this computer (attached: ${computer.connectors.join(", ") || "none"})`);
       }
@@ -1051,6 +1074,7 @@ export class Computers {
         const c = await this.ready(service, objectId);
         if (!c.apps.has("terminal")) await this.appTab(c, "terminal", TERMINAL_URL);
         await this.show(c, "terminal");
+        if (r.action === "look") return this.lookFile(service, c, r.path, r.question);
         const out = await this.run(c, r.command);
         return `exit ${out.code}${out.timedOut ? " (stopped after 2 minutes)" : ""}\n${out.output}`;
       }
@@ -1079,6 +1103,18 @@ export class Computers {
   }
 
   /** The window of an app (its own window, so it keeps painting when not in front), at this page. */
+  /** Computers of an organization connected right now (their object ids). */
+  connected(orgId: string): string[] {
+    return [...this.all.entries()].filter(([key, c]) => key.startsWith(`${orgId}/`) && c.bridge?.readyState === 1).map(([key]) => key.slice(orgId.length + 1));
+  }
+
+  /** A shell command in one computer's container, for the server's own housekeeping (the cleaning robot). */
+  shell(orgId: string, objectId: string, command: string) {
+    const c = this.all.get(`${orgId}/${objectId}`);
+    if (!c) return Promise.reject(new ApiError(503, "computer_offline", "the computer is offline"));
+    return this.run(c, command);
+  }
+
   /** A shell command in the computer's own container (its runtime runs it, shows it in the terminal, sends back the output). */
   private run(c: Computer, command: string) {
     const id = newId("run");
@@ -1175,6 +1211,18 @@ export class Computers {
       })()`,
     }, page.sessionId);
     return Number(result?.value ?? 0);
+  }
+
+  /** A picture of the computer's own, small enough to come back through its terminal, looked at by its model. */
+  private async lookFile(service: Service, c: Computer, path: string, question?: string) {
+    if (!uploadable(path) || path.includes("'")) throw badRequest("look at a picture of this computer's own, under /workspace");
+    for (const [width, q] of [[768, 9], [480, 14]] as const) {
+      const out = await this.run(c, `ffmpeg -hide_banner -loglevel error -i '${path}' -frames:v 1 -vf "scale='min(${width},iw)':-2" -q:v ${q} -f image2 -c:v mjpeg pipe:1 | base64 -w0`);
+      const image = out.output.trim();
+      if (out.code !== 0 || !image) throw badRequest(`could not read ${path} as a picture`);
+      if (!image.startsWith("…")) return this.see(service, image, question || "Describe this picture: its layout (where text and pictures sit), colours, the text and its style, what is shown.");
+    }
+    throw badRequest(`${path} is too detailed to look at; make it smaller first`);
   }
 
   private async lookCamera(service: Service, objectId: string, question?: string) {
@@ -1304,8 +1352,8 @@ export class Computers {
     ];
     if (apps.includes("browser")) tools.push({
       name: "browser",
-      description: "Use your browser. One action per call; returns the page as text with refs (e5) for click/type. Actions: look, open (url), click (ref), type (text, ref?, submit?), key (key), scroll (dy), back, tab (index).",
-      schema: z.object({ action: z.enum(["look", "open", "click", "type", "key", "scroll", "back", "tab"]), url: z.string().max(2000).optional(), ref: z.string().optional(), text: z.string().max(10_000).optional(), submit: z.boolean().optional(), key: z.string().optional(), dy: z.number().optional(), index: z.number().int().optional() }).strict(),
+      description: "Use your browser. One action per call; returns the page as text with refs (e5) for click/type. Actions: look, open (url), click (ref), type (text, ref?, submit?), key (key), scroll (dy), back, tab (index), upload (path of one of your files under /workspace, ref? of the file input).",
+      schema: z.object({ action: z.enum(["look", "open", "click", "type", "key", "scroll", "back", "tab", "upload"]), url: z.string().max(2000).optional(), ref: z.string().optional(), text: z.string().max(10_000).optional(), submit: z.boolean().optional(), key: z.string().optional(), dy: z.number().optional(), index: z.number().int().optional(), path: z.string().max(500).optional() }).strict(),
       execute: (_, a) => run({ app: "browser", ...a }),
     });
     if (apps.includes("mcp")) tools.push(

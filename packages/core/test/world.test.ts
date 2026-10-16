@@ -4,7 +4,7 @@ import { parseTemplate, splitInstanceConfig } from "../src/index.ts";
 import { canTalk, chatTemplateOf, worldSchema } from "../src/world.ts";
 
 const { catalog } = splitInstanceConfig(readFileSync(new URL("../../../config/agentown.yaml", import.meta.url), "utf8"));
-const coffee = readFileSync(new URL("../../../config/templates/coffee-store.yaml", import.meta.url), "utf8");
+const coffee = readFileSync(new URL("../../../apps/server/test/fixtures/templates/coffee-store.yaml", import.meta.url), "utf8");
 
 describe("world in a template", () => {
   it("the coffee store has floors, rooms, characters and moving things", () => {
@@ -12,6 +12,15 @@ describe("world in a template", () => {
     const world = doc.world as { floors: Array<{ rooms: unknown[] }>; kinds: Record<string, { category: string }> };
     expect(world.floors.map((f) => f.rooms.length)).toEqual([4, 3]);
     expect(Object.values(world.kinds).map((k) => k.category)).toEqual(expect.arrayContaining(["character", "static", "dynamic"]));
+  });
+
+  it("the video studio parses, and every titled thing in it has a chat persona", () => {
+    const video = readFileSync(new URL("../../../apps/server/test/fixtures/templates/video-studio.yaml", import.meta.url), "utf8");
+    const world = worldSchema.parse(parseTemplate(video, catalog).doc.world);
+    expect(world.floors.map((f) => f.rooms.length)).toEqual([4, 3]);
+    const titled = world.objects.filter((o) => world.kinds[o.kind]!.title && world.kinds[o.kind]!.category !== "character" && !world.kinds[o.kind]!.browser);
+    expect(titled.length).toBeGreaterThan(8);
+    for (const o of titled) expect(chatTemplateOf(world, o), o.kind).toBeTruthy();
   });
 
   it("rejects references that do not exist and avatars that are not characters", () => {

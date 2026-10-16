@@ -8,7 +8,7 @@ import { lookObject } from "../src/office3d/procedural.ts";
 import { animateAvatar } from "../src/office3d/scene.ts";
 
 const { catalog } = splitInstanceConfig(readFileSync(new URL("../../../config/agentown.yaml", import.meta.url), "utf8"));
-const world = worldSchema.parse(parseTemplate(readFileSync(new URL("../../../config/templates/coffee-store.yaml", import.meta.url), "utf8"), catalog).doc.world);
+const world = worldSchema.parse(parseTemplate(readFileSync(new URL("../../../apps/server/test/fixtures/templates/coffee-store.yaml", import.meta.url), "utf8"), catalog).doc.world);
 
 /** Everything a behavior can change on its target, as one comparable string. */
 function state(o: THREE.Object3D): string {

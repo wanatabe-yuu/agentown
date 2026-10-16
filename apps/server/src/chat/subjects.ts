@@ -1,3 +1,4 @@
+import { worldCapabilities } from "../capabilities.ts";
 import { chatInstructionTemplate, type Actor } from "@agentown/core";
 import { canTalk, chatTemplateOf, computerOf } from "@agentown/core/world";
 import { z } from "zod";
@@ -98,6 +99,9 @@ export async function entityProfile(service: Service, owner: Actor, subject: Cha
       description: "Do one of an object's actions yourself (pet the shop cat, pull an espresso): you walk over and do it, everyone sees it. Use objects to find what is nearby and what each can do. You can reach objects in your department's rooms, shared rooms, and ones that walk about.",
       schema: z.object({ objectId: z.string().min(1).max(64), action: z.string().min(1).max(64) }).strict(),
       execute: ({ service: v, actor: a }, b) => v.objectAction(a, b.objectId, { action: b.action }) },
+    // The wall calendar and the cleaning robot, as in its tasks (a change the owner confirms in the chat).
+    ...worldCapabilities().filter((c) => ["calendar", "schedule", "cleanup"].includes(c.id))
+      .map((c): ChatTool => ({ name: c.id, description: c.description, schema: c.input, mutates: c.effect !== "read", execute: c.execute! })),
     ...allTools.filter(t => ["create_task", "task_action"].includes(t.name)).map(t => t.name !== "create_task" ? { ...t,
       execute: (ctx: Parameters<ChatTool["execute"]>[0], b: any) => t.execute(ctx, { ...b, ...(["self", "me"].includes(b.assigneeAgentId) ? { assigneeAgentId: ctx.actor.id } : {}) }),
     } : {

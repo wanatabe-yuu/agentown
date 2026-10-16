@@ -1,9 +1,12 @@
+import type { Calendar } from "./calendar.ts";
+import type { Cleanup } from "./cleanup.ts";
 import { worldIdentities } from "./world-identities.ts";
 import { type Language, translateNames } from "./locales.ts";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { stringify } from "yaml";
 import { join } from "node:path";
-import { type Actor, orgConfigFrom, parseTemplate, splitInstanceConfig, type TemplateMeta } from "@agentown/core";
+import { type Actor, BUNDLE_PATH, mapWorldAssets, orgConfigFrom, parseTemplate, splitInstanceConfig, type TemplateMeta } from "@agentown/core";
+import { AssetRejected, MODEL_MAX, sniffAsset } from "./assets.ts";
 import { z } from "zod";
 import type { EventBus } from "./bus.ts";
 import { type Db, type Queryable, tx } from "./db.ts";
@@ -11,7 +14,7 @@ import type { Computers } from "./computers.ts";
 import type { ModelLister } from "./providers.ts";
 import type { SecretBox } from "./secrets.ts";
 import { Service } from "./service.ts";
-import { ApiError, badRequest, conflict, deny, newId, notFound, sha256 } from "./util.ts";
+import { ApiError, badRequest, conflict, deny, newId, newSecret, notFound, sha256 } from "./util.ts";
 
 const ORG_ID = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
 /** How long a pausing organization's runs in flight may take to finish before they are cut (like a cloud shutdown's grace period). */
@@ -32,10 +35,81 @@ function upgradeScriptTemplates(doc: Record<string, unknown>): Record<string, un
   return changed ? { ...doc, agentTemplates } : doc;
 }
 
+/** One world in the marketplace index (github.com/wanatabe-yuu/agentown-marketplace, index.json). */
+const marketWorldSchema = z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().min(1).max(200),
+  description: z.string().max(2000).default(""),
+  term: z.string().max(40).optional(),
+  departments: z.array(z.string().max(200)).max(100).default([]),
+  author: z.string().max(100).default(""),
+  repo: z.string().max(200).optional(),
+  commit: z.string().max(64).optional(),
+  url: z.string().url().max(1000),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  size: z.number().int().nonnegative(),
+  official: z.boolean().default(false),
+  verified: z.boolean().default(false),
+  stars: z.number().int().nonnegative().optional(),
+  updatedAt: z.string().max(40).optional(),
+  /** The bundle's art (assets/ files the world uses), each with its exact bytes' checksum. */
+  assets: z.array(z.object({ path: z.string().regex(BUNDLE_PATH), url: z.string().url().max(1000), sha256: z.string().regex(/^[0-9a-f]{64}$/), size: z.number().int().nonnegative() })).max(64).default([]),
+  /** Its cover first, then screenshots: for the marketplace card. */
+  images: z.array(z.string().url().max(1000)).max(8).default([]),
+  stats: z.object({ departments: z.number().int(), agents: z.number().int(), rooms: z.number().int(), objects: z.number().int() }).partial().optional(),
+});
+const marketIndexSchema = z.object({ version: z.literal(1), worlds: z.array(marketWorldSchema).max(5000) });
+export type MarketWorld = z.infer<typeof marketWorldSchema>;
+/** Where worlds are listed, and how this install downloads (tests pass their own fetch). */
+export interface Marketplace {
+  indexUrl: string;
+  fetch?: typeof fetch;
+}
+const MARKET_CACHE_MS = 5 * 60_000;
+
+/** A bundle file the world uses, checked to be what it is used as. */
+export interface BundleFile {
+  path: string;
+  kind: "model" | "texture";
+  contentType: string;
+  sha256: string;
+  size: number;
+  content: Buffer;
+}
+const BUNDLE_MAX = 100 * 1024 * 1024;
+
+/** A world bundle's files against its world: each assets/ path it uses is there, and is a model or picture as used. */
+function checkBundle(doc: Record<string, unknown>, files: Array<{ path: string; content: Buffer }>): BundleFile[] {
+  const need = new Map<string, "model" | "texture">();
+  mapWorldAssets(doc.world, (ref, kind) => {
+    if (ref.startsWith("assets/")) {
+      if (!BUNDLE_PATH.test(ref)) throw badRequest(`${ref}: bundle files are assets/NAME (letters, digits, . _ -)`);
+      need.set(ref, kind);
+    }
+    return ref;
+  });
+  const given = new Map(files.map((f) => [f.path, f.content]));
+  let total = 0;
+  return [...need].map(([path, kind]) => {
+    const content = given.get(path);
+    if (!content) throw badRequest(`the world uses ${path}: add that file to the bundle`);
+    total += content.length;
+    if (total > BUNDLE_MAX) throw badRequest("a bundle's art is at most 100 MB");
+    try {
+      const s = sniffAsset(content, kind);
+      return { path, kind: s.kind, contentType: s.contentType, sha256: sha256(content), size: content.length, content };
+    } catch (err) {
+      throw badRequest(`${path}: ${err instanceof AssetRejected ? err.message : "not a usable file"}`);
+    }
+  });
+}
+
 export interface OrgTemplate {
   meta: TemplateMeta;
   doc: Record<string, unknown>;
   builtIn: boolean;
+  /** A built-in template's folder of art (templatesDir/<id>/), when it has one. */
+  dir?: string;
 }
 
 /** Who a token belongs to, before any organization is chosen. */
@@ -56,6 +130,9 @@ export class Instance {
   private readonly cache = new Map<string, { revision: number; name: string; service: Service }>();
   /** The world's computers (set by the app). */
   computers: Computers | null = null;
+  /** The cleaning robot and trash can, and the wall calendar (set by the app). */
+  cleanup: Cleanup | null = null;
+  calendar: Calendar | null = null;
   private readonly file: ReturnType<typeof splitInstanceConfig>;
   /** Built-in organization templates: the config file's own org ("company") plus templatesDir/*.yaml. */
   readonly builtInTemplates = new Map<string, OrgTemplate>();
@@ -67,17 +144,18 @@ export class Instance {
     readonly secrets: SecretBox,
     private readonly modelLister: ModelLister,
     templatesDir?: string,
+    private readonly marketplace: Marketplace | null = null,
   ) {
     this.file = splitInstanceConfig(configText);
     const upgradeScripts = this.runtimeCatalog.some((p) => p.id === "claude-v1" && p.harness === "claude");
     if (upgradeScripts) this.file.doc = upgradeScriptTemplates(this.file.doc);
     const { organization, doc } = this.file;
     this.builtInTemplates.set("company", {
-      meta: { id: "company", name: "Company", description: `The ${organization.name} organization this install shipped with.`, term: "company" },
+      meta: { id: "company", name: "Agentown", description: `The default world this install ships with: ${organization.name}.`, term: "company" },
       doc,
       builtIn: true,
     });
-    for (const f of templatesDir ? readdirSync(templatesDir).filter((n) => n.endsWith(".yaml")).sort() : []) {
+    for (const f of templatesDir && existsSync(templatesDir) ? readdirSync(templatesDir).filter((n) => n.endsWith(".yaml")).sort() : []) {
       let t: ReturnType<typeof parseTemplate>;
       try {
         t = parseTemplate(readFileSync(join(templatesDir!, f), "utf8"), this.file.catalog);
@@ -87,7 +165,8 @@ export class Instance {
         if (err instanceof z.ZodError && err.issues.every((i) => i.code === "custom" && /^template .+: unknown runtimePreset /.test(i.message))) continue;
         throw err;
       }
-      this.builtInTemplates.set(t.meta.id, { ...t, doc: upgradeScripts ? upgradeScriptTemplates(t.doc) : t.doc, builtIn: true });
+      const dir = join(templatesDir!, t.meta.id);
+      this.builtInTemplates.set(t.meta.id, { ...t, doc: upgradeScripts ? upgradeScriptTemplates(t.doc) : t.doc, builtIn: true, ...(existsSync(dir) ? { dir } : {}) });
     }
   }
 
@@ -196,18 +275,19 @@ export class Instance {
   }
 
   /**
-   * First boot: create the config file's organization, with the instance admin as
-   * its owner. An install upgraded from a single organization gets its document
+   * First boot starts with no world: the admin creates the first one from a template.
+   * `seedDefaultOrg` (tests) creates the config file's organization instead, with the
+   * instance admin as its owner. An install upgraded from a single organization gets its document
    * filled in once. After that the database, not the file, owns the structure.
    * Returns a fresh admin token only when none exists yet.
    */
-  async bootstrap(opts: { ownerToken?: string } = {}): Promise<{ ownerToken: string | null }> {
+  async bootstrap(opts: { ownerToken?: string; seedDefaultOrg?: boolean } = {}): Promise<{ ownerToken: string | null }> {
     await this.upgradeScriptTemplates();
     const { organization, doc } = this.file;
     const seed = await tx(this.db, async (c) => {
       const { rows } = await c.query<{ id: string; config: unknown }>("SELECT id, config FROM organizations");
       const existing = rows.find((r) => r.id === organization.id);
-      if (!rows.length) {
+      if (!rows.length && opts.seedDefaultOrg) {
         await c.query("INSERT INTO organizations(id, name, config, created_by) VALUES ($1,$2,$3,'system:config')", [organization.id, organization.name, JSON.stringify(worldIdentities(doc))]);
         await c.query("INSERT INTO org_members(org_id, user_id, is_owner, created_by) VALUES ($1,'owner',true,'system:config')", [organization.id]);
         return true;
@@ -244,8 +324,9 @@ export class Instance {
       await this.db.query("INSERT INTO tokens(hash, principal_kind, principal_id, label) VALUES ($1,'human','owner','bootstrap')", [sha256(opts.ownerToken)]);
       return { ownerToken: opts.ownerToken };
     }
-    const any = service ?? (await this.org(organization.id));
-    return { ownerToken: await any.issueToken(this.db, "human", "owner", "bootstrap", false) };
+    const token = `aho_${newSecret()}`;
+    await this.db.query("INSERT INTO tokens(hash, principal_kind, principal_id, label) VALUES ($1,'human','owner','bootstrap')", [sha256(token)]);
+    return { ownerToken: token };
   }
 
   /** Config-dependent data migration: leave it pending if the install has no LLM preset. */
@@ -327,26 +408,32 @@ export class Instance {
     return stringify({ format: "agentown.template/v1", meta: t.meta, ...t.doc });
   }
 
-  private async storeTemplate(p: Principal, meta: { name: string; description: string; term?: string }, doc: Record<string, unknown>, sourceOrgId: string | null) {
+  private async storeTemplate(p: Principal, meta: { name: string; description: string; term?: string }, doc: Record<string, unknown>, sourceOrgId: string | null, art: BundleFile[] = []) {
     this.requireHuman(p);
     const id = newId("tpl");
     orgConfigFrom(doc, { id, name: meta.name }, this.file.catalog); // never store something an org could not be made from
-    await this.db.query("INSERT INTO templates(id, name, description, doc, owner_user_id, source_org_id, term) VALUES ($1,$2,$3,$4,$5,$6,$7)", [
-      id,
-      meta.name,
-      meta.description,
-      JSON.stringify(doc),
-      p.id,
-      sourceOrgId,
-      meta.term ?? null,
-    ]);
+    await tx(this.db, async (c) => {
+      await c.query("INSERT INTO templates(id, name, description, doc, owner_user_id, source_org_id, term) VALUES ($1,$2,$3,$4,$5,$6,$7)", [
+        id,
+        meta.name,
+        meta.description,
+        JSON.stringify(doc),
+        p.id,
+        sourceOrgId,
+        meta.term ?? null,
+      ]);
+      for (const f of art) {
+        await c.query("INSERT INTO template_assets(template_id, path, kind, content_type, size, sha256, content) VALUES ($1,$2,$3,$4,$5,$6,$7)", [id, f.path, f.kind, f.contentType, f.size, f.sha256, f.content]);
+      }
+    });
     await this.auditInstance(p, "template.create", id, { name: meta.name, sourceOrgId }, sourceOrgId);
     return (await this.listTemplates(p)).find((t) => t.id === id)!;
   }
 
   /** Import a template file (untrusted: size- and alias-bounded, validated against this install's catalog). */
   /** `term` (what its world is called as a whole) overrides the file's own. */
-  async importTemplate(p: Principal, yaml: string, term?: string) {
+  /** With `files`, a world bundle: the art its world uses (assets/NAME), checked and kept with it. */
+  async importTemplate(p: Principal, yaml: string, term?: string, files: Array<{ path: string; content: Buffer }> = []) {
     this.requireHuman(p);
     let parsed: ReturnType<typeof parseTemplate>;
     try {
@@ -354,12 +441,106 @@ export class Instance {
     } catch (err) {
       throw badRequest(`not a usable template: ${err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message}`);
     }
-    return this.storeTemplate(p, { name: parsed.meta.name, description: parsed.meta.description, term: term ?? parsed.meta.term }, parsed.doc, null);
+    const art = checkBundle(parsed.doc, files);
+    return this.storeTemplate(p, { name: parsed.meta.name, description: parsed.meta.description, term: term ?? parsed.meta.term }, parsed.doc, null, art);
+  }
+
+  /** The art a template carries: a built-in's from its folder, a library one's from the database. */
+  private async templateArt(t: OrgTemplate, id: string): Promise<BundleFile[]> {
+    if (t.builtIn) {
+      if (!t.dir) return checkBundle(t.doc, []);
+      const dir = t.dir;
+      const files = existsSync(join(dir, "assets")) ? readdirSync(join(dir, "assets")).map((n) => ({ path: `assets/${n}`, content: readFileSync(join(dir, "assets", n)) })) : [];
+      return checkBundle(t.doc, files);
+    }
+    const { rows } = await this.db.query("SELECT path, kind, content_type, size, sha256, content FROM template_assets WHERE template_id=$1", [id]);
+    return rows.map((r) => ({ path: r.path, kind: r.kind, contentType: r.content_type, size: r.size, sha256: r.sha256, content: r.content }));
+  }
+
+  // ---------------------------------------------------------------- marketplace
+
+  private marketCache: { at: number; worlds: MarketWorld[] } | null = null;
+
+  /** Worlds listed on the marketplace (official, verified and community ones). */
+  async listMarketplace(p: Principal): Promise<{ enabled: boolean; worlds: MarketWorld[] }> {
+    this.requireHuman(p);
+    return this.marketplace ? { enabled: true, worlds: await this.marketIndex(false) } : { enabled: false, worlds: [] };
+  }
+
+  /**
+   * Download a marketplace world into the person's template library. Only from the
+   * index's own host or raw.githubusercontent.com, and only the exact bytes the
+   * index lists (sha256); then it is validated like any imported file.
+   */
+  async installFromMarketplace(p: Principal, id: string) {
+    this.requireHuman(p);
+    if (!this.marketplace) throw notFound("marketplace");
+    const world = (await this.marketIndex(true)).find((w) => w.id === id);
+    if (!world) throw notFound("marketplace world");
+    const url = new URL(world.url);
+    const index = new URL(this.marketplace.indexUrl);
+    const allowed = (url.protocol === index.protocol && url.host === index.host) || (url.protocol === "https:" && url.host === "raw.githubusercontent.com");
+    if (!allowed) throw badRequest(`${world.name} is hosted at ${url.host}, which this install does not download from`);
+    const body = await this.marketGet(world.url, 256 * 1024);
+    if (sha256(body) !== world.sha256) throw badRequest(`${world.name} changed since the marketplace listed it (checksum mismatch)`);
+    // Its art, from the same places and only as listed.
+    const files: Array<{ path: string; content: Buffer }> = [];
+    for (const a of world.assets) {
+      const at = new URL(a.url);
+      if (!((at.protocol === index.protocol && at.host === index.host) || (at.protocol === "https:" && at.host === "raw.githubusercontent.com"))) throw badRequest(`${a.path} is hosted at ${at.host}, which this install does not download from`);
+      const content = await this.marketGet(a.url, MODEL_MAX);
+      if (sha256(content) !== a.sha256) throw badRequest(`${world.name}: ${a.path} changed since the marketplace listed it (checksum mismatch)`);
+      files.push({ path: a.path, content });
+    }
+    return this.importTemplate(p, body.toString("utf8"), undefined, files);
+  }
+
+  private async marketIndex(fresh: boolean): Promise<MarketWorld[]> {
+    if (!fresh && this.marketCache && Date.now() - this.marketCache.at < MARKET_CACHE_MS) return this.marketCache.worlds;
+    const body = await this.marketGet(this.marketplace!.indexUrl, 2 * 1024 * 1024);
+    let worlds: MarketWorld[];
+    try {
+      worlds = marketIndexSchema.parse(JSON.parse(body.toString("utf8"))).worlds;
+    } catch {
+      throw new ApiError(502, "marketplace_unavailable", "the marketplace index is not readable");
+    }
+    this.marketCache = { at: Date.now(), worlds };
+    return worlds;
+  }
+
+  private async marketGet(url: string, max: number): Promise<Buffer> {
+    const unavailable = (why: string) => new ApiError(502, "marketplace_unavailable", `marketplace: ${why}`);
+    let res: Response;
+    try {
+      res = await (this.marketplace!.fetch ?? fetch)(url, { redirect: "error", signal: AbortSignal.timeout(20_000) });
+    } catch (err) {
+      throw unavailable((err as Error).message);
+    }
+    if (!res.ok) throw unavailable(`${url} answered ${res.status}`);
+    if (Number(res.headers.get("content-length") ?? 0) > max) throw unavailable(`${url} is larger than ${max} bytes`);
+    // ponytail: buffers the body before the size check when content-length is missing; stream it if that gets abused
+    const body = Buffer.from(await res.arrayBuffer());
+    if (body.length > max) throw unavailable(`${url} is larger than ${max} bytes`);
+    return body;
   }
 
   /** Save an organization (structure + current agent tree) as a template in the owner's library. */
   async saveOrgAsTemplate(p: Principal, service: Service, actor: Actor, meta: { name: string; description: string; term?: string }) {
-    return this.storeTemplate(p, { ...meta, term: meta.term ?? service.config.organization.term }, await service.asTemplateDoc(actor), service.orgId);
+    // Its art goes with it as bundle files (assets/NAME), so organizations made from it have it too.
+    const doc = await service.asTemplateDoc(actor);
+    const used = new Set<string>();
+    mapWorldAssets(doc.world, (ref) => (used.add(ref), ref));
+    const { rows } = used.size ? await this.db.query("SELECT id, kind, name, content_type, size, sha256, content FROM assets WHERE org_id=$1 AND id = ANY($2)", [service.orgId, [...used]]) : { rows: [] };
+    const paths = new Map<string, string>();
+    const art: BundleFile[] = rows.map((r) => {
+      const ext = { "model/gltf-binary": ".glb", "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp" }[r.content_type as string] ?? "";
+      let base = String(r.name).replace(/\.[a-z0-9]+$/i, "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, 40) || r.id;
+      while ([...paths.values()].includes(`assets/${base}${ext}`)) base += "-2";
+      paths.set(r.id, `assets/${base}${ext}`);
+      return { path: `assets/${base}${ext}`, kind: r.kind, contentType: r.content_type, size: r.size, sha256: r.sha256, content: r.content };
+    });
+    const bundled = art.length ? { ...doc, world: mapWorldAssets(doc.world, (ref) => paths.get(ref) ?? ref) } : doc;
+    return this.storeTemplate(p, { ...meta, term: meta.term ?? service.config.organization.term }, bundled as Record<string, unknown>, service.orgId, art);
   }
 
   async deleteTemplate(p: Principal, id: string) {
@@ -434,13 +615,32 @@ export class Instance {
       throw badRequest(`unknown template ${input.templateId}`);
     });
     const namespace = `agentown-o-${input.id}`;
+    // The template's art goes into the new organization's library; the world points at it there.
+    const art = await this.templateArt(template, input.templateId);
+    const ids = new Map<string, string>();
+    const bySha = new Map<string, string>();
+    for (const f of art) {
+      const id = bySha.get(f.sha256) ?? newId("as");
+      bySha.set(f.sha256, id);
+      ids.set(f.path, id);
+    }
+    const doc = art.length ? { ...template.doc, world: mapWorldAssets(template.doc.world, (ref) => ids.get(ref) ?? ref) } : template.doc;
     const created = await tx(this.db, async (c) => {
       if ((await c.query("SELECT 1 FROM organizations WHERE id=$1", [input.id])).rowCount) throw conflict("exists", "an organization with this id already exists");
       if ((await c.query("SELECT 1 FROM agent_runtimes WHERE namespace=$1 LIMIT 1", [namespace])).rowCount) throw conflict("namespace_taken", `namespace ${namespace} is in use`);
       await c.query(
         "INSERT INTO organizations(id, name, config, template_id, created_by, runtime_namespace, language, term) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-        [input.id, input.name, JSON.stringify(worldIdentities(translateNames(template.doc, "en", input.language ?? "en"))), template.meta.id, `human:${p.id}`, namespace, input.language ?? "en", template.meta.term ?? null],
+        [input.id, input.name, JSON.stringify(worldIdentities(translateNames(doc, "en", input.language ?? "en"))), template.meta.id, `human:${p.id}`, namespace, input.language ?? "en", template.meta.term ?? null],
       );
+      const stored = new Set<string>();
+      for (const f of art) {
+        const id = ids.get(f.path)!;
+        if (stored.has(id)) continue;
+        stored.add(id);
+        await c.query("INSERT INTO assets(id, org_id, kind, name, content_type, size, sha256, content, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [
+          id, input.id, f.kind, f.path.slice("assets/".length), f.contentType, f.size, f.sha256, f.content, `human:${p.id}`,
+        ]);
+      }
       let ownerId: string;
       const newPerson = !("userId" in input.owner);
       if ("userId" in input.owner) {

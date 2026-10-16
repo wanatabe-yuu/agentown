@@ -175,6 +175,56 @@ const placedComputerSchema = z.object({
 export type Computer = z.infer<typeof computerSchema> & { network?: "direct" | "proxy" | "vpn"; remote?: boolean };
 export type PlacedComputer = z.infer<typeof placedComputerSchema>;
 
+/**
+ * When something runs: a time of day on some weekdays (0 Sunday … 6 Saturday), in
+ * the time zone of whoever set it. The cleaning robot and the trash can each have one.
+ */
+const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "a time like 02:30");
+const timeZoneSchema = z.string().min(1).max(64).refine((tz) => {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}, "an IANA time zone such as Asia/Ho_Chi_Minh");
+const scheduleSchema = z.object({
+  at: hhmm.default("02:00"),
+  days: z.array(z.number().int().min(0).max(6)).min(1).max(7).default([0, 1, 2, 3, 4, 5, 6]),
+  timeZone: timeZoneSchema.default("UTC"),
+});
+export type Schedule = z.infer<typeof scheduleSchema>;
+/** One kind of leftover the robot picks up: on or off, and how old it must be. */
+const sweepPart = (enabled: boolean, days: number) => z.object({ enabled: z.boolean().default(enabled), days: z.number().int().min(1).max(3650).default(days) }).prefault({});
+/**
+ * The cleaning robot: on its schedule it moves what is old enough into the trash can.
+ *   workspace  outputs of finished tasks in team workspaces, and retired members' folders
+ *   downloads  downloads and browser cache on the world's computers (logins stay)
+ *   history    activity, logs, team messages, finished proposals and computer requests, files of finished runs
+ *   chats      chats archived that long ago
+ *   assets     art no object in the world uses any more
+ * The audit log is never swept.
+ */
+export const cleanerSettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+  schedule: scheduleSchema.prefault({ at: "02:00" }),
+  workspace: sweepPart(true, 14),
+  downloads: sweepPart(true, 7),
+  history: sweepPart(false, 90),
+  chats: sweepPart(false, 30),
+  assets: sweepPart(false, 30),
+});
+export type CleanerSettings = z.infer<typeof cleanerSettingsSchema>;
+/** The trash can: on its schedule it deletes for good what has been in it at least keepDays. */
+export const trashSettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+  schedule: scheduleSchema.prefault({ at: "03:00" }),
+  keepDays: z.number().int().min(0).max(3650).default(7),
+});
+export type TrashSettings = z.infer<typeof trashSettingsSchema>;
+export const SWEEP_PARTS = ["workspace", "downloads", "history", "chats", "assets"] as const;
+export type SweepPart = (typeof SWEEP_PARTS)[number];
+
 const objectKindSchema = z.object({
   chat: objectChatSchema.optional(),
   name: z.string().min(1).max(60),
@@ -205,6 +255,12 @@ const objectKindSchema = z.object({
    * shows one app at a time. `browser` alone is the same as apps ["browser"].
    */
   computer: computerSchema.optional(),
+  /** The cleaning robot: it sweeps on a schedule (settings on each placed one). */
+  cleaner: z.object({}).strict().optional(),
+  /** The trash can the robot empties into; it deletes for good on its own schedule. */
+  trash: z.object({}).strict().optional(),
+  /** The wall calendar: opens the organization's month of scheduled jobs. */
+  calendar: z.object({}).strict().optional(),
 });
 export type ObjectKind = z.infer<typeof objectKindSchema>;
 
@@ -271,6 +327,10 @@ const placementSchema = z.object({
   image: z.string().min(1).max(64).optional(),
   /** A computer's own settings (its kind must be a computer: `computer` or `browser`). */
   computer: placedComputerSchema.optional(),
+  /** A cleaning robot's settings (its kind must be a `cleaner`). */
+  cleaner: cleanerSettingsSchema.optional(),
+  /** A trash can's settings (its kind must be a `trash`). */
+  trash: trashSettingsSchema.optional(),
 });
 
 /**
@@ -362,6 +422,8 @@ export function checkWorld(world: World, departments: Set<string>, issue: (messa
     const room = rooms.get(o.room);
     if (!room) issue(`world: object ${o.kind} is in unknown room ${o.room}`);
     else if (o.at[0] > room.area.w || o.at[1] > room.area.d) issue(`world: object ${o.kind} at ${o.at.join(",")} is outside room ${o.room}`);
+    if (o.cleaner && kind && !kind.cleaner) issue(`world: object ${o.id ?? o.kind} has cleaning settings but ${o.kind} is not a cleaning robot`);
+    if (o.trash && kind && !kind.trash) issue(`world: object ${o.id ?? o.kind} has trash settings but ${o.kind} is not a trash can`);
   }
   for (const [kindId, kind] of Object.entries(world.kinds)) {
     for (const b of kind.behaviors) {
@@ -441,4 +503,109 @@ export function objectState(kind: Pick<ObjectKind, "states">, objectId: string, 
   const cycle = Math.floor((now + seed * period) / period);
   const phase = ((now + seed * period) % period) / period;
   return phase > 0.66 ? autos[cycle % autos.length]! : kind.states[0]!;
+}
+
+/**
+ * The world's cleaning robot and trash can (the first placed one of each), with their
+ * settings filled in. The robot needs a trash can to empty into.
+ */
+export function cleanupOf(world: World | null | undefined) {
+  const first = <T>(flag: "cleaner" | "trash", parse: (v: unknown) => T) => {
+    const o = world?.objects.find((x) => x.id && world.kinds[x.kind]?.[flag]);
+    return o ? { objectId: o.id!, name: o.label ?? world!.kinds[o.kind]!.name, settings: parse(o[flag] ?? {}) } : null;
+  };
+  return { cleaner: first("cleaner", (v) => cleanerSettingsSchema.parse(v)), trash: first("trash", (v) => trashSettingsSchema.parse(v)) };
+}
+
+/** The calendar day and minute of the day at `now` in a time zone. */
+export function localClock(timeZone: string, now: Date) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short", hourCycle: "h23" })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value]),
+  );
+  const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday!);
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, minute: Number(parts.hour) * 60 + Number(parts.minute), weekday };
+}
+
+/** How long after its time a schedule may still run (the server was down at the minute itself). */
+export const SCHEDULE_GRACE_MINUTES = 360;
+
+/**
+ * Whether a schedule is due at `now`: a scheduled weekday, at most a few hours past its
+ * time, and it has not run yet on that local day. Returns the local day to remember, or null.
+ * A world created in the afternoon does not run its 02:00 sweep until the next night.
+ */
+export function scheduleDue(schedule: Schedule, now: Date, lastDay: string | null): string | null {
+  const c = localClock(schedule.timeZone, now);
+  const [h, m] = schedule.at.split(":").map(Number);
+  const late = c.minute - (h! * 60 + m!);
+  // ponytail: a time near midnight whose grace runs into the next day is missed on that next day; fine for nightly sweeps
+  if (!schedule.days.includes(c.weekday) || late < 0 || late >= SCHEDULE_GRACE_MINUTES || lastDay === c.day) return null;
+  return c.day;
+}
+
+/**
+ * A job on the wall calendar: an object doing one of its actions, or an agent
+ * given a task, either every week (a time on each chosen weekday, 0 Sunday … 6
+ * Saturday) or once (a day and a time), in the time zone of whoever set it.
+ */
+export const calendarJobSchema = z
+  .object({
+    title: z.string().trim().min(1).max(80),
+    who: z.object({ type: z.enum(["object", "agent"]), id: z.string().min(1).max(64) }),
+    /** object: the id of one of its kind's actions. */
+    action: z.string().min(1).max(64).optional(),
+    /** agent: what the task asks. */
+    prompt: z.string().trim().min(1).max(4000).optional(),
+    repeat: z.discriminatedUnion("type", [
+      z.object({ type: z.literal("weekly"), times: z.array(hhmm.nullable()).length(7).refine((t) => t.some(Boolean), "pick at least one day") }),
+      z.object({ type: z.literal("once"), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "a day like 2026-10-20"), at: hhmm }),
+    ]),
+    timeZone: timeZoneSchema,
+    enabled: z.boolean().default(true),
+  })
+  .strict()
+  .refine((j) => (j.who.type === "object" ? !!j.action && !j.prompt : !!j.prompt && !j.action), {
+    message: "an object does one of its actions; an agent gets a prompt",
+    path: ["who"],
+  });
+export type CalendarJob = z.infer<typeof calendarJobSchema>;
+export type JobRepeat = CalendarJob["repeat"];
+
+/** A robot's or trash can's schedule as a weekly repeat (the same time on each of its days). */
+export const weeklyOf = (s: Schedule): JobRepeat => ({ type: "weekly", times: [0, 1, 2, 3, 4, 5, 6].map((d) => (s.days.includes(d) ? s.at : null)) });
+
+/** When a job runs on a local day (YYYY-MM-DD, its weekday 0-6), or null. */
+export function jobTimeOn(repeat: JobRepeat, day: string, weekday: number): string | null {
+  return repeat.type === "weekly" ? (repeat.times[weekday] ?? null) : repeat.date === day ? repeat.at : null;
+}
+
+/** The local day a job is due on at `now` (at most a few hours past its time), or null. */
+export function jobDue(job: { repeat: JobRepeat; timeZone: string }, now: Date): string | null {
+  const c = localClock(job.timeZone, now);
+  const at = jobTimeOn(job.repeat, c.day, c.weekday);
+  if (!at) return null;
+  const late = c.minute - (Number(at.slice(0, 2)) * 60 + Number(at.slice(3)));
+  return late >= 0 && late < SCHEDULE_GRACE_MINUTES ? c.day : null;
+}
+
+/** A world's file in a template bundle: referenced by its path, e.g. assets/sofa.glb. */
+export const BUNDLE_PATH = /^assets\/[A-Za-z0-9][A-Za-z0-9._-]{0,56}$/;
+
+/**
+ * Every art reference of a raw world (as a template carries it), with what it must be
+ * (a model or a texture), rewritten by `map` (return the same ref to keep it).
+ */
+export function mapWorldAssets(world: unknown, map: (ref: string, kind: "model" | "texture") => string): unknown {
+  if (!world || typeof world !== "object") return world;
+  const w = structuredClone(world) as Record<string, any>;
+  const swap = (o: Record<string, any> | undefined, key: string, kind: "model" | "texture") => {
+    if (o && typeof o[key] === "string") o[key] = map(o[key], kind);
+  };
+  for (const k of Object.values(w.kinds ?? {}) as Array<Record<string, any>>) swap(k?.look, "asset", "model");
+  for (const f of w.floors ?? []) for (const r of f?.rooms ?? []) for (const key of ["floorTexture", "wallTexture"]) swap(r, key, "texture");
+  for (const o of w.objects ?? []) swap(o, "image", "texture");
+  for (const a of Object.values(w.avatars?.byAgent ?? {}) as Array<Record<string, any>>) swap(a, "image", "texture");
+  return w;
 }

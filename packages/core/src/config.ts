@@ -65,6 +65,8 @@ const templateSchema = z.object({
   jobRole: z.string(),
   runtimePreset: idSchema,
   policyProfile: z.string(),
+  /** How this job is done here: standing instructions every agent with this job works by (before its own). */
+  instructions: z.string().max(8000).optional(),
 });
 export type AgentTemplate = z.infer<typeof templateSchema>;
 
@@ -90,12 +92,16 @@ const teamSchema = z.object({
 });
 export type TeamConfig = z.infer<typeof teamSchema>;
 
+/** Languages an organization can work in (its agents' language and its template's names). */
+export const LANGUAGES = ["en", "vi", "zh", "ja", "ko", "es", "fr", "de", "pt", "ru", "id", "th"] as const;
+export type Language = (typeof LANGUAGES)[number];
+
 /** What a template's world is called as a whole, chosen by whoever imports it. */
 export const termSchema = z.string().trim().min(1).max(40);
 
 export const orgConfigSchema = z
   .object({
-    organization: z.object({ id: idSchema, name: z.string(), language: z.enum(["en", "vi"]).default("en"), term: termSchema.optional() }),
+    organization: z.object({ id: idSchema, name: z.string(), language: z.enum(LANGUAGES).default("en"), term: termSchema.optional() }),
     departments: z.array(z.object({ id: idSchema, name: z.string(), color: z.string().default("#8aa") })).min(1),
     projects: z.array(z.object({ id: idSchema, name: z.string() })).default([]),
     teams: z.array(teamSchema).default([]),

@@ -85,7 +85,7 @@ describe("organizations made by the instance admin", () => {
       expect((await call(t, "GET", "/api/admin/orgs")).status).toBe(403);
       expect((await call(t, "POST", "/api/admin/orgs", { id: "x", name: "X", templateId: "lab", owner: { displayName: "X" } })).status).toBe(403);
     }
-    expect((await call(env.owner, "GET", "/api/templates")).body.templates.map((t: { id: string }) => t.id).sort()).toEqual(["coffee-store", "company", "factory", "hospital", "lab"]);
+    expect((await call(env.owner, "GET", "/api/templates")).body.templates.map((t: { id: string }) => t.id).sort()).toEqual(["coffee-store", "company", "factory", "hospital", "lab", "video-studio"]);
   });
 
   it("a template org gets its own namespace and fresh agent ids", async () => {

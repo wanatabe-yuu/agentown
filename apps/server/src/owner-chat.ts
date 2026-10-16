@@ -41,7 +41,7 @@ export class OwnerChat {
   private async scoped(orgId: string, actor: Actor, id?: string, subject: ChatSubject = ownerSubject) {
     if (actor.kind !== "human") throw deny("Only the owner can use owner chat.");
     const ctx = await this.authorize(orgId, actor.id);
-    const chat = id ? (await this.db.query<ChatRow>("SELECT * FROM owner_chats WHERE id=$1 AND org_id=$2 AND user_id=$3 AND subject_type=$4 AND subject_id=$5", [id, orgId, actor.id, subject.type, subject.id])).rows[0] : undefined;
+    const chat = id ? (await this.db.query<ChatRow>("SELECT * FROM owner_chats WHERE id=$1 AND org_id=$2 AND user_id=$3 AND subject_type=$4 AND subject_id=$5 AND trashed_at IS NULL", [id, orgId, actor.id, subject.type, subject.id])).rows[0] : undefined;
     if (id && !chat) throw notFound("chat");
     return { ...ctx, chat };
   }
@@ -63,7 +63,7 @@ export class OwnerChat {
     const rootConfig = root ? (await service.getAgent(a, root.id)).config : null;
     const credential = credentials.find(c => c.id === rootConfig?.credentialId) ?? credentials[0];
     const defaults = entity ? (entity.defaults ? chatConfigSchema.parse(entity.defaults) : null) : credential ? chatConfigSchema.parse({ credentialId: credential.id, model: credential.models.includes(rootConfig?.model ?? "") ? rootConfig!.model : credential.models[0], effort: rootConfig?.effort ?? "medium", contextLimit: rootConfig?.contextLimit ?? 64000 }) : null;
-    const chats = (await this.db.query<ChatRow>("SELECT * FROM owner_chats WHERE org_id=$1 AND user_id=$2 AND (archived_at IS NOT NULL)=$3 AND subject_type=$4 AND subject_id=$5 ORDER BY updated_at DESC LIMIT 100", [orgId, actor.id, archived, subject.type, subject.id])).rows.map(publicChat);
+    const chats = (await this.db.query<ChatRow>("SELECT * FROM owner_chats WHERE org_id=$1 AND user_id=$2 AND (archived_at IS NOT NULL)=$3 AND subject_type=$4 AND subject_id=$5 AND trashed_at IS NULL ORDER BY updated_at DESC LIMIT 100", [orgId, actor.id, archived, subject.type, subject.id])).rows.map(publicChat);
     // Other conversations that brought this one up: the system chat, other agents' chats.
     const refs = subject.type === "owner" ? [] : await this.refsTo(orgId, actor.id, subject);
     return { chats, credentials, defaults, profile: entity?.profile ?? null, refs };

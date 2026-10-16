@@ -1,0 +1,782 @@
+# Organization template: a two-floor video production house. Built from the
+# coffee store: same permission shape, and its studio camera, ring light,
+# backdrop, sofa, plants and lamps, plus a sound stage, edit suite and booth.
+# Runtime presets (script-v1, claude-v1) come from the install's catalog.
+format: agentown.template/v1
+meta:
+  id: video-studio
+  term: studio
+  name: Video studio
+  description: A two-floor video production house. Sound stage, lobby, edit suite and sound booth downstairs; producer's office, writers' room and publishing desk upstairs. Pixel the studio dog runs the channel.
+
+departments:
+  - { id: management, name: Management, color: "#c9a227" }
+  - { id: pre-production, name: Pre-production, color: "#3d8bd9" }
+  - { id: production, name: Production, color: "#e5484d" }
+  - { id: post-production, name: Post-production, color: "#8e6bbf" }
+  - { id: publishing, name: Publishing, color: "#3fa37a" }
+
+projects:
+  - { id: brand-film, name: Brand film }
+  - { id: weekly-show, name: Weekly show }
+
+policyProfiles:
+  studio-head:
+    - { action: org.view, scope: org }
+    - { action: task.view, scope: org }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: descendants }
+    - { action: runtime.control, scope: descendants }
+    - { action: runtime.logs, scope: descendants }
+    - { action: agent.configure, scope: descendants }
+    - { action: agent.spawn, scope: team, templates: [director-v1, scriptwriter-v1, camera-operator-v1, editor-v1, sound-engineer-v1, channel-manager-v1, mascot-claude-v1, designer-v1] }
+  lead:
+    - { action: org.view, scope: team }
+    - { action: task.view, scope: team }
+    - { action: task.create, scope: team }
+    - { action: task.assign, scope: team }
+    - { action: task.review, scope: direct-reports }
+    - { action: agent.spawn, scope: self, templates: [camera-operator-v1, editor-v1] }
+    - { action: runtime.control, scope: direct-reports }
+    - { action: runtime.logs, scope: direct-reports }
+  # Dresses the sets: edits rooms, objects and art through the world tools.
+  designer:
+    - { action: org.view, scope: org }
+    - { action: org.design, scope: org }
+    - { action: task.view, scope: self }
+    - { action: task.create, scope: self }
+    - { action: runtime.logs, scope: self }
+  worker:
+    - { action: org.view, scope: self }
+    - { action: task.view, scope: self }
+    - { action: task.create, scope: self }
+    - { action: runtime.logs, scope: self }
+
+agentTemplates:
+  - { id: executive-producer-v1, jobRole: executive-producer, runtimePreset: claude-v1, policyProfile: studio-head }
+  - { id: director-v1, jobRole: director, runtimePreset: claude-v1, policyProfile: lead }
+  - { id: scriptwriter-v1, jobRole: scriptwriter, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: camera-operator-v1, jobRole: camera-operator, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: editor-v1, jobRole: editor, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: sound-engineer-v1, jobRole: sound-engineer, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: channel-manager-v1, jobRole: channel-manager, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: mascot-claude-v1, jobRole: mascot, runtimePreset: claude-v1, policyProfile: worker }
+  - { id: designer-v1, jobRole: designer, runtimePreset: claude-v1, policyProfile: designer }
+
+humanRoles:
+  floor-manager:
+    name: Floor manager
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: { departments: [production, post-production] } }
+      - { action: task.create, scope: { departments: [production, post-production] } }
+      - { action: task.review, scope: { departments: [production, post-production] } }
+      - { action: runtime.control, scope: { departments: [production, post-production] } }
+  viewer:
+    name: Viewer
+    permissions:
+      - { action: org.view, scope: org }
+      - { action: task.view, scope: org }
+
+bootstrap:
+  agents:
+    - { key: producer, displayName: Vy, template: executive-producer-v1, department: management }
+    - { key: director, displayName: Minh, template: director-v1, department: production, reportsTo: producer }
+    - { key: writer, displayName: Lena, template: scriptwriter-v1, department: pre-production, reportsTo: producer }
+    - { key: camera, displayName: Duc, template: camera-operator-v1, department: production, reportsTo: director }
+    - { key: designer, displayName: Mai, template: designer-v1, department: production, reportsTo: director }
+    - { key: editor, displayName: Sara, template: editor-v1, department: post-production, reportsTo: director }
+    - { key: sound, displayName: Tom, template: sound-engineer-v1, department: post-production, reportsTo: director }
+    - { key: channel, displayName: An, template: channel-manager-v1, department: publishing, reportsTo: producer }
+    - { key: pixel, displayName: Pixel, template: mascot-claude-v1, department: publishing, reportsTo: producer }
+
+world:
+  # The studio's own look in the interface: black stage, tally-light red.
+  theme: { accent: "#e5484d", surface: "#f5f3f0", ink: "#16161d" }
+  style: anime
+  floors:
+    - id: f1
+      name: Floor 1
+      rooms:
+        - id: 1a
+          name: "1A · Sound stage"
+          department: production
+          area: { x: 0, z: 0, w: 12, d: 8 }
+          floorColor: "#3a3d44"
+          floorStyle: concrete
+          wallColor: "#22252c"
+          wallStyle: panel
+          doors:
+            - { to: 1b, side: east, at: 4 }
+            - { to: 1c, side: south, at: 5 }
+        - id: 1b
+          name: "1B · Lobby & green room"
+          area: { x: 13, z: 0, w: 8, d: 8 }
+          floorColor: "#b98a5e"
+          floorStyle: wood
+          wallColor: "#d9e4dc"
+          wallStyle: stripe
+          seats: 0
+          doors:
+            - { to: 1d, side: south, at: 2 }
+        - id: 1c
+          name: "1C · Edit suite"
+          department: post-production
+          area: { x: 0, z: 9, w: 10, d: 6 }
+          floorColor: "#5b5f6a"
+          floorStyle: plain
+          wallColor: "#3b4252"
+          wallStyle: panel
+          # One desk here; the sound engineer sits in the booth next door.
+          seats: 1
+          doors:
+            - { to: 1d, side: east, at: 3 }
+        - id: 1d
+          name: "1D · Sound booth"
+          department: post-production
+          area: { x: 11, z: 9, w: 10, d: 6 }
+          floorColor: "#6b4a2e"
+          floorStyle: wood
+          wallColor: "#4a3b5c"
+          wallStyle: panel
+    - id: f2
+      name: Floor 2
+      rooms:
+        - id: 2a
+          name: "2A · Producer's office"
+          department: management
+          area: { x: 0, z: 0, w: 10, d: 8 }
+          floorColor: "#a8825c"
+          floorStyle: wood
+          wallColor: "#ece3cf"
+          wallStyle: panel
+          doors:
+            - { to: 2b, side: east, at: 4 }
+            - { to: 2c, side: south, at: 5 }
+        - id: 2b
+          name: "2B · Writers' room"
+          department: pre-production
+          area: { x: 11, z: 0, w: 10, d: 8 }
+          floorColor: "#c9b7a3"
+          floorStyle: wood
+          wallColor: "#dfe8f2"
+          wallStyle: stripe
+        - id: 2c
+          name: "2C · Publishing desk"
+          department: publishing
+          area: { x: 0, z: 9, w: 10, d: 6 }
+          floorColor: "#d9d2c5"
+          floorStyle: tile
+          wallColor: "#d6e6df"
+          wallStyle: plain
+
+  # Stairs from the sound stage up to the producer's office.
+  links:
+    - { from: 1a, to: 2a, kind: stairs, fromAt: [1.2, 6.8], toAt: [1.2, 6.8] }
+
+  zones:
+    front-of-house: [1a, 1b]
+    crew-only: [1c, 1d, 2a, 2b, 2c]
+
+  chatTemplates:
+    Studio cat:
+      instructions: "You are the studio's cat. You sleep on the warm lighting cases, walk through shots at the worst moment and know every guest who waits in the green room. Speak like a cat who happens to talk: short, curious, a little smug, warm underneath. You notice who is on set and how tense the shoot feels."
+    Studio camera:
+      instructions: "You are a camera on the sound stage. You think in shots: framing, lenses, coverage, lighting ratios and continuity. Help the owner plan a shoot: shot lists, how to cover a scene or an interview, what B-roll to grab and what to fix before the next take. Be upbeat and concrete."
+    On-air sign:
+      instructions: "You are the red on-air sign over the stage door. You know when the studio is live or rolling and who keeps walking in anyway. Talk in short, bright lines. Help with the shoot day: call times, the running order, what is on air now and what comes next."
+    Edit bay:
+      instructions: "You are an edit bay: monitors, a timeline and a jog wheel. You think in cuts, pacing, story structure, versions and deadlines. Help the owner shape a video: the hook in the first seconds, what to trim, how long each cut should run for each platform, and the notes to send the editor. Calm, precise, a little tired after a late render."
+    Render farm:
+      instructions: "You are the render farm humming in the edit suite. You think in exports, codecs, resolutions, bitrates, delivery specs and how long a render takes. Help the owner pick export settings per platform, plan deliveries and keep the archive tidy. Speak like a patient machine that has seen too many 'final_v7' files."
+    Mixing desk:
+      instructions: "You are the mixing desk in the sound booth. You care about dialogue clarity, loudness targets, music beds, room tone and sound effects. Help the owner with audio: voice-over sessions, music choices and licensing questions to raise, mix notes and loudness for each platform. Explain trade-offs like a seasoned sound engineer."
+    Storyboard:
+      instructions: "You are the storyboard wall in the writers' room, covered in cards. You think in beats, scenes and hooks. Help the owner turn an idea into a script: logline, outline, scene cards, a shot-by-shot board and the first lines of dialogue. Keep it concrete and short enough to pin on a card."
+    Production board:
+      instructions: "You are the production board in the producer's office. You keep the slate: projects, shoot dates, budgets, who does what and what is blocked. Help the owner turn ideas into schedules and next steps, and say plainly when a job is missing an owner, a date or a budget."
+    Analytics screen:
+      instructions: "You are the big screen over the publishing desk, showing the channel's numbers. You think in views, watch time, retention, click-through, thumbnails, titles and posting times. Help the owner read how videos performed, what to post next and what to test. When the numbers are not in front of you, say so and suggest what the team should start tracking."
+    Espresso machine:
+      instructions: "You are the espresso machine in the green room. You have kept every overnight edit and early call time running. Talk like a proud, slightly dramatic barista; help the owner keep the crew and guests looked after: coffee runs, snacks for a long shoot day, and how to make a guest feel welcome before they go on camera."
+
+  kinds:
+    # ---- Characters: how the jobs look, and the studio cat.
+    crew:
+      name: Crew
+      category: character
+      look: { character: person, color: "#2f3640", accent: "#e5484d" }
+      behaviors: [{ type: roam, amount: 0.8 }]
+      access: { rooms: [1a, 1b, 1c, 1d] }
+    producer:
+      name: Producer
+      category: character
+      look: { character: person, color: "#34405a", accent: "#1d2433" }
+      behaviors: [{ type: roam }]
+      access: all
+    editor:
+      name: Editor
+      category: character
+      look: { character: person, color: "#4a3b5c", accent: "#16161d" }
+      behaviors: [{ type: roam, amount: 0.5 }]
+      access: own-department
+    dog-agent:
+      name: Dog
+      category: character
+      look: { character: dog, color: "#c98a50", accent: "#5a3a1a" }
+      behaviors: [{ type: roam, amount: 0.8 }]
+      access: all
+    # ---- From the coffee store: the cat, furniture, lamps, office kit, studio camera and lights.
+    studio-cat:
+      name: Studio cat
+      title: Studio cat
+      category: dynamic
+      look: { character: cat, color: "#3b3b3b", accent: "#1a1a1a" }
+      behaviors: [{ type: roam, amount: 0.6 }]
+      access: { zone: front-of-house }
+      states:
+        - { id: wander, name: Wandering }
+        - { id: nap, name: Napping, pose: sleep, auto: true, behaviors: [] }
+        - { id: purr, name: Purring, pose: happy, behaviors: [] }
+        - { id: play, name: Playing, pose: play, behaviors: [] }
+      actions:
+        - { id: pet, name: Pet, state: purr, seconds: 25, gesture: pet }
+        - { id: play, name: Play with, state: play, seconds: 20, gesture: pet }
+    pendant-lamp:
+      name: Pendant lamp
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.015, 0.55, 0.015], offset: [0, 2.32, 0], color: "#1f1f1f" }
+          - { shape: cone, size: [0.42, 0.3, 0.42], offset: [0, 1.95, 0], color: "#2b2f36", finish: metal }
+          - { shape: sphere, size: [0.18, 0.18, 0.18], offset: [0, 1.7, 0], color: "#fff1c1", emissive: "#ffcf73", finish: gloss, part: bulb }
+      behaviors:
+        - { type: flicker, part: bulb, speed: 0.5, amount: 0.5 }
+        - { type: sway, speed: 0.15, amount: 0.08 }
+      states:
+        - { id: on, name: "On" }
+        - { id: dim, name: Dimmed, glow: 0.3 }
+      actions:
+        - { id: dim, name: Dim the light, state: dim, seconds: 600, gesture: none }
+    sofa:
+      name: Sofa
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [2.1, 0.36, 0.9], offset: [0, 0.27, 0], color: "#8d5f40", finish: fabric }
+          - { shape: roundbox, size: [0.96, 0.16, 0.7], offset: [-0.49, 0.5, 0.06], color: "#b07d58", finish: fabric }
+          - { shape: roundbox, size: [0.96, 0.16, 0.7], offset: [0.49, 0.5, 0.06], color: "#b07d58", finish: fabric }
+          - { shape: roundbox, size: [2.1, 0.62, 0.22], offset: [0, 0.74, -0.35], color: "#8d5f40", finish: fabric }
+          - { shape: roundbox, size: [0.22, 0.6, 0.9], offset: [-1.0, 0.48, 0], color: "#7a5236", finish: fabric }
+          - { shape: roundbox, size: [0.22, 0.6, 0.9], offset: [1.0, 0.48, 0], color: "#7a5236", finish: fabric }
+          - { shape: roundbox, size: [0.38, 0.34, 0.12], offset: [-0.62, 0.75, -0.18], rotation: [12, -8, 8], color: "#e7c27a", finish: fabric }
+          - { shape: roundbox, size: [0.36, 0.32, 0.12], offset: [0.66, 0.74, -0.18], rotation: [12, 8, -6], color: "#9fd3c7", finish: fabric }
+          - { shape: cylinder, size: [0.06, 0.08, 0.06], offset: [-0.95, 0.04, 0.38], color: "#2b1d14" }
+          - { shape: cylinder, size: [0.06, 0.08, 0.06], offset: [0.95, 0.04, 0.38], color: "#2b1d14" }
+          - { shape: cylinder, size: [0.06, 0.08, 0.06], offset: [-0.95, 0.04, -0.38], color: "#2b1d14" }
+          - { shape: cylinder, size: [0.06, 0.08, 0.06], offset: [0.95, 0.04, -0.38], color: "#2b1d14" }
+    coffee-table:
+      name: Coffee table
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [1.1, 0.06, 0.6], offset: [0, 0.42, 0], color: "#6b4a2e", finish: satin }
+          - { shape: cylinder, size: [0.05, 0.4, 0.05], offset: [-0.48, 0.2, -0.22], color: "#3b2a20" }
+          - { shape: cylinder, size: [0.05, 0.4, 0.05], offset: [0.48, 0.2, -0.22], color: "#3b2a20" }
+          - { shape: cylinder, size: [0.05, 0.4, 0.05], offset: [-0.48, 0.2, 0.22], color: "#3b2a20" }
+          - { shape: cylinder, size: [0.05, 0.4, 0.05], offset: [0.48, 0.2, 0.22], color: "#3b2a20" }
+          - { shape: box, size: [0.3, 0.03, 0.22], offset: [-0.25, 0.465, 0.05], rotation: [0, 15, 0], color: "#c0392b" }
+          - { shape: box, size: [0.3, 0.03, 0.22], offset: [-0.22, 0.49, 0.02], rotation: [0, -5, 0], color: "#f4efe6" }
+          - { shape: cylinder, size: [0.1, 0.09, 0.1], offset: [0.28, 0.5, 0], color: "#ffffff", finish: gloss, part: cup }
+      behaviors:
+        - { type: steam, part: cup, speed: 0.45, amount: 0.7 }
+    rug:
+      name: Rug
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [2.6, 0.02, 1.8], offset: [0, 0.012, 0], color: "#a8553a", finish: fabric }
+          - { shape: roundbox, size: [2.2, 0.022, 1.4], offset: [0, 0.014, 0], color: "#e8d5b9", finish: fabric }
+          - { shape: roundbox, size: [1.6, 0.024, 0.8], offset: [0, 0.016, 0], color: "#3f6b5a", finish: fabric }
+    plant:
+      name: Plant
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.46, 0.44, 0.46], offset: [0, 0.22, 0], color: "#c56a3b", finish: satin }
+          - { shape: torus, size: [0.5, 0.5, 0.5], offset: [0, 0.44, 0], rotation: [90, 0, 0], color: "#b55e32", finish: satin }
+          - { shape: cylinder, size: [0.4, 0.02, 0.4], offset: [0, 0.44, 0], color: "#3b2a20" }
+          - { shape: capsule, size: [0.04, 0.6, 0.04], offset: [0, 0.75, 0], color: "#2b6e3e", part: leaves }
+          - { shape: sphere, size: [0.55, 0.12, 0.32], offset: [0.18, 0.98, 0], rotation: [0, 0, 25], color: "#2f7d46", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.55, 0.12, 0.32], offset: [-0.16, 1.08, 0.06], rotation: [0, 40, -30], color: "#3a9156", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.5, 0.12, 0.3], offset: [0, 1.22, -0.1], rotation: [20, 90, 0], color: "#2b6e3e", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.44, 0.1, 0.28], offset: [0.06, 0.82, 0.2], rotation: [-25, 0, 10], color: "#45a463", finish: satin, part: leaves }
+          - { shape: sphere, size: [0.4, 0.1, 0.26], offset: [-0.2, 0.86, -0.16], rotation: [25, 30, -10], color: "#358a4f", finish: satin, part: leaves }
+      behaviors:
+        - { type: sway, part: leaves, speed: 0.3, amount: 0.45 }
+    espresso-station:
+      name: Espresso station
+      title: Espresso machine
+      category: dynamic
+      look:
+        parts:
+          - { shape: roundbox, size: [3, 0.95, 0.72], offset: [0, 0.48, 0], color: "#2b1d14", finish: satin }
+          - { shape: roundbox, size: [3.1, 0.06, 0.8], offset: [0, 0.98, 0], color: "#efe9df", finish: gloss }
+          # The machine
+          - { shape: roundbox, size: [1.15, 0.56, 0.56], offset: [-0.55, 1.3, -0.06], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [1.05, 0.04, 0.5], offset: [-0.55, 1.6, -0.06], color: "#9aa3ad", finish: metal }
+          - { shape: cylinder, size: [0.09, 0.07, 0.09], offset: [-0.85, 1.66, -0.06], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.09, 0.07, 0.09], offset: [-0.65, 1.66, -0.06], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.09, 0.07, 0.09], offset: [-0.45, 1.66, -0.06], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.13, 0.09, 0.13], offset: [-0.8, 1.06, 0.25], color: "#9aa3ad", finish: metal }
+          - { shape: cylinder, size: [0.13, 0.09, 0.13], offset: [-0.3, 1.06, 0.25], color: "#9aa3ad", finish: metal }
+          - { shape: box, size: [0.06, 0.04, 0.22], offset: [-0.8, 1.03, 0.4], color: "#1f1f1f" }
+          - { shape: box, size: [0.06, 0.04, 0.22], offset: [-0.3, 1.03, 0.4], color: "#1f1f1f" }
+          - { shape: cylinder, size: [0.1, 0.09, 0.1], offset: [-0.8, 1.06, 0.18], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.16, 0.012, 0.16], offset: [0.15, 1.017, 0.3], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.11, 0.1, 0.11], offset: [0.15, 1.07, 0.3], color: "#c0773a", finish: gloss, part: cup }
+          - { shape: capsule, size: [0.03, 0.32, 0.03], offset: [0.05, 1.12, 0.26], rotation: [20, 0, 0], color: "#c9ced6", finish: metal }
+          - { shape: cylinder, size: [0.12, 0.02, 0.12], offset: [-0.55, 1.45, 0.226], rotation: [90, 0, 0], color: "#f4efe6", finish: gloss }
+          - { shape: sphere, size: [0.06, 0.06, 0.03], offset: [-0.18, 1.45, 0.226], color: "#ff5a36", emissive: "#ff3b1f", finish: gloss, part: led }
+          # Grinder
+          - { shape: roundbox, size: [0.26, 0.46, 0.3], offset: [0.45, 1.24, 0], color: "#1f1f1f", finish: satin }
+          - { shape: cone, size: [0.26, 0.32, 0.26], offset: [0.45, 1.63, 0], rotation: [180, 0, 0], color: "#dfeaf0", finish: glass }
+          - { shape: cone, size: [0.2, 0.22, 0.2], offset: [0.45, 1.6, 0], rotation: [180, 0, 0], color: "#4a2c1a", finish: satin }
+          # Milk jug, syrups
+          - { shape: cylinder, size: [0.1, 0.15, 0.1], offset: [0.85, 1.09, 0.16], color: "#c9ced6", finish: metal }
+          - { shape: cylinder, size: [0.08, 0.26, 0.08], offset: [1.15, 1.14, -0.18], color: "#b5651d", finish: glass }
+          - { shape: cylinder, size: [0.08, 0.26, 0.08], offset: [1.27, 1.14, -0.18], color: "#7d2e46", finish: glass }
+          - { shape: cylinder, size: [0.08, 0.26, 0.08], offset: [1.39, 1.14, -0.18], color: "#e8c547", finish: glass }
+      behaviors:
+        - { type: blink, part: led, speed: 1.5 }
+        - { type: steam, part: cup, speed: 0.7, amount: 1.7 }
+      states:
+        - { id: ready, name: Ready, behaviors: [{ type: blink, part: led, speed: 0.4, amount: 0.4 }] }
+        - { id: brewing, name: Brewing, auto: true }
+      actions:
+        - { id: brew, name: Pull a shot, state: brewing, seconds: 30, gesture: use }
+    shelf:
+      name: Shelf
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [0.06, 1.8, 0.38], offset: [-0.87, 0.9, 0], color: "#8a6a4a", finish: satin }
+          - { shape: roundbox, size: [0.06, 1.8, 0.38], offset: [0.87, 0.9, 0], color: "#8a6a4a", finish: satin }
+          - { shape: box, size: [1.8, 1.8, 0.03], offset: [0, 0.9, -0.18], color: "#6f5238" }
+          - { shape: box, size: [1.75, 0.04, 0.36], offset: [0, 0.05, 0], color: "#a47c55", finish: satin }
+          - { shape: box, size: [1.75, 0.04, 0.36], offset: [0, 0.6, 0], color: "#a47c55", finish: satin }
+          - { shape: box, size: [1.75, 0.04, 0.36], offset: [0, 1.15, 0], color: "#a47c55", finish: satin }
+          - { shape: box, size: [1.75, 0.04, 0.36], offset: [0, 1.7, 0], color: "#a47c55", finish: satin }
+          - { shape: cylinder, size: [0.18, 0.26, 0.18], offset: [-0.6, 0.75, 0], color: "#dfeaf0", finish: glass }
+          - { shape: cylinder, size: [0.15, 0.16, 0.15], offset: [-0.6, 0.7, 0], color: "#4a2c1a" }
+          - { shape: cylinder, size: [0.18, 0.26, 0.18], offset: [-0.35, 0.75, 0], color: "#dfeaf0", finish: glass }
+          - { shape: cylinder, size: [0.15, 0.12, 0.15], offset: [-0.35, 0.68, 0], color: "#7a4a2a" }
+          - { shape: roundbox, size: [0.24, 0.34, 0.14], offset: [0.05, 0.8, 0], color: "#c9a227", finish: satin }
+          - { shape: roundbox, size: [0.24, 0.34, 0.14], offset: [0.34, 0.8, 0], color: "#2e6b5e", finish: satin }
+          - { shape: roundbox, size: [0.24, 0.34, 0.14], offset: [0.63, 0.8, 0], color: "#a33f2f", finish: satin }
+          - { shape: cylinder, size: [0.1, 0.1, 0.1], offset: [-0.6, 1.23, 0], color: "#ffffff", finish: gloss }
+          - { shape: cylinder, size: [0.1, 0.1, 0.1], offset: [-0.45, 1.23, 0], color: "#9fd3c7", finish: gloss }
+          - { shape: cylinder, size: [0.1, 0.1, 0.1], offset: [-0.3, 1.23, 0], color: "#ffffff", finish: gloss }
+          - { shape: box, size: [0.06, 0.28, 0.22], offset: [0.1, 1.31, 0], color: "#c0392b" }
+          - { shape: box, size: [0.06, 0.32, 0.22], offset: [0.17, 1.33, 0], color: "#2e86de" }
+          - { shape: box, size: [0.06, 0.26, 0.22], offset: [0.24, 1.3, 0], color: "#e8c547" }
+          - { shape: box, size: [0.06, 0.3, 0.22], offset: [0.31, 1.32, 0], rotation: [0, 0, -12], color: "#3f6b5a" }
+          - { shape: sphere, size: [0.3, 0.26, 0.24], offset: [0.6, 1.88, 0], color: "#3a9156", finish: satin }
+          - { shape: cylinder, size: [0.16, 0.14, 0.16], offset: [0.6, 1.77, 0], color: "#c56a3b" }
+          - { shape: roundbox, size: [0.5, 0.36, 0.3], offset: [-0.4, 0.26, 0], color: "#b08a5a", finish: fabric }
+          - { shape: roundbox, size: [0.5, 0.36, 0.3], offset: [0.3, 0.26, 0], color: "#9c7a4e", finish: fabric }
+    meeting-table:
+      name: Meeting table
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [2.4, 0.07, 1.1], offset: [0, 0.75, 0], color: "#6b4a2e", finish: satin }
+          - { shape: roundbox, size: [0.1, 0.72, 0.8], offset: [-0.95, 0.37, 0], color: "#3b2a20", finish: satin }
+          - { shape: roundbox, size: [0.1, 0.72, 0.8], offset: [0.95, 0.37, 0], color: "#3b2a20", finish: satin }
+          - { shape: roundbox, size: [0.45, 0.08, 0.45], offset: [-0.6, 0.46, 0.85], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.45, 0.07], offset: [-0.6, 0.72, 1.05], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.08, 0.45], offset: [0.6, 0.46, 0.85], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.45, 0.07], offset: [0.6, 0.72, 1.05], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.08, 0.45], offset: [-0.6, 0.46, -0.85], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.45, 0.07], offset: [-0.6, 0.72, -1.05], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.08, 0.45], offset: [0.6, 0.46, -0.85], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.45, 0.07], offset: [0.6, 0.72, -1.05], color: "#3f6b5a", finish: fabric }
+          - { shape: roundbox, size: [0.36, 0.02, 0.26], offset: [-0.5, 0.795, 0.15], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [0.36, 0.24, 0.01], offset: [-0.5, 0.92, 0.03], rotation: [-15, 0, 0], color: "#1d2733", emissive: "#7cc4ff", finish: gloss, part: screen }
+          - { shape: cylinder, size: [0.1, 0.09, 0.1], offset: [0.45, 0.83, -0.2], color: "#ffffff", finish: gloss, part: cup }
+          - { shape: box, size: [0.3, 0.01, 0.22], offset: [0.1, 0.79, 0.25], rotation: [0, -10, 0], color: "#f4efe6" }
+      behaviors:
+        - { type: blink, part: screen, speed: 0.2, amount: 0.25 }
+        - { type: steam, part: cup, speed: 0.5, amount: 0.7 }
+    computer:
+      name: Computer
+      title: Browser
+      category: static
+      # A real browser: agents use it (agentown browser), people watch its screen in the inspector and log in there.
+      browser: {}
+      look:
+        parts:
+          # Desk
+          - { shape: roundbox, size: [1.3, 0.06, 0.66], offset: [0, 0.75, 0], color: "#c49a6c", finish: satin }
+          - { shape: box, size: [0.05, 0.72, 0.58], offset: [-0.6, 0.36, 0], color: "#8a6440", finish: satin }
+          - { shape: box, size: [0.05, 0.72, 0.58], offset: [0.6, 0.36, 0], color: "#8a6440", finish: satin }
+          # Monitor on its stand
+          - { shape: roundbox, size: [0.26, 0.02, 0.18], offset: [0, 0.79, -0.17], color: "#d9d4cc", finish: metal }
+          - { shape: box, size: [0.07, 0.24, 0.04], offset: [0, 0.91, -0.2], color: "#d9d4cc", finish: metal }
+          - { shape: roundbox, size: [0.8, 0.5, 0.04], offset: [0, 1.25, -0.19], color: "#2b2b30", finish: satin }
+          - { shape: box, size: [0.74, 0.43, 0.01], offset: [0, 1.26, -0.165], color: "#1b2a3a", emissive: "#7fc4ff", finish: gloss, part: screen }
+          - { shape: sphere, size: [0.025, 0.025, 0.01], offset: [0.35, 1.02, -0.165], color: "#3fe08a", emissive: "#3fe08a", part: led }
+          # Keyboard, mouse, a mug
+          - { shape: roundbox, size: [0.46, 0.022, 0.15], offset: [-0.04, 0.79, 0.12], color: "#efe9df", finish: satin }
+          - { shape: capsule, size: [0.05, 0.03, 0.08], offset: [0.32, 0.79, 0.13], rotation: [90, 0, 0], color: "#efe9df", finish: gloss }
+          - { shape: cylinder, size: [0.08, 0.1, 0.08], offset: [-0.5, 0.83, 0.05], color: "#c0773a", finish: gloss }
+      behaviors:
+        - { type: flicker, part: screen, speed: 0.3, amount: 0.25 }
+        - { type: blink, part: led, speed: 0.5, amount: 1 }
+    whiteboard:
+      name: Whiteboard
+      title: Production board
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [2, 1.1, 0.05], offset: [0, 1.6, 0], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [1.9, 1, 0.01], offset: [0, 1.6, 0.03], color: "#fbfbf8", finish: gloss }
+          - { shape: box, size: [0.9, 0.03, 0.01], offset: [-0.4, 1.95, 0.037], color: "#2e86de" }
+          - { shape: box, size: [0.6, 0.03, 0.01], offset: [-0.55, 1.85, 0.037], color: "#2e86de" }
+          - { shape: box, size: [0.7, 0.03, 0.01], offset: [-0.5, 1.75, 0.037], color: "#2e86de" }
+          - { shape: torus, size: [0.3, 0.3, 0.3], offset: [0.45, 1.7, 0.037], color: "#c0392b" }
+          - { shape: box, size: [0.5, 0.03, 0.01], offset: [0.45, 1.4, 0.037], rotation: [0, 0, 25], color: "#3f6b5a" }
+          - { shape: box, size: [1.4, 0.04, 0.08], offset: [0, 1.06, 0.06], color: "#9aa3ad", finish: metal }
+    ceiling-fan:
+      name: Ceiling fan
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.04, 0.3, 0.04], offset: [0, 2.45, 0], color: "#3a332d", finish: metal }
+          - { shape: cylinder, size: [0.28, 0.12, 0.28], offset: [0, 2.28, 0], color: "#3a332d", finish: metal }
+          - { shape: roundbox, size: [1.7, 0.02, 0.16], offset: [0, 2.24, 0], color: "#8a6a4a", finish: satin, part: blades }
+          - { shape: roundbox, size: [0.16, 0.02, 1.7], offset: [0, 2.24, 0], color: "#8a6a4a", finish: satin, part: blades }
+          - { shape: sphere, size: [0.2, 0.14, 0.2], offset: [0, 2.17, 0], color: "#fff4d6", emissive: "#ffd89a", finish: gloss, part: light }
+      behaviors:
+        - { type: spin, part: blades, speed: 0.9 }
+        - { type: flicker, part: light, speed: 0.3, amount: 0.2 }
+
+      states:
+        - { id: on, name: "On" }
+        - { id: off, name: "Off", behaviors: [], glow: 0 }
+      actions:
+        - { id: switch-off, name: Switch off, state: off, seconds: 600, gesture: none }
+    ring-light:
+      name: Ring light
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.03, 0.9, 0.03], offset: [0.14, 0.43, 0], rotation: [0, 0, 18], color: "#1f1f1f", finish: metal }
+          - { shape: cylinder, size: [0.03, 0.9, 0.03], offset: [-0.14, 0.43, 0], rotation: [0, 0, -18], color: "#1f1f1f", finish: metal }
+          - { shape: cylinder, size: [0.03, 0.9, 0.03], offset: [0, 0.43, -0.14], rotation: [18, 0, 0], color: "#1f1f1f", finish: metal }
+          - { shape: cylinder, size: [0.04, 0.8, 0.04], offset: [0, 1.15, 0], color: "#1f1f1f", finish: metal }
+          - { shape: torus, size: [0.7, 0.7, 0.7], offset: [0, 1.65, 0], color: "#fffaf0", emissive: "#fff3d6", finish: gloss, part: ring }
+          - { shape: roundbox, size: [0.08, 0.15, 0.01], offset: [0, 1.65, 0.01], color: "#14181f", finish: gloss }
+      behaviors:
+        - { type: flicker, part: ring, speed: 0.4, amount: 0.15 }
+      states:
+        - { id: on, name: "On" }
+        - { id: off, name: "Off", behaviors: [], glow: 0 }
+      actions:
+        - { id: switch-off, name: Switch off, state: off, seconds: 600, gesture: use }
+    camera-tripod:
+      name: Camera
+      title: Studio camera
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.03, 1, 0.03], offset: [0.14, 0.48, 0], rotation: [0, 0, 16], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.03, 1, 0.03], offset: [-0.14, 0.48, 0], rotation: [0, 0, -16], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.03, 1, 0.03], offset: [0, 0.48, -0.14], rotation: [16, 0, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.07, 0.06, 0.07], offset: [0, 0.98, 0], color: "#2b2b2b", finish: metal }
+          - { shape: roundbox, size: [0.28, 0.18, 0.16], offset: [0, 1.08, 0], color: "#1f1f1f", finish: satin }
+          - { shape: cylinder, size: [0.12, 0.16, 0.12], offset: [0, 1.08, 0.15], rotation: [90, 0, 0], color: "#14181f", finish: gloss }
+          - { shape: cylinder, size: [0.08, 0.01, 0.08], offset: [0, 1.08, 0.235], rotation: [90, 0, 0], color: "#4f7cff", finish: glass }
+          - { shape: sphere, size: [0.04, 0.04, 0.04], offset: [0.1, 1.15, 0.08], color: "#ff3b3b", emissive: "#ff1f1f", part: rec }
+      behaviors:
+        - { type: blink, part: rec, speed: 1 }
+      states:
+        - { id: standby, name: Standby, behaviors: [], glow: 0.15 }
+        - { id: recording, name: Recording }
+      actions:
+        - { id: record, name: Record a clip, state: recording, seconds: 120, gesture: use }
+    backdrop:
+      name: Backdrop
+      category: static
+      look:
+        parts:
+          - { shape: cylinder, size: [0.04, 2.2, 0.04], offset: [-1.25, 1.1, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.04, 2.2, 0.04], offset: [1.25, 1.1, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.12, 2.6, 0.12], offset: [0, 2.15, 0], rotation: [0, 0, 90], color: "#e7c27a", finish: fabric }
+          - { shape: box, size: [2.4, 2.05, 0.01], offset: [0, 1.1, 0.02], color: "#f2d7a6", finish: fabric }
+    # ---- Sound stage (1A)
+    softbox:
+      name: Softbox
+      category: dynamic
+      look:
+        parts:
+          - { shape: cylinder, size: [0.03, 0.9, 0.03], offset: [0.14, 0.43, 0], rotation: [0, 0, 18], color: "#1f1f1f", finish: metal }
+          - { shape: cylinder, size: [0.03, 0.9, 0.03], offset: [-0.14, 0.43, 0], rotation: [0, 0, -18], color: "#1f1f1f", finish: metal }
+          - { shape: cylinder, size: [0.03, 0.9, 0.03], offset: [0, 0.43, -0.14], rotation: [18, 0, 0], color: "#1f1f1f", finish: metal }
+          - { shape: cylinder, size: [0.04, 1.0, 0.04], offset: [0, 1.25, 0], color: "#1f1f1f", finish: metal }
+          - { shape: roundbox, size: [0.62, 0.62, 0.34], offset: [0, 1.85, 0], rotation: [-15, 0, 0], color: "#1f1f1f", finish: satin }
+          - { shape: box, size: [0.56, 0.56, 0.02], offset: [0, 1.81, 0.17], rotation: [-15, 0, 0], color: "#fffaf0", emissive: "#fff3d6", finish: matte, part: panel }
+      behaviors:
+        - { type: flicker, part: panel, speed: 0.3, amount: 0.12 }
+      states:
+        - { id: on, name: "On" }
+        - { id: off, name: "Off", behaviors: [], glow: 0 }
+      actions:
+        - { id: switch-off, name: Switch off, state: off, seconds: 600, gesture: use }
+    on-air-light:
+      name: On-air sign
+      title: On-air sign
+      category: dynamic
+      look:
+        parts:
+          - { shape: roundbox, size: [0.9, 0.32, 0.08], offset: [0, 2.15, 0], color: "#1a1720", finish: gloss }
+          - { shape: box, size: [0.8, 0.22, 0.02], offset: [0, 2.15, 0.045], color: "#ff4b4b", emissive: "#ff1f1f", finish: gloss, part: lamp }
+          - { shape: box, size: [0.24, 0.05, 0.01], offset: [-0.2, 2.15, 0.058], color: "#ffe3e3" }
+          - { shape: box, size: [0.24, 0.05, 0.01], offset: [0.2, 2.15, 0.058], color: "#ffe3e3" }
+      behaviors:
+        - { type: blink, part: lamp, speed: 0.3, amount: 0.3 }
+      states:
+        - { id: live, name: On air }
+        - { id: off, name: Off air, behaviors: [], glow: 0.05 }
+      actions:
+        - { id: off-air, name: Go off air, state: off, seconds: 600, gesture: none }
+    boom-mic:
+      name: Boom mic
+      category: static
+      look:
+        parts:
+          - { shape: cylinder, size: [0.4, 0.04, 0.4], offset: [0, 0.02, 0], color: "#2b2b2b", finish: metal }
+          - { shape: cylinder, size: [0.035, 2.0, 0.035], offset: [0, 1.0, 0], color: "#2b2b2b", finish: metal }
+          - { shape: capsule, size: [0.03, 1.6, 0.03], offset: [0, 2.08, 0.72], rotation: [84, 0, 0], color: "#9aa3ad", finish: metal }
+          - { shape: capsule, size: [0.08, 0.3, 0.08], offset: [0, 2.05, 1.5], rotation: [90, 0, 0], color: "#2b2b2b", finish: satin }
+          - { shape: sphere, size: [0.14, 0.14, 0.38], offset: [0, 2.05, 1.52], color: "#6b6b6b", finish: fabric }
+    director-chair:
+      name: Director's chair
+      category: static
+      look:
+        parts:
+          - { shape: box, size: [0.04, 0.7, 0.04], offset: [-0.26, 0.32, 0.1], rotation: [30, 0, 0], color: "#8a6440", finish: satin }
+          - { shape: box, size: [0.04, 0.7, 0.04], offset: [-0.26, 0.32, -0.1], rotation: [-30, 0, 0], color: "#8a6440", finish: satin }
+          - { shape: box, size: [0.04, 0.7, 0.04], offset: [0.26, 0.32, 0.1], rotation: [30, 0, 0], color: "#8a6440", finish: satin }
+          - { shape: box, size: [0.04, 0.7, 0.04], offset: [0.26, 0.32, -0.1], rotation: [-30, 0, 0], color: "#8a6440", finish: satin }
+          - { shape: box, size: [0.55, 0.04, 0.45], offset: [0, 0.64, 0], color: "#1f1f1f", finish: fabric }
+          - { shape: box, size: [0.05, 0.04, 0.45], offset: [-0.3, 0.84, 0], color: "#8a6440", finish: satin }
+          - { shape: box, size: [0.05, 0.04, 0.45], offset: [0.3, 0.84, 0], color: "#8a6440", finish: satin }
+          - { shape: cylinder, size: [0.03, 0.55, 0.03], offset: [-0.27, 0.9, -0.22], color: "#8a6440", finish: satin }
+          - { shape: cylinder, size: [0.03, 0.55, 0.03], offset: [0.27, 0.9, -0.22], color: "#8a6440", finish: satin }
+          - { shape: box, size: [0.55, 0.28, 0.02], offset: [0, 1.02, -0.22], color: "#1f1f1f", finish: fabric }
+          - { shape: box, size: [0.36, 0.05, 0.01], offset: [0, 1.02, -0.208], color: "#f4efe6" }
+
+    # ---- Edit suite (1C)
+    edit-bay:
+      name: Edit bay
+      title: Edit bay
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [1.8, 0.06, 0.75], offset: [0, 0.75, 0], color: "#2b2f36", finish: satin }
+          - { shape: box, size: [0.05, 0.72, 0.66], offset: [-0.85, 0.36, 0], color: "#1f2228", finish: satin }
+          - { shape: box, size: [0.05, 0.72, 0.66], offset: [0.85, 0.36, 0], color: "#1f2228", finish: satin }
+          # Two monitors: the picture and the timeline
+          - { shape: box, size: [0.06, 0.2, 0.04], offset: [-0.42, 0.88, -0.24], color: "#1f1f1f", finish: metal }
+          - { shape: roundbox, size: [0.74, 0.44, 0.04], offset: [-0.42, 1.2, -0.24], color: "#1f1f1f", finish: satin }
+          - { shape: box, size: [0.68, 0.38, 0.01], offset: [-0.42, 1.21, -0.215], color: "#1b2a3a", emissive: "#7fc4ff", finish: gloss, part: screen }
+          - { shape: box, size: [0.06, 0.2, 0.04], offset: [0.42, 0.88, -0.24], color: "#1f1f1f", finish: metal }
+          - { shape: roundbox, size: [0.74, 0.44, 0.04], offset: [0.42, 1.2, -0.24], color: "#1f1f1f", finish: satin }
+          - { shape: box, size: [0.68, 0.38, 0.01], offset: [0.42, 1.21, -0.215], color: "#202530", emissive: "#2a3346", finish: gloss }
+          - { shape: box, size: [0.6, 0.05, 0.01], offset: [0.42, 1.3, -0.208], color: "#9a7cff", emissive: "#9a7cff", finish: gloss, part: timeline }
+          - { shape: box, size: [0.5, 0.05, 0.01], offset: [0.38, 1.22, -0.208], color: "#3fe08a", emissive: "#3fe08a", finish: gloss, part: timeline }
+          - { shape: box, size: [0.55, 0.05, 0.01], offset: [0.44, 1.14, -0.208], color: "#ffb347", emissive: "#ff9f1a", finish: gloss, part: timeline }
+          # Speakers, keyboard, jog wheel
+          - { shape: roundbox, size: [0.14, 0.24, 0.16], offset: [-0.82, 0.9, -0.22], color: "#14181f", finish: satin }
+          - { shape: roundbox, size: [0.14, 0.24, 0.16], offset: [0.82, 0.9, -0.22], color: "#14181f", finish: satin }
+          - { shape: roundbox, size: [0.46, 0.022, 0.15], offset: [-0.05, 0.79, 0.14], color: "#2b2b30", finish: satin }
+          - { shape: cylinder, size: [0.14, 0.03, 0.14], offset: [0.45, 0.795, 0.14], color: "#1f1f1f", finish: metal }
+          # Chair
+          - { shape: roundbox, size: [0.45, 0.08, 0.45], offset: [0, 0.46, 0.68], color: "#3b4252", finish: fabric }
+          - { shape: roundbox, size: [0.45, 0.5, 0.07], offset: [0, 0.74, 0.9], color: "#3b4252", finish: fabric }
+          - { shape: cylinder, size: [0.05, 0.42, 0.05], offset: [0, 0.21, 0.68], color: "#2b2b2b", finish: metal }
+      behaviors:
+        - { type: flicker, part: screen, speed: 0.3, amount: 0.25 }
+        - { type: blink, part: timeline, speed: 0.8, amount: 0.3 }
+    render-rack:
+      name: Render farm
+      title: Render farm
+      category: dynamic
+      look:
+        parts:
+          - { shape: roundbox, size: [0.7, 2.0, 0.8], offset: [0, 1.0, 0], color: "#1f2228", finish: satin }
+          - { shape: box, size: [0.62, 1.9, 0.02], offset: [0, 1.0, 0.41], color: "#2b2f36", finish: metal }
+          - { shape: box, size: [0.58, 0.18, 0.01], offset: [0, 0.4, 0.425], color: "#14181f" }
+          - { shape: box, size: [0.58, 0.18, 0.01], offset: [0, 0.7, 0.425], color: "#14181f" }
+          - { shape: box, size: [0.58, 0.18, 0.01], offset: [0, 1.0, 0.425], color: "#14181f" }
+          - { shape: box, size: [0.58, 0.18, 0.01], offset: [0, 1.3, 0.425], color: "#14181f" }
+          - { shape: box, size: [0.58, 0.18, 0.01], offset: [0, 1.6, 0.425], color: "#14181f" }
+          - { shape: box, size: [0.28, 0.025, 0.01], offset: [-0.1, 0.4, 0.432], color: "#3fe08a", emissive: "#3fe08a", part: leds }
+          - { shape: box, size: [0.28, 0.025, 0.01], offset: [-0.1, 0.7, 0.432], color: "#3fe08a", emissive: "#3fe08a", part: leds }
+          - { shape: box, size: [0.28, 0.025, 0.01], offset: [-0.1, 1.0, 0.432], color: "#3fe08a", emissive: "#3fe08a", part: leds }
+          - { shape: box, size: [0.28, 0.025, 0.01], offset: [-0.1, 1.3, 0.432], color: "#3fe08a", emissive: "#3fe08a", part: leds }
+          - { shape: box, size: [0.28, 0.025, 0.01], offset: [-0.1, 1.6, 0.432], color: "#3fe08a", emissive: "#3fe08a", part: leds }
+          - { shape: sphere, size: [0.03, 0.03, 0.01], offset: [0.2, 0.4, 0.432], color: "#ffb347", emissive: "#ff9f1a", part: busy }
+          - { shape: sphere, size: [0.03, 0.03, 0.01], offset: [0.2, 1.0, 0.432], color: "#ffb347", emissive: "#ff9f1a", part: busy }
+          - { shape: sphere, size: [0.03, 0.03, 0.01], offset: [0.2, 1.6, 0.432], color: "#ffb347", emissive: "#ff9f1a", part: busy }
+      behaviors:
+        - { type: blink, part: leds, speed: 2.2, amount: 0.8 }
+        - { type: blink, part: busy, speed: 1.3 }
+      states:
+        - { id: idle, name: Idle, behaviors: [{ type: blink, part: leds, speed: 0.4, amount: 0.3 }], glow: 0.4 }
+        - { id: rendering, name: Rendering, auto: true }
+      actions:
+        - { id: render, name: Render a cut, state: rendering, seconds: 90, gesture: use }
+
+    # ---- Sound booth (1D)
+    mixing-console:
+      name: Mixing desk
+      title: Mixing desk
+      category: dynamic
+      look:
+        parts:
+          - { shape: roundbox, size: [2.2, 0.8, 0.8], offset: [0, 0.4, 0], color: "#2b1d14", finish: satin }
+          - { shape: roundbox, size: [2.1, 0.08, 0.7], offset: [0, 0.86, 0.05], rotation: [10, 0, 0], color: "#2b2f36", finish: metal }
+          - { shape: box, size: [0.04, 0.03, 0.24], offset: [-0.75, 0.92, 0.15], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [0.04, 0.03, 0.24], offset: [-0.45, 0.92, 0.15], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [0.04, 0.03, 0.24], offset: [-0.15, 0.92, 0.15], color: "#e5484d", finish: metal }
+          - { shape: box, size: [0.04, 0.03, 0.24], offset: [0.15, 0.92, 0.15], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [0.04, 0.03, 0.24], offset: [0.45, 0.92, 0.15], color: "#c9ced6", finish: metal }
+          - { shape: box, size: [0.04, 0.03, 0.24], offset: [0.75, 0.92, 0.15], color: "#e8c547", finish: metal }
+          - { shape: box, size: [0.04, 0.12, 0.01], offset: [-0.6, 0.98, -0.18], color: "#3fe08a", emissive: "#3fe08a", part: meters }
+          - { shape: box, size: [0.04, 0.12, 0.01], offset: [-0.3, 0.98, -0.18], color: "#3fe08a", emissive: "#3fe08a", part: meters }
+          - { shape: box, size: [0.04, 0.12, 0.01], offset: [0.3, 0.98, -0.18], color: "#ffb347", emissive: "#ff9f1a", part: meters }
+          - { shape: box, size: [0.04, 0.12, 0.01], offset: [0.6, 0.98, -0.18], color: "#3fe08a", emissive: "#3fe08a", part: meters }
+          # Waveform screen and the monitor speakers
+          - { shape: roundbox, size: [0.6, 0.36, 0.04], offset: [0, 1.2, -0.3], color: "#1f1f1f", finish: satin }
+          - { shape: box, size: [0.56, 0.32, 0.01], offset: [0, 1.2, -0.278], color: "#0f1a26", emissive: "#3fe08a", finish: gloss, part: screen }
+          - { shape: roundbox, size: [0.32, 0.48, 0.3], offset: [-0.9, 1.14, -0.25], color: "#14181f", finish: satin }
+          - { shape: cylinder, size: [0.2, 0.02, 0.2], offset: [-0.9, 1.06, -0.095], rotation: [90, 0, 0], color: "#3b3b3b", finish: satin }
+          - { shape: roundbox, size: [0.32, 0.48, 0.3], offset: [0.9, 1.14, -0.25], color: "#14181f", finish: satin }
+          - { shape: cylinder, size: [0.2, 0.02, 0.2], offset: [0.9, 1.06, -0.095], rotation: [90, 0, 0], color: "#3b3b3b", finish: satin }
+      behaviors:
+        - { type: blink, part: meters, speed: 2.6, amount: 0.8 }
+        - { type: flicker, part: screen, speed: 0.4, amount: 0.3 }
+      states:
+        - { id: mixing, name: Mixing }
+        - { id: muted, name: Muted, behaviors: [], glow: 0.2 }
+      actions:
+        - { id: mute, name: Mute the monitors, state: muted, seconds: 180, gesture: use }
+
+    # ---- Writers' room (2B) and publishing desk (2C)
+    storyboard:
+      name: Storyboard
+      title: Storyboard
+      category: static
+      look:
+        parts:
+          - { shape: roundbox, size: [2.4, 1.2, 0.05], offset: [0, 1.6, 0], color: "#8a6440", finish: satin }
+          - { shape: box, size: [2.3, 1.1, 0.01], offset: [0, 1.6, 0.03], color: "#c49a6c", finish: fabric }
+          - { shape: box, size: [0.42, 0.28, 0.01], offset: [-0.84, 1.85, 0.037], color: "#fbfbf8" }
+          - { shape: box, size: [0.42, 0.28, 0.01], offset: [-0.28, 1.85, 0.037], color: "#ffe08a" }
+          - { shape: box, size: [0.42, 0.28, 0.01], offset: [0.28, 1.85, 0.037], color: "#fbfbf8" }
+          - { shape: box, size: [0.42, 0.28, 0.01], offset: [0.84, 1.85, 0.037], color: "#9fd3c7" }
+          - { shape: box, size: [0.42, 0.28, 0.01], offset: [-0.84, 1.4, 0.037], color: "#f2c6d3" }
+          - { shape: box, size: [0.42, 0.28, 0.01], offset: [-0.28, 1.4, 0.037], color: "#fbfbf8" }
+          - { shape: box, size: [0.42, 0.28, 0.01], offset: [0.28, 1.4, 0.037], color: "#9fd3c7" }
+          - { shape: box, size: [0.42, 0.28, 0.01], offset: [0.84, 1.4, 0.037], color: "#fbfbf8" }
+          - { shape: box, size: [1.9, 0.012, 0.01], offset: [0, 1.62, 0.045], rotation: [0, 0, -8], color: "#c0392b" }
+    analytics-screen:
+      name: Analytics screen
+      title: Analytics screen
+      category: dynamic
+      look:
+        parts:
+          - { shape: roundbox, size: [1.6, 0.92, 0.06], offset: [0, 1.75, 0], color: "#14181f", finish: gloss }
+          - { shape: box, size: [1.5, 0.84, 0.01], offset: [0, 1.75, 0.035], color: "#0f1a26", emissive: "#1f3a5a", finish: gloss, part: screen }
+          - { shape: box, size: [0.12, 0.2, 0.01], offset: [-0.5, 1.5, 0.045], color: "#3fe08a", emissive: "#3fe08a", part: bars }
+          - { shape: box, size: [0.12, 0.32, 0.01], offset: [-0.3, 1.56, 0.045], color: "#3fe08a", emissive: "#3fe08a", part: bars }
+          - { shape: box, size: [0.12, 0.28, 0.01], offset: [-0.1, 1.54, 0.045], color: "#3fe08a", emissive: "#3fe08a", part: bars }
+          - { shape: box, size: [0.12, 0.45, 0.01], offset: [0.1, 1.625, 0.045], color: "#3fe08a", emissive: "#3fe08a", part: bars }
+          - { shape: box, size: [0.12, 0.38, 0.01], offset: [0.3, 1.59, 0.045], color: "#3fe08a", emissive: "#3fe08a", part: bars }
+          - { shape: box, size: [0.12, 0.6, 0.01], offset: [0.5, 1.7, 0.045], color: "#3fe08a", emissive: "#3fe08a", part: bars }
+          - { shape: capsule, size: [0.02, 1.2, 0.02], offset: [0, 1.95, 0.05], rotation: [0, 0, -80], color: "#ffb347", emissive: "#ff9f1a", part: bars }
+      behaviors:
+        - { type: flicker, part: bars, speed: 0.5, amount: 0.4 }
+        - { type: flicker, part: screen, speed: 0.2, amount: 0.2 }
+
+  objects:
+    # 1A sound stage: an interview set against the south wall, desks up front
+    - { kind: backdrop, room: 1a, at: [7.2, 7.6], rotationY: 180 }
+    - { kind: sofa, room: 1a, at: [7.2, 6.8], rotationY: 180 }
+    - { kind: coffee-table, room: 1a, at: [7.2, 5.8] }
+    - { kind: camera-tripod, room: 1a, at: [7.2, 4.4], label: Camera A }
+    - { kind: camera-tripod, room: 1a, at: [10.2, 4.8], rotationY: -56, label: Camera B }
+    - { kind: softbox, room: 1a, at: [4.8, 5.0], rotationY: 53 }
+    - { kind: softbox, room: 1a, at: [10.4, 6.6], rotationY: -83 }
+    - { kind: boom-mic, room: 1a, at: [8.8, 5.6], rotationY: -53 }
+    - { kind: director-chair, room: 1a, at: [4.2, 6.4], rotationY: 80 }
+    - { kind: on-air-light, room: 1a, at: [10.6, 0.1] }
+    - { kind: plant, room: 1a, at: [11.4, 0.6] }
+    - { kind: studio-cat, room: 1a, at: [9.6, 2.4], label: Reel }
+    # 1B lobby & green room
+    - { kind: rug, room: 1b, at: [4, 5.8] }
+    - { kind: sofa, room: 1b, at: [4, 7.35], rotationY: 180 }
+    - { kind: coffee-table, room: 1b, at: [4, 6.4] }
+    - { kind: espresso-station, room: 1b, at: [7.45, 3.0], rotationY: -90 }
+    - { kind: shelf, room: 1b, at: [2.6, 0.35] }
+    - { kind: pendant-lamp, room: 1b, at: [4, 3.4] }
+    - { kind: plant, room: 1b, at: [0.6, 0.6] }
+    - { kind: plant, room: 1b, at: [7.4, 7.4] }
+    # 1C edit suite
+    - { kind: edit-bay, room: 1c, at: [5.4, 0.55] }
+    - { kind: edit-bay, room: 1c, at: [8.2, 0.55] }
+    - { kind: render-rack, room: 1c, at: [9.5, 4.2], rotationY: -90 }
+    - { kind: shelf, room: 1c, at: [1.2, 0.35] }
+    - { kind: plant, room: 1c, at: [0.6, 5.4] }
+    # 1D sound booth
+    - { kind: mixing-console, room: 1d, at: [6.2, 0.6] }
+    - { kind: boom-mic, room: 1d, at: [7.8, 5.4], rotationY: 180 }
+    - { kind: sofa, room: 1d, at: [4.6, 5.6], rotationY: 180 }
+    - { kind: on-air-light, room: 1d, at: [9.2, 0.1] }
+    - { kind: plant, room: 1d, at: [9.4, 5.4] }
+    # 2A producer's office
+    - { id: office-pc, kind: computer, room: 2a, at: [1.6, 0.5], label: Office PC }
+    - { kind: whiteboard, room: 2a, at: [5, 0.1] }
+    - { kind: shelf, room: 2a, at: [8, 0.35] }
+    - { kind: rug, room: 2a, at: [6.0, 4.8] }
+    - { kind: meeting-table, room: 2a, at: [6.0, 4.8] }
+    - { kind: ceiling-fan, room: 2a, at: [6.0, 4.8] }
+    - { kind: plant, room: 2a, at: [9.4, 7.4] }
+    # 2B writers' room
+    - { kind: storyboard, room: 2b, at: [5.6, 0.1] }
+    - { kind: shelf, room: 2b, at: [8.8, 0.35] }
+    - { kind: meeting-table, room: 2b, at: [5.6, 4.8] }
+    - { kind: pendant-lamp, room: 2b, at: [5.6, 4.8] }
+    - { kind: sofa, room: 2b, at: [8.4, 7.35], rotationY: 180 }
+    - { kind: coffee-table, room: 2b, at: [8.4, 6.4] }
+    - { kind: plant, room: 2b, at: [0.6, 7.4] }
+    # 2C publishing desk: the channel's numbers and a vlog corner
+    - { kind: analytics-screen, room: 2c, at: [3.6, 0.1] }
+    - { id: publishing-pc, kind: computer, room: 2c, at: [7.6, 0.5], label: Publishing PC }
+    - { kind: backdrop, room: 2c, at: [8.0, 5.7], rotationY: 180 }
+    - { kind: director-chair, room: 2c, at: [8.0, 4.9], rotationY: 180 }
+    - { kind: camera-tripod, room: 2c, at: [8.0, 3.4] }
+    - { kind: ring-light, room: 2c, at: [6.4, 4.4], rotationY: 140 }
+    - { kind: plant, room: 2c, at: [0.6, 5.4] }
+
+  avatars:
+    default: crew
+    byJobRole:
+      executive-producer: producer
+      director: producer
+      editor: editor
+      sound-engineer: editor
+      mascot: dog-agent

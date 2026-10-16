@@ -19,6 +19,9 @@ const HELP = `agentown <command>
                      [--instructions TEXT] [--max-turns N] [--context-limit TOKENS]
                                            configure an agent you are allowed to manage
                                            use "none" to clear credential, model or effort
+  agent suggest ID [same flags] --reason WHY
+                                           where a person chose an agent's key and model (configure
+                                           says so), ask the owner to change them
   spawn --template T --name N [--manager M] [--team TEAM] [--cpu 100m] [--memory 192Mi] [--key K]
                                            hire a new agent from an approved template; it joins
                                            TEAM's runtime and adds the declared cpu/memory to it
@@ -52,13 +55,32 @@ const HELP = `agentown <command>
   computer PC stream URL | stream stop     play a video (file, HLS, or a page) on its screen
   computer PC camera [QUESTION]            look through its camera
   computer PC terminal COMMAND             run a shell command in its own container (exit code and output)
+  computer PC look /workspace/PIC [QUESTION]
+                                           its model looks at one of its pictures and says what it shows
   computer PC mcp CONNECTOR [TOOL JSON]    an attached connector's tools, or call one
   browser list                             the world's computers (real browsers): id, state, page
   browser PC look | open URL | click REF | type [REF] TEXT [--submit] | key KEY | scroll [DY]
-             | back | tab N                use computer PC; prints the page as text, with a ref
+             | back | tab N | upload /workspace/FILE [REF]
+                                           use computer PC; prints the page as text, with a ref
                                            (e5) on everything that can be clicked or typed into
   browser PC login WHAT [--timeout MINUTES] ask the owner to log in (WHAT: which site/account) on
                                            PC's screen; then stop with BLOCKED: — the login stays
+  objects                                  what is in the world to use: actions, whether you can reach
+                                           it, and what the computers, robot, trash and calendar are for
+  object ID ACTION                         do one of an object's actions yourself (you walk over)
+  calendar [FROM] [TO]                     the wall calendar: every scheduled job and what ran
+                                           (days as YYYY-MM-DD; default today and the next 30 days)
+  schedule add --title T (--object ID --action A | --agent ID --prompt P)
+               (--weekly "mon-fri=09:00,sat=10:30" | --once 2026-10-20T09:00) [--tz ZONE]
+                                           put a job on the calendar (zone: IANA, default the one
+                                           the calendar's jobs use); an agent's job gives it a task
+  schedule rm ID                           take a job off the calendar
+  cleanup [view|preview|sweep|empty|restore ITEM]
+                                           the cleaning robot and the trash can
+  permission ask ACTION --reason WHY [--scope self|team|department|org]
+                                           ask the owner for a permission you lack
+  (Anything you may not do yourself asks the owner instead and prints a proposal: stop with
+   BLOCKED: waiting for approval if your work depends on it; the task resumes with the decision.)
   connector list                           outside services (MCP connectors) of this world
   connector tools ID                       a connector's tools and their input schemas
   connector call ID TOOL [JSON_ARGS | @FILE]
@@ -269,6 +291,35 @@ async function main() {
       for (const m of r.messages.slice(-50)) out(`${m.at}\t${m.author.name}${m.system ? " (activity)" : ""}: ${m.text}`);
       return;
     }
+    case "objects": {
+      const r = await api.post("/api/tools/objects/invoke", { args: {} });
+      for (const o of r.result.objects)
+        out(`${o.id}\t${o.name} (${o.kind})\t${o.room}\t${o.state ?? "-"}\t${o.reachable === false ? "out of reach" : "reachable"}\t${o.actions.map((a: { id: string; name: string }) => `${a.id}=${a.name}`).join(", ") || "-"}${o.use ? `\t${o.use}` : ""}`);
+      return;
+    }
+    case "object": {
+      if (!sub || !rest[0]) throw new Error("usage: agentown object ID ACTION (see agentown objects)");
+      return applied(await api.post("/api/tools/use_object/invoke", { args: { objectId: sub, action: rest[0] } }));
+    }
+    case "calendar": {
+      const today = new Date();
+      const iso = (d: Date) => d.toISOString().slice(0, 10);
+      const from = sub ?? iso(today);
+      const to = rest[0] ?? iso(new Date(Date.parse(from) + 30 * 86_400_000));
+      return out((await api.post("/api/tools/calendar/invoke", { args: { from, to } })).result);
+    }
+    case "schedule":
+      return schedule(api, sub, rest);
+    case "cleanup": {
+      const op = sub ?? "view";
+      if (!["view", "preview", "sweep", "empty", "restore"].includes(op) || (op === "restore" && !rest[0])) throw new Error("usage: agentown cleanup [view|preview|sweep|empty|restore ITEM]");
+      return applied(await api.post("/api/tools/cleanup/invoke", { args: { op, ...(op === "restore" ? { itemId: rest[0] } : {}) } }));
+    }
+    case "permission": {
+      const { one, pos } = parseFlags(rest);
+      if (sub !== "ask" || !pos[0] || !one("reason")) throw new Error("usage: agentown permission ask ACTION --reason WHY [--scope self|team|department|org]");
+      return applied(await api.post("/api/tools/request_permission/invoke", { args: { action: pos[0], reason: one("reason"), ...(one("scope") ? { scope: { kind: one("scope") } } : {}) } }));
+    }
     case "task":
       return task(api, sub, rest);
     default:
@@ -307,6 +358,7 @@ async function browser(api: AgentownClient, pc: string | undefined, rest: string
   if (action === "key") a.key = pos[0];
   if (action === "scroll" && pos[0]) a.dy = Number(pos[0]);
   if (action === "tab") a.index = Number(pos[0]);
+  if (action === "upload") Object.assign(a, { path: pos[0] }, pos[1] ? { ref: pos[1] } : {});
   // A computer that is off starts on first use: that can take a minute or two.
   const r = await api.request("POST", "/api/tools/browser/invoke", { args: a }, false, 180_000);
   return out(r.result.page);
@@ -325,6 +377,7 @@ async function computer(api: AgentownClient, pc: string | undefined, rest: strin
   else if (word === "stream") request = args[0] === "stop" ? { app: "stream", action: "stop" } : { app: "stream", action: "play", ...(args[0] ? { url: args[0] } : {}) };
   else if (word === "camera") request = { app: "camera", action: "look", ...(args.length ? { question: args.join(" ") } : {}) };
   else if (word === "terminal" && args.length) request = { app: "terminal", action: "run", command: args.join(" ") };
+  else if (word === "look" && args[0]) request = { app: "terminal", action: "look", path: args[0], ...(args.length > 1 ? { question: args.slice(1).join(" ") } : {}) };
   else if (word === "mcp") request = args[1] ? { app: "mcp", action: "call", connector: args[0], tool: args[1], args: JSON.parse(args[2] ?? "{}") } : { app: "mcp", action: "tools", connector: args[0] };
   else if (word) request = { text: rest.join(" ") };
   else throw new Error('usage: agentown computer list | agentown computer PC "REQUEST" | show APP | stream URL|stop | camera [QUESTION] | terminal COMMAND | mcp CONNECTOR [TOOL JSON]');
@@ -334,15 +387,71 @@ async function computer(api: AgentownClient, pc: string | undefined, rest: strin
   return out(r.result.result);
 }
 
+/** A gateway call's answer, or how to wait for the one who may approve it. */
+function applied(r: { status: string; proposalId?: string; result?: unknown }) {
+  if (r.status === "pending") {
+    return out(`You may not do this yourself, so it was asked of the owner (proposal ${r.proposalId}). If the rest of your work depends on it, stop now with a reply starting "BLOCKED: waiting for approval"; the task resumes with the decision.`);
+  }
+  return out(r.result);
+}
+
+const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+/** "mon-fri=09:00,sat=10:30" as seven times, Sunday first. */
+function weeklyTimes(spec: string): Array<string | null> {
+  const times: Array<string | null> = Array(7).fill(null);
+  for (const part of spec.split(",").map((x) => x.trim()).filter(Boolean)) {
+    const m = part.toLowerCase().match(/^([a-z]{3})(?:-([a-z]{3}))?=(\d{2}:\d{2})$/);
+    const a = m ? WEEKDAYS.indexOf(m[1]!) : -1;
+    const b = m?.[2] ? WEEKDAYS.indexOf(m[2]) : a;
+    if (!m || a < 0 || b < 0) throw new Error(`--weekly: "${part}" is not like mon-fri=09:00 or sat=10:30`);
+    for (let d = a; ; d = (d + 1) % 7) {
+      times[d] = m[3]!;
+      if (d === b) break;
+    }
+  }
+  return times;
+}
+
+async function schedule(api: AgentownClient, sub: string | undefined, rest: string[]) {
+  const { one } = parseFlags(rest);
+  if (sub === "rm" && rest[0]) return applied(await api.post("/api/tools/schedule/invoke", { args: { op: "delete", id: rest[0] } }));
+  if (sub !== "add") throw new Error("usage: agentown schedule add ... | agentown schedule rm ID (see agentown help)");
+  const weekly = one("weekly");
+  const once = one("once")?.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})$/);
+  if (!weekly === !one("once") || (one("once") && !once)) throw new Error("schedule add needs --weekly \"mon-fri=09:00\" or --once 2026-10-20T09:00");
+  const object = one("object");
+  if (!one("title") || !object === !one("agent")) throw new Error("schedule add needs --title and --object ID --action A, or --agent ID --prompt P");
+  // The calendar's own time zone: the one its jobs already use, else this runtime's.
+  let timeZone = one("tz");
+  if (!timeZone) {
+    const today = new Date().toISOString().slice(0, 10);
+    const cal = (await api.post("/api/tools/calendar/invoke", { args: { from: today, to: today } })).result as { jobs: Array<{ builtin: string | null; job: { timeZone: string } }> };
+    timeZone = (cal.jobs.find((j) => !j.builtin) ?? cal.jobs[0])?.job.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+  }
+  const job = {
+    title: one("title"),
+    who: object ? { type: "object", id: object } : { type: "agent", id: one("agent") },
+    ...(object ? { action: one("action") } : { prompt: one("prompt") }),
+    repeat: weekly ? { type: "weekly", times: weeklyTimes(weekly) } : { type: "once", date: once![1], at: once![2] },
+    timeZone,
+  };
+  const r = await api.post("/api/tools/schedule/invoke", { args: { op: "create", job } });
+  if (r.status === "applied") out(`on the calendar (${timeZone}):`);
+  return applied(r);
+}
+
 async function agent(api: AgentownClient, sub: string | undefined, rest: string[]) {
   const { pos, flags, one } = parseFlags(rest);
   const id = pos[0];
   if (!id || pos.length !== 1) throw new Error(`agent ${sub} requires one agent ID`);
   const path = `/api/agents/${encodeURIComponent(id)}`;
   if (sub === "get") return out(await api.get(path));
-  if (sub !== "configure") throw new Error(`unknown agent command ${sub}\n${HELP}`);
+  if (sub !== "configure" && sub !== "suggest") throw new Error(`unknown agent command ${sub}\n${HELP}`);
   const fields = { credential: "credentialId", model: "model", effort: "effort", instructions: "instructions", "max-turns": "maxTurns", "context-limit": "contextLimit" } as const;
   const change: Record<string, unknown> = {};
+  const reason = one("reason");
+  if (sub === "suggest") delete flags.reason;
   for (const flag of Object.keys(flags)) {
     if (!Object.hasOwn(fields, flag)) throw new Error(`unknown configuration flag --${flag}`);
     const value = one(flag)!;
@@ -351,7 +460,12 @@ async function agent(api: AgentownClient, sub: string | undefined, rest: string[
     change[field] = ["maxTurns", "contextLimit"].includes(field) && value !== "none" ? Number(value)
       : value === "none" && ["credentialId", "model", "effort", "contextLimit"].includes(field) ? null : value;
   }
-  if (!Object.keys(change).length) throw new Error("agent configure requires at least one configuration flag");
+  if (!Object.keys(change).length) throw new Error(`agent ${sub} requires at least one configuration flag`);
+  if (sub === "suggest") {
+    // A person chose this agent's settings: the owner decides on a change.
+    if (!reason || change.instructions !== undefined) throw new Error("usage: agentown agent suggest ID [--credential K] [--model M] [--effort E] [--context-limit N] [--max-turns N] --reason WHY");
+    return applied(await api.post("/api/tools/suggest_config/invoke", { args: { agentId: id, ...change, reason } }));
+  }
   return out(await api.put(`${path}/config`, change));
 }
 

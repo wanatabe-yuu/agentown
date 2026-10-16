@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { addPart, duplicatePart, kindColors, recolorKind, removePart, updatePart } from "../src/office3d/kindEdit.ts";
 
 const { catalog } = splitInstanceConfig(readFileSync(new URL("../../../config/agentown.yaml", import.meta.url), "utf8"));
-const world: World = worldSchema.parse(parseTemplate(readFileSync(new URL("../../../config/templates/coffee-store.yaml", import.meta.url), "utf8"), catalog).doc.world);
+const world: World = worldSchema.parse(parseTemplate(readFileSync(new URL("../../../apps/server/test/fixtures/templates/coffee-store.yaml", import.meta.url), "utf8"), catalog).doc.world);
 const table = world.kinds["cafe-table"]!;
 const look = (k: World["kinds"][string]) => ("parts" in k.look ? k.look.parts : []);
 
