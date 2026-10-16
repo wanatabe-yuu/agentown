@@ -84,6 +84,7 @@ sudo agentownctl token      # owner token
 agentownctl status          # version, service, health
 sudo agentownctl logs       # journalctl -u agentown -f
 sudo agentownctl upgrade    # latest release, or: upgrade v0.2.0
+sudo agentownctl backup     # database + config + secret-key, see Backups
 sudo agentownctl rollback   # go back to the previous release (does not roll back the DB schema)
 sudo agentownctl uninstall  # remove Agentown and all its data; --all also removes k3s, PostgreSQL, Node.js, Docker
 ```
@@ -92,7 +93,7 @@ Optional variables: `AGENTOWN_VERSION=v0.1.0` to install a pinned release, `AGEN
 
 **Removing Agentown.** `sudo agentownctl uninstall` removes the service, files, database, agents, image and user. `--all` also removes what the installer added to the host (it records that at install time): k3s, PostgreSQL with **every** database on the host, Node.js, Docker. Hosts installed with 0.2.0 or earlier have no record, so `--all` assumes the installer added them. On those versions the host command has no `uninstall` yet: run `curl -fsSL https://github.com/wanatabe-yuu/Agentown/releases/latest/download/uninstall.sh | sudo bash`, or `agentownctl uninstall` from your machine.
 
-**Back up `/var/lib/agentown/secret-key`.** The API keys stored in the DB are encrypted with this key; lose the key and you lose the API keys.
+**Back up `/var/lib/agentown/secret-key`.** The API keys stored in the DB are encrypted with this key; lose the key and you lose the API keys. `sudo agentownctl backup` takes it together with the database (see Backups).
 
 ### Install from source (for development)
 
@@ -107,6 +108,34 @@ scripts/demo.sh                                          # CEO → leader → en
 ```
 
 When running from source in a real environment, set `AGENTOWN_SECRET_KEY` (32 bytes, base64: `openssl rand -base64 32`) instead of the auto-generated dev key file `.agentown/secret-key`. Store this key somewhere safe: lose the key and you lose the stored API keys.
+
+## Backups
+
+```bash
+sudo agentownctl backup                   # /var/backups/agentown/<UTC time>/
+sudo agentownctl backup /mnt/disk/agentown  # another folder
+```
+
+Each backup is a folder (mode 0700) with `agentown.dump` (PostgreSQL custom format, read back with `pg_restore --list` before the command succeeds), `agentown.yaml` and `secret-key`. The newest 14 are kept (`sudo AGENTOWN_BACKUP_KEEP=30 agentownctl backup` changes that). If the dump fails nothing is kept.
+
+The folder holds the database **and** the key that decrypts the stored API keys, so treat it as a secret: copy it off the VM (a bucket with its own access control, or encrypted first), because a backup on the same disk does not survive losing the VM. To run it every night:
+
+```bash
+echo '17 3 * * * root /usr/local/bin/agentownctl backup' | sudo tee /etc/cron.d/agentown-backup
+```
+
+**Restore** (this replaces the current database; take a fresh backup first if there is anything worth keeping):
+
+```bash
+B=/var/backups/agentown/<UTC time>
+sudo systemctl stop agentown
+sudo -u postgres psql -c "DROP DATABASE agentown" -c "CREATE DATABASE agentown OWNER agentown"
+sudo -u postgres pg_restore --no-owner --role=agentown -d agentown < $B/agentown.dump
+sudo install -m 0600 -o agentown -g agentown $B/secret-key /var/lib/agentown/secret-key
+sudo systemctl start agentown && agentownctl status
+```
+
+`agentown.yaml` is only needed on a new host (put it in `/etc/agentown/` after the installer ran). Pods of agents or teams that are not in the restored database are not removed for you: look at `sudo agentownctl kubectl get pods -A` and delete the stale ones with `sudo agentownctl kubectl delete pod -n <namespace> <pod>`.
 
 ## A public address through a Cloudflare tunnel (optional)
 

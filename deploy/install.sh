@@ -371,7 +371,8 @@ Open the UI from your own machine through an SSH tunnel (keep port 8080 closed):
   ssh -L 8080:localhost:8080 ${SUDO_USER:-$(logname 2>/dev/null || echo you)}@<this host>
   then browse to http://localhost:8080 and paste the owner token.
 
-Back up $STATE/secret-key: it encrypts the stored API keys.
+Back up: sudo agentownctl backup (database, config and $STATE/secret-key, which
+encrypts the stored API keys). Copy the result off this host.
 EOF
 if [ -n "$PUBLIC_IP" ]; then
   printf '\n\033[31mWARNING:\033[0m the primary address %s of this host is public. Block TCP 8080 from\nthe Internet (cloud firewall, security group or ufw): the UI has no TLS and only the owner token protects it.\n' "$HOST_IP"

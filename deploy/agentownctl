@@ -14,6 +14,9 @@ usage: agentownctl <command>
   restart           restart the server
   upgrade [vX.Y.Z]  install the latest (or given) signed release
   rollback          switch back to the previously installed release
+  backup [DIR]      database dump + secret-key + config into DIR/<UTC time>
+                    (default /var/backups/agentown; keeps the newest 14,
+                    AGENTOWN_BACKUP_KEEP changes that)
   kubectl ...       kubectl as cluster admin, for debugging (root, k3s only)
   uninstall [--all] [--yes]
                     remove Agentown and all its data; --all also removes what
@@ -48,6 +51,25 @@ case "${1:-}" in
     ln -sfn "releases/$(basename "$prev")" "$PREFIX/current.new" && mv -T "$PREFIX/current.new" "$PREFIX/current"
     systemctl restart agentown
     echo "rolled back to $(basename "$prev"); the agent image, cluster manifests and database schema were not rolled back"
+    ;;
+  backup)
+    need_root backup
+    dest="${2:-/var/backups/agentown}"
+    keep="${AGENTOWN_BACKUP_KEEP:-14}"
+    out="$dest/$(date -u +%Y%m%dT%H%M%SZ)"
+    umask 077 # the dump and the key that decrypts the stored API keys are secrets
+    mkdir -p "$out"
+    # Dump, then read it back: a dump that cannot be listed would only fail at restore time.
+    # shellcheck disable=SC2024 # the redirects are meant to be root's: postgres cannot write into the 0700 folder
+    if ! { sudo -u postgres pg_dump --format=custom agentown > "$out/agentown.dump" && sudo -u postgres pg_restore --list < "$out/agentown.dump" > /dev/null; }; then
+      rm -rf "$out"; echo "backup failed: the database could not be dumped" >&2; exit 1
+    fi
+    cp /etc/agentown/agentown.yaml "$out/"
+    if [ -f "$STATE/secret-key" ]; then cp "$STATE/secret-key" "$out/"; else echo "note: no $STATE/secret-key (AGENTOWN_SECRET_KEY is set elsewhere): keep that value yourself" >&2; fi
+    # Keep the newest $keep; only folders named like a backup are ever removed.
+    # shellcheck disable=SC2012
+    ls -1d "$dest"/[0-9]*T*Z | head -n "-$keep" | xargs -r rm -rf
+    echo "backup: $out"
     ;;
   kubectl) need_root kubectl; shift; exec k3s kubectl "$@" ;;
   uninstall)
