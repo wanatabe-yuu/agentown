@@ -1,14 +1,60 @@
+<div align="center">
+
 # Agentown
 
-An office of AI agents with a real hierarchy. Each agent has a durable identity, a role, a place in its team's runtime (a container/Pod with a persistent workspace) and **its own permissions, enforced by the server**: the titles CEO/leader/PO do not grant anything by themselves. You watch and steer the office through a web view (3D by default).
+**A company of AI agents you can walk through.**
+Agents with real jobs, real permissions and their own computers, working in a 3D office you design.
 
-- Decisions and assumptions: [`docs/DECISIONS.md`](docs/DECISIONS.md)
-- Running on GCP (machine sizing, adding nodes): [`docs/GCP.md`](docs/GCP.md)
-- Releases and supply chain (signatures, provenance, SBOM): [`docs/RELEASING.md`](docs/RELEASING.md)
+[Website](https://agentown.site) · [Docs](https://agentown.site/docs/) · [Marketplace](https://agentown.site/marketplace/) · [Create a world](https://agentown.site/worlds/)
+
+[![CI](https://github.com/wanatabe-yuu/agentown/actions/workflows/ci.yml/badge.svg)](https://github.com/wanatabe-yuu/agentown/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+![A coffee store run by agents: baristas, a baker, a roaster and the shop cat, with your conversations and activity on the right](docs/images/office.jpg)
+
+</div>
+
+## What it is
+
+Agentown runs an organization of AI agents on your own servers. Each agent is a lasting employee: a name, a job, a manager, a desk in the office, a workspace that survives restarts, and **permissions the server enforces**. A title like CEO or lead grants nothing by itself; only grants do. You watch and steer it all from the browser.
+
+- **A real hierarchy.** The CEO hires from the job templates it was allowed, leads hand out work to their team, workers do it and send it up for review. Each step is checked against the reporting tree as it is *now*.
+- **Agents use the whole world.** Coffee machines, wall calendars, a cleaning robot and a trash can, cameras, edit PCs with a real browser and terminal. They use what their permissions reach, and **ask you** for the rest: you approve once, or grant the permission for good.
+- **Their own computers.** A computer in the office is a real machine (a pod with Chromium, ffmpeg, yt-dlp, a terminal). Agents browse, upload, render video and look at what they made; you can watch the screen live and take over.
+- **Bring your own models.** Anthropic, OpenAI, Gemini, DeepSeek, Grok, Mistral, Groq, OpenRouter, Together or any compatible endpoint. Keys stay on the server; agents reach models through a broker and never see a key. An agent nobody configured picks a model and context that fit its task; once you set one, it can only suggest.
+- **You stay in charge.** A private **System chat** reads everything and changes nothing on its own: it asks agents, or hands work to the CEO after you confirm. Every allowed *and* denied action lands in the audit log.
+- **Twelve languages.** English, Tiếng Việt, 中文, 日本語, 한국어, Español, Français, Deutsch, Português, Русский, Bahasa Indonesia, ไทย, for the screens and for the language each organization works in.
+
+## Worlds
+
+A **world** is a whole organization in one file: departments, jobs and what each may do, the first agents, and the office itself. Start from the [marketplace](https://agentown.site/marketplace/), or [write your own](https://agentown.site/worlds/) and publish it from a GitHub repository.
+
+![Create a new world: the built-in Agentown world and the official worlds from the marketplace](docs/images/create-world.jpg)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/world-factory.jpg" alt="Factory"><br><b>Factory</b>: a conveyor line, robot arms and CNC cells, a quality lab and a maintenance shop.</td>
+    <td width="50%"><img src="docs/images/world-video-studio.jpg" alt="Video studio"><br><b>Video studio</b>: a sound stage, edit suite and sound booth; the team researches, cuts and publishes videos.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/world-hospital.jpg" alt="Hospital"><br><b>Hospital</b>: admissions, pharmacy, scheduling and medical records.</td>
+    <td><img src="docs/images/world-lab.jpg" alt="Science lab"><br><b>Science lab</b>: a wet lab with a pipetting robot, an instrument room and a data room.</td>
+  </tr>
+</table>
+
+Worlds can carry their own art (`.glb` models and textures). It travels with the world into every organization made from it, and marketplace art is checked by its sha256 before it is used. People with `org.design` edit the office in place: drag furniture, add rooms, doors, stairs, kinds of things and how each job looks.
 
 ## Install
 
-**A cluster, from your own machine.** Install the `agentownctl` CLI, describe your VMs in a cluster file, and let it set them up over SSH:
+Ubuntu 24.04 on x86_64. The installer verifies the release's Sigstore signature and checksums before installing anything, then runs the `agentown` service (k3s, PostgreSQL, Node 24).
+
+**A single server:**
+
+```bash
+curl -fsSL https://agentown.site/install.sh | sudo bash
+```
+
+**A cluster, from your own machine**, on VMs you already have ([`cli/README.md`](cli/README.md)):
 
 ```bash
 curl -fsSL https://agentown.site/cli.sh | sh     # macOS / Linux; Windows: .exe on the release page
@@ -17,192 +63,71 @@ agentownctl up                                    # installs the server, joins t
 agentownctl ui                                    # tunnel to the web UI at http://localhost:8080
 ```
 
-See [`cli/README.md`](cli/README.md).
+Then open the UI with the owner token, add an API key under **API keys**, and create your first world. Running the installer again upgrades; `agentownctl uninstall` removes it. Sizing, backups, upgrades and TLS: [the docs](https://agentown.site/docs/) and [`docs/GCP.md`](docs/GCP.md).
 
-**A single server, by hand.** SSH into the VM and run:
-
-```bash
-curl -fsSL https://agentown.site/install.sh | sudo bash
-```
-
-Both paths use the same installer. It needs Ubuntu 24.04 on x86_64, installs the latest release built by GitHub Actions, verifies its Sigstore signature and checksums before installing anything, and runs the `agentown` service (k3s, PostgreSQL, Node 24). Running it again upgrades; `agentownctl uninstall` removes everything again (`--all` also removes k3s, PostgreSQL, Node.js and Docker where the installer added them). Details in [`docs/GCP.md`](docs/GCP.md).
-
-## Status
-
-| Part | Status | Evidence |
-|---|---|---|
-| Policy engine (default deny, scopes over the reporting tree, delegation) | ✅ | `packages/core/test/policy.test.ts` (18 tests) |
-| Org API (spawn, tasks, leases, artifacts, audit, SSE, terminal) | ✅ | `apps/server/test/api.test.ts` (31 tests, real Postgres) |
-| Per-agent API key and model | ✅ | credential tests in `api.test.ts`; a bad key is rejected by the real provider |
-| One runtime (Pod) per team, members as processes inside it; optionally a dedicated node | ✅ scheduled on real k3s | `k8s-placement-check.ts`: a second dedicated agent is refused a shared node; team runtimes: [`docs/ARCHITECTURE_V2.md`](docs/ARCHITECTURE_V2.md) |
-| Real agents running in their own runtime (Docker driver) | ✅ | `scripts/demo.sh`, `verify-runtime.ts` (26 checks) |
-| Demo CEO → leader → engineer → QA → owner review | ✅ | `scripts/demo.sh` |
-| k3s: controller RBAC, Pod Security, admission policy | ✅ on a real API server | `scripts/verify-k8s-guardrails.sh` (18 checks) |
-| `KubernetesDriver` creates SA/PVC/Secret/Pod | ✅ on a real API server | `apps/server/src/tools/k8s-driver-smoke.ts` |
-| Agent Pods **running** on k3s | ✅ observed on the dev VM (2026-10-16) | team runtimes and a computer's Pod `Running` on k3s 1.30, 54 tasks `done` in its database; the build sandbox itself still cannot run Pods |
-| LLM adapters (`claude`, OpenAI-compatible) | ✅ with real keys on the dev VM; ⚠️ not every provider | 71 task runs with model usage recorded there (an Anthropic key and a custom endpoint configured); the loop is also tested against local mocks (`apps/harness/test`), and each OpenAI-compatible provider has not been run live |
-| 2D office UI + roster + task/log/permission/terminal panels | ✅ | checked with headless Chromium |
-
-## Architecture
-
-Owners also have an independent [Owner chat](docs/OWNER_CHAT.md) beside New task: persistent conversations, saved provider configuration, world-management tools, confirmations, token usage and automatic context compaction.
+## How it works
 
 ```mermaid
 flowchart LR
-  U["Web: 2D office<br/>(holds only a person's token, in an HttpOnly cookie)"] -- REST / SSE / WS ticket --> S
-  subgraph S["apps/server"]
-    API["Org service<br/>authorize() on every mutation"] --> DB[(Postgres)]
-    CTRL["Runtime controller<br/>desired ↔ observed"]
+  U["Browser<br/>3D office, chats, panels"] -- "REST · SSE · WebSocket" --> S
+  subgraph S["Agentown server"]
+    API["Org service<br/>authorize() on every call"] --> DB[(PostgreSQL)]
+    CTRL["Runtime controller"]
+    MB["Model broker<br/>holds the keys"]
   end
-  CTRL -- RuntimeDriver --> K["k3s (target)<br/>or Docker (dev)"]
-  K --> T1["team runtime<br/>agent-team-eng-…-g1"] & T2["team runtime<br/>agent-team-ops-…-g2"]
-  T1 & T2 -- "each member's own token<br/>(agentown CLI / harness)" --> API
+  CTRL --> K["k3s"]
+  K --> T1["Team runtime<br/>one pod per team"] & T2["Team runtime"] & PC["Computer<br/>browser · terminal"]
+  T1 & T2 -- "each agent's own token" --> API
+  T1 & T2 -- "model calls" --> MB
 ```
 
-```
-packages/core      domain contract: actions, scopes, policy engine, config schema, task states
-apps/server        Fastify + Postgres: org service, audit, SSE, terminal proxy, controller, drivers
-apps/harness       runs inside the runtime: claim → run → report loop, script/claude adapters, `agentown` CLI, playbooks
-apps/web           React + Canvas 2D: office, agent roster, panels, terminal (xterm)
-config/agentown.yaml  owner-authored org config: departments, runtime catalog, policy profiles, templates, bootstrap
-cli/               agentownctl: cluster CLI (Go) that sets up VMs over SSH from your machine
-deploy/            install.sh (server installer), install-cli.sh, host agentownctl, gcp/setup-vm.sh
-scripts/           dev-k3s.sh, dev-server.sh, demo.sh, verify-k8s-guardrails.sh, package-release.sh, build-cli.sh
-```
+- **One pod per team.** Each agent runs as a process in its team's runtime, with its own token and workspace. One organization gets one Kubernetes namespace (`agentown-o-<id>`), with Pod Security `restricted`, NetworkPolicies, quotas, and an admission policy that refuses any pod not shaped like an Agentown runtime.
+- **The server holds the power.** It runs with a controller ServiceAccount limited to Agentown's namespaces, not cluster-admin. Agents act only through the API, so calling the API directly bypasses nothing.
 
-## Run from source (Linux, Docker driver)
+| Path | What lives there |
+|---|---|
+| `packages/core` | The contract: actions, scopes, the policy engine, config and world schemas |
+| `apps/server` | Fastify + PostgreSQL: org service, audit, events, controller, model broker, computers |
+| `apps/harness` | Runs inside a team runtime: the claim → run → report loop, model adapters, the `agentown` CLI agents use |
+| `apps/web` | React + three.js: the office, chats, tasks, terminals and editors |
+| `apps/browser` | The computer image: Chromium, ffmpeg, yt-dlp, `render-shots` |
+| `cli/` | `agentownctl`, the cluster CLI (Go) |
+| `deploy/`, `scripts/` | The installer, release packaging, dev and verification scripts |
 
-Requirements: Node 24, pnpm, Docker, PostgreSQL 16.
+## Permissions in one minute
+
+- The actor always comes from the token (an owner, a person or an agent), never from the request body.
+- `authorize(actor, action, target)` **denies by default**. A grant is an action over a scope: `self`, `direct-reports`, `descendants`, `team`, `department`, `org`, or named agents, projects or departments. Scopes are evaluated against the current reporting tree.
+- Hiring only from the job templates a grant lists; hiring never grants. Delegation only from delegable grants, and only into a scope that sits inside the parent's; a child grant dies with its parent.
+- What an agent may not do becomes a **request**: to its lead, or to the owner. Approved, it runs once; a permission request, approved, becomes a grant.
+- People get role presets (Viewer, Reviewer, Engineering manager…) as a starting set, then permission by permission. Someone who manages people can only give what they hold themselves.
+
+See `policyProfiles` in [`config/agentown.yaml`](config/agentown.yaml) for a full example, and [`docs/DECISIONS.md`](docs/DECISIONS.md) for why it is built this way.
+
+## Run from source
+
+Node 24, pnpm, PostgreSQL 16 and Docker (the Docker driver is for development; production runs on k3s).
 
 ```bash
 pnpm install
-# Postgres: user/password/db = agentown (override with DATABASE_URL)
 createuser -s agentown; createdb -O agentown agentown; createdb -O agentown agentown_test
-
-pnpm --filter @agentown/harness image      # build the agent runtime image: agentown/harness:<version>
+pnpm --filter @agentown/harness image      # the agent runtime image
 pnpm build:web
 AGENTOWN_RUNTIME_DRIVER=docker scripts/dev-server.sh
-# first start: the owner token is written to .agentown/owner-token
 ```
 
-Open http://localhost:8080 and paste the owner token (the browser keeps it in an HttpOnly cookie). In another terminal:
+Open http://localhost:8080 and paste the owner token from `.agentown/owner-token`. Hot reload for the UI: `pnpm dev:web` (port 5173). Tests and typecheck: `pnpm check`. On k3s: `scripts/dev-k3s.sh up`, then `scripts/verify-k8s-guardrails.sh`.
 
-```bash
-scripts/demo.sh "Agents that ship"                         # owner → CEO → leader → engineer + QA
-npx tsx apps/server/src/tools/verify-runtime.ts            # recovery, in-runtime permissions, network, terminal
-pnpm check                                                 # typecheck + unit/integration tests
-```
+## Status
 
-UI development with hot reload: `pnpm dev:web` (http://localhost:5173, proxies `/api` to :8080).
+Agentown is pre-1.0 (0.5.1) and moving fast. It runs real agents on k3s with real model keys. Known limits:
 
-## Run on k3s
+- The Docker driver has no admission layer and does not block agents' Internet egress; use it for development only.
+- On k3s, agents may reach public HTTPS (port 443) only, so a custom model endpoint must be public HTTPS unless you widen the NetworkPolicy.
+- A single server process; events fan out in memory.
 
-```bash
-# k3s already installed on the host (curl -sfL https://get.k3s.io | sh -), run as root:
-AGENTOWN_K3S_MODE=native scripts/dev-k3s.sh up
-# or k3s inside Docker (k3d-style):
-scripts/dev-k3s.sh up
+## More
 
-scripts/verify-k8s-guardrails.sh                           # RBAC + admission, run with the controller's rights
-scripts/dev-server.sh                                      # AGENTOWN_RUNTIME_DRIVER=kubernetes by default
-```
-
-`dev-k3s.sh` creates one namespace per department (Pod Security `restricted`), Roles limited to those namespaces for the `agentown-controller` ServiceAccount, NetworkPolicies that block ingress and allow egress only to DNS/the API/HTTPS, ResourceQuotas, and a `ValidatingAdmissionPolicy` that rejects any Pod not shaped like an Agentown runtime (image outside the catalog, hostPath, host namespaces, a k8s token, a ServiceAccount that doesn't match the agent). The server uses the **controller SA's** kubeconfig, not cluster-admin.
-
-## Per-agent API keys and models
-
-- The owner adds keys in the UI (**API keys**). The server checks each key with the provider and stores its model list. Keys are encrypted with AES‑256‑GCM; owners and agents see only a name and **Hidden**, with no key fragments. A key can be restricted to certain departments.
-- Providers:
-
-  | Provider | How agents call it |
-  | --- | --- |
-  | Anthropic (Claude) | Anthropic SDK, Anthropic-defined `bash` tool. A key created at the organization level also needs its **workspace ID** (`wrkspc_…`). |
-  | OpenAI, DeepSeek, xAI (Grok), Google Gemini, Mistral, Groq, OpenRouter, Together AI | OpenAI-compatible Chat Completions with a `bash` function, at the provider's fixed endpoint. |
-  | Custom URL | Anthropic/Claude or OpenAI-compatible gateway. Choose the API protocol, base URL, and `x-api-key`, Bearer, or custom authentication header. The saved key supplies the header value. |
-
-  Agents are only as good as the model's tool use, so pick a model that handles function calling well. With the Kubernetes driver, agent pods can reach only **public** addresses on **port 443** (see the NetworkPolicy above), so a custom endpoint must be public HTTPS; a model server on a private network or another port works with the Docker driver, or after you widen the `agent-isolation` NetworkPolicy yourself.
-- Each agent picks **one key and one of that key's models**, plus effort, max turns and its own instructions (the agent's **Config** tab, or at hiring time). Changing them is the `agent.configure` action: leaders for their direct reports, the CEO for its whole subtree.
-- Agents can use `agentown capabilities` to see their configuration targets, `agentown credentials` to list approved key IDs/models, and `agentown agent configure ID --credential ID --model MODEL --effort medium`. `whoami.can` describes rights on the caller itself; it does not describe rights on its reports. Every call stays in the caller's organization and the server checks the target's permissions and credential department scope.
-- Keys stay on the server. Agent pods/containers call the authenticated model broker, scoped to their current runtime generation and configured model; no provider key is placed in runtime environment or Kubernetes Secrets. Revocation is checked on every model request. The controller upgrades existing runtimes when idle. Custom keys are bound to their saved URL: changing endpoint requires entering a new key. Provider responses, API text, historical logs/chat and terminal output filter known key values. This protects application owners/agents; a host/database administrator with the server master key remains outside that boundary.
-
-## Permission model (summary)
-
-- The actor always comes from the token (`Authorization: Bearer`, or the browser's HttpOnly session cookie): the owner, another person, or an agent. A client-supplied `actorId` is never trusted.
-- `authorize(actor, action, target)` is **default deny**; only grants give rights. Actions: `org.view`, `task.view|create|assign|review`, `agent.spawn|update|retire|configure`, `runtime.control|logs|exec`, `permission.delegate`, and for people `credential.manage`, `audit.view`, `user.manage`.
-- Scopes: `self`, `direct-reports`, `descendants`, `team`, `department`, `org`, `agents:[…]`, `projects:[…]`, `departments:[…]`, evaluated against the **current** reporting graph.
-- Spawning only from templates listed in the grant; a template carries an owner-approved permission bundle. Spawning ≠ granting.
-- Delegation only from `delegable` grants; the new scope must provably sit inside the parent scope; a child grant dies with its parent or when the grantee leaves the tree.
-- A `script` task is exec, so it needs `runtime.exec`. A playbook shipped in the image only needs `task.create`.
-- Terminal: `POST /api/agents/:id/terminal-sessions` (checks `runtime.exec`) → single-use ticket → WebSocket; the server closes the session when permissions or the generation change.
-- The audit log records both allowed and denied calls (actor, action, target, reason, policy revision) and never contains tokens.
-
-Example permission matrix: see `policyProfiles` in [`config/agentown.yaml`](config/agentown.yaml). For example, the CEO has **no** `runtime.exec`; a leader has exec on `direct-reports`; the PO can only work with tasks in the `website` project; a worker only has `self`.
-
-## Users and permissions
-
-- The owner holds every permission. Everyone else is invited under **Users** (or `POST /api/users`) and gets a token shown once; they paste it on the sign-in screen.
-- `humanRoles` in [`config/agentown.yaml`](config/agentown.yaml) are **presets** (`admin`, `eng-manager`, `reviewer`, `viewer`): picking one copies its permissions onto the person, and each permission can then be added or removed on its own. "Apply preset" replaces them all.
-- A person's permission is an action plus a scope: `org`, `departments:[…]`, `agents:[…]` or `projects:[…]` (people sit outside the reporting tree, so tree-relative scopes do not apply). `credential.manage`, `audit.view` and `user.manage` are org-wide.
-- Someone with `user.manage` can only give permissions they hold themselves, cannot change their own access or the owner's, and cannot give `user.manage` (only the owner can).
-- Disabling a person or issuing a new token locks the old token out at once; open terminals close on the next re-check.
-- The web UI shows only what the signed-in person may do (`GET /api/me`, the per-agent `can` map and the per-task `can`); the server re-checks every request regardless.
-- Owner-only, by design: tasks with no assignee, hiring at the top of the tree or into another department, detaching an agent from the tree.
-
-## Organizations, templates and the 3D office
-
-- One install hosts many organizations. The instance admin creates them from a template (Organizations); each runs in its own namespace `agentown-o-<id>`, created by the cluster provisioner (`agentown-provision.timer`, or `scripts/dev-k3s.sh provision`).
-- A fresh install has no world. The admin creates the first one from **Create world**: the built-in Agentown template, a world from the [marketplace](https://agentown.site/marketplace/) (official ones such as the coffee store and video studio, verified and community worlds published on GitHub), or an uploaded YAML file ([how to write one](https://agentown.site/worlds/)). The [marketplace index](https://github.com/wanatabe-yuu/agentown-marketplace) lives on GitHub; the server downloads worlds only from raw.githubusercontent.com (or the index's own host) and only with the checksum the index lists; `AGENTOWN_MARKETPLACE` points at another index, `off` turns it off. The owner edits their organization in the UI (Organization) and can save it as a template, export it as YAML or import one.
-- A template's optional `world` decides the office: `floors` → `rooms` (position and size in meters, which department sits there), `kinds` of objects (`character` people or animals, `static` furniture, `dynamic` things that move or glow), placed `objects`, and `avatars` per job title. Objects are composed of primitives (`box`, `cylinder`, `sphere`, `cone`, `torus`) or a built-in character (`person`, `cat`, `dog`, `robot`); behaviors are `spin`, `bob`, `pulse`, `blink`, `sway`, `wander`, `roam`. Rooms have `doors`; `links` are stairs or elevators between floors; `zones` name groups of rooms. A kind's `access` (`all`, `own-department`, `own-room`, a list of rooms, or a zone) says where it may walk: things that `roam` find their way through doors and stairs, and idle agents whose look can roam take a walk and return to their desk when work arrives. Access is only what the office shows; real permissions are grants. See the coffee store on the [marketplace](https://agentown.site/marketplace/). Without a world, every department gets a room on one floor.
-- People with `org.design` upload art (Art: self-contained `.glb` models, PNG/JPEG/WebP textures; checked by their bytes) and edit the world in the office (Edit world): select objects and drag or turn them, add from a palette, edit rooms, doors, floors, stairs, zones and kinds (built-in characters, shapes, uploaded models, behaviors, access), and how each job looks. Edits are validated as you go and saved as a new revision; `org.design` never grants permissions.
-- The office is drawn with three.js: pan (left drag), turn (right drag), zoom (wheel); pick a floor, or a room (list or its name) to fly there.
-
-## Main API
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/office/snapshot` | snapshot + `cursor` |
-| `GET /api/events?after=<cursor>` | SSE deltas; reconnect = fresh snapshot + cursor |
-| `GET/POST /api/agents`, `PATCH /api/agents/:id` | list / spawn from a template (idempotency key) / rename, change reporting line |
-| `POST /api/agents/:id/pause|resume` | intake of new work |
-| `POST /api/agents/:id/runtime/start|stop|restart` | runtime (restart = new generation) |
-| `POST /api/agents/:id/retire` | retire (optional `purgeWorkspace`) |
-| `GET /api/agents/:id/logs` | work log with secrets filtered out |
-| `POST /api/agents/:id/terminal-sessions` | terminal ticket |
-| `POST /api/tasks`, `/api/tasks/:id/assign|cancel|retry|review` | task lifecycle |
-| `POST /api/grants`, `DELETE /api/grants/:id` | delegate / revoke |
-| `POST /api/session`, `DELETE /api/session` | browser sign-in (token → HttpOnly cookie) / sign-out |
-| `GET /api/me` | who am I, org-level permissions, agents I may give tasks / shell work to |
-| `GET/POST /api/users`, `PATCH /api/users/:id`, `POST /api/users/:id/token` | people: list / invite / rename, disable, apply a role preset / new token (`user.manage`) |
-| `POST /api/users/:id/grants`, `DELETE /api/users/:id/grants/:gid`, `GET /api/roles` | a person's permissions, one by one; role presets |
-| `POST /api/runtime/heartbeat`, `/api/runs/claim`, `/api/runs/:id/*` | for the harness (agent token + generation) |
-| `GET /api/audit` | audit log (`audit.view`) |
-
-## Acceptance criteria
-
-- [x] Each character ↔ one `agentId`; a restart never creates a duplicate employee
-- [x] The CEO spawns from the presets it was granted; a repeated request (idempotency key) does not create a duplicate agent
-- [x] Leader A controls the reports it was granted; it cannot control the CEO, leader B or B's staff
-- [x] The PO has no terminal
-- [x] Workers cannot spawn, grant, or read data outside their rights
-- [x] Calling the API directly does not bypass permissions (every check is server-side; tests call the API directly)
-- [x] Workloads with host mounts, unknown images or the wrong ServiceAccount are rejected by admission (real k3s API server)
-- [x] Workspace and history survive a runtime replacement
-- [x] Runtime lost mid-task: exactly one `lost` run + one retry, no duplicate worker
-- [x] UI reconnect: snapshot + cursor; a stale heartbeat shows as offline
-- [x] The terminal checks the right actor/target; changing the reporting line closes open sessions
-- [x] Audit has actor/action/target/result and leaks no secrets
-- [x] End-to-end demo with real agents (Docker driver)
-- [ ] Agent Pods running on real k3s: needs an ordinary Linux host
-- [ ] LLM agents running against the real API: needs an API key (add it in the UI → API keys)
-
-## Known limitations
-
-- The Docker driver has no admission layer: the guarantee rests on the server being the only holder of the Docker socket. Agent tokens live in container environment variables (readable by anyone with the Docker socket). Agents' Internet egress is not blocked in Docker mode (only agent ↔ agent traffic is).
-- The k3s NetworkPolicy allows HTTPS egress to the Internet (for the LLM adapter); tighten it per preset if needed.
-- A single server process; SSE fan-out is in memory. Multiple instances would need LISTEN/NOTIFY or a broker.
-- If you reset the DB while agent containers are still running, delete `.agentown/runtime-secrets/` so the controller issues new tokens.
-
-## Contributing & license
-
-- Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md) · Reporting security issues: [SECURITY.md](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
-- License: [MIT](LICENSE)
+- [Docs](https://agentown.site/docs/): install, operate, back up, upgrade, troubleshoot
+- [Create a world](https://agentown.site/worlds/) · [System chat](docs/OWNER_CHAT.md) · [Team runtimes](docs/ARCHITECTURE_V2.md) · [Releases and supply chain](docs/RELEASING.md)
+- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · License: [MIT](LICENSE)
