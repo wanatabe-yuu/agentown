@@ -1,6 +1,6 @@
 # Agentown
 
-An office of AI agents with a real hierarchy. Each agent has a durable identity, a role, its own runtime (a container/Pod with a persistent workspace) and **its own permissions, enforced by the server**: the titles CEO/leader/PO do not grant anything by themselves. You watch and steer the office through a 2D web view.
+An office of AI agents with a real hierarchy. Each agent has a durable identity, a role, a place in its team's runtime (a container/Pod with a persistent workspace) and **its own permissions, enforced by the server**: the titles CEO/leader/PO do not grant anything by themselves. You watch and steer the office through a web view (3D by default).
 
 - Decisions and assumptions: [`docs/DECISIONS.md`](docs/DECISIONS.md)
 - Running on GCP (machine sizing, adding nodes): [`docs/GCP.md`](docs/GCP.md)
@@ -27,20 +27,20 @@ curl -fsSL https://agentown.site/install.sh | sudo bash
 
 Both paths use the same installer. It needs Ubuntu 24.04 on x86_64, installs the latest release built by GitHub Actions, verifies its Sigstore signature and checksums before installing anything, and runs the `agentown` service (k3s, PostgreSQL, Node 24). Running it again upgrades; `agentownctl uninstall` removes everything again (`--all` also removes k3s, PostgreSQL, Node.js and Docker where the installer added them). Details in [`docs/GCP.md`](docs/GCP.md).
 
-## Status (v0.1)
+## Status
 
 | Part | Status | Evidence |
 |---|---|---|
 | Policy engine (default deny, scopes over the reporting tree, delegation) | ✅ | `packages/core/test/policy.test.ts` (18 tests) |
 | Org API (spawn, tasks, leases, artifacts, audit, SSE, terminal) | ✅ | `apps/server/test/api.test.ts` (31 tests, real Postgres) |
 | Per-agent API key and model | ✅ | credential tests in `api.test.ts`; a bad key is rejected by the real provider |
-| One Pod per agent; optionally a dedicated node | ✅ scheduled on real k3s | `k8s-placement-check.ts`: a second dedicated agent is refused a shared node |
+| One runtime (Pod) per team, members as processes inside it; optionally a dedicated node | ✅ scheduled on real k3s | `k8s-placement-check.ts`: a second dedicated agent is refused a shared node; team runtimes: [`docs/ARCHITECTURE_V2.md`](docs/ARCHITECTURE_V2.md) |
 | Real agents running in their own runtime (Docker driver) | ✅ | `scripts/demo.sh`, `verify-runtime.ts` (26 checks) |
 | Demo CEO → leader → engineer → QA → owner review | ✅ | `scripts/demo.sh` |
 | k3s: controller RBAC, Pod Security, admission policy | ✅ on a real API server | `scripts/verify-k8s-guardrails.sh` (18 checks) |
 | `KubernetesDriver` creates SA/PVC/Secret/Pod | ✅ on a real API server | `apps/server/src/tools/k8s-driver-smoke.ts` |
-| Agent Pods **running** on k3s | ⚠️ not yet observed | the build sandbox cannot run Pods; see DECISIONS |
-| LLM adapter (`claude`) | ⚠️ not yet run with a real key | the tool-use loop is tested against a local mock of the Messages API (`apps/harness/test`) |
+| Agent Pods **running** on k3s | ✅ observed on the dev VM (2026-10-16) | team runtimes and a computer's Pod `Running` on k3s 1.30, 54 tasks `done` in its database; the build sandbox itself still cannot run Pods |
+| LLM adapters (`claude`, OpenAI-compatible) | ✅ with real keys on the dev VM; ⚠️ not every provider | 71 task runs with model usage recorded there (an Anthropic key and a custom endpoint configured); the loop is also tested against local mocks (`apps/harness/test`), and each OpenAI-compatible provider has not been run live |
 | 2D office UI + roster + task/log/permission/terminal panels | ✅ | checked with headless Chromium |
 
 ## Architecture
@@ -55,8 +55,8 @@ flowchart LR
     CTRL["Runtime controller<br/>desired ↔ observed"]
   end
   CTRL -- RuntimeDriver --> K["k3s (target)<br/>or Docker (dev)"]
-  K --> A1["agent-ceo-g1"] & A2["agent-lead-eng-g1"] & A3["agent-a-…-g3"]
-  A1 & A2 & A3 -- "the agent's own token<br/>(agentown CLI / harness)" --> API
+  K --> T1["team runtime<br/>agent-team-eng-…-g1"] & T2["team runtime<br/>agent-team-ops-…-g2"]
+  T1 & T2 -- "each member's own token<br/>(agentown CLI / harness)" --> API
 ```
 
 ```

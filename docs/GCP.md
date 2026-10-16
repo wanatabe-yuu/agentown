@@ -36,7 +36,7 @@ gcloud compute firewall-rules create agentown-internal --network=default \
   --allow=tcp:6443,udp:8472,tcp:10250,tcp:8080 --source-tags=agentown --target-tags=agentown
 ```
 
-**Do not open port 8080 to the Internet** (this version has no TLS or user login yet). Open the UI through an SSH tunnel:
+**Do not open port 8080 to the Internet**: the server speaks plain HTTP (people sign in with a token, kept in an HttpOnly cookie, but nothing encrypts the traffic). Open the UI through an SSH tunnel, or put a TLS-terminating proxy or tunnel in front of it (see "A public address through a Cloudflare tunnel" below):
 
 ```bash
 gcloud compute ssh agentown-1 --zone=$ZONE -- -L 8080:localhost:8080

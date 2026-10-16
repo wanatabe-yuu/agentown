@@ -39,6 +39,8 @@ The items below are the choices made for the first build; the **Reversible?** co
 
 ## Build environment limitations (candid)
 
+> **Update 2026-10-16.** The limits below describe the first build's sandbox. On the dev VM (Ubuntu 24.04, k3s 1.30) team runtimes and a computer's Pod run on k3s, and agents have run tasks with real API keys (Anthropic and a custom OpenAI-compatible endpoint; 71 task runs with model usage recorded). Each OpenAI-compatible provider has still not been run live. "One Pod per agent" below was replaced on 2026-10-15 by one runtime per team ([`ARCHITECTURE_V2.md`](ARCHITECTURE_V2.md) §0).
+
 - The build sandbox allows Docker and can run the **k3s control plane**, but **cannot run Pods**: the kernel forbids the negative `oom_score_adj` that kubelet always sets for the pod sandbox. Working around this limitation was refused and was not done.
 - Therefore: the k8s part was verified against a **real API server** (RBAC, Pod Security, admission, and `KubernetesDriver` successfully creating SA/PVC/Secret/Pod), but **an agent Pod has not yet been seen running on k3s**. The real end‑to‑end run loop was verified with the **Docker driver**.
 - The `claude` adapter **has not run against the real API** (no key from the user yet). The tool-use loop was tested against a local mock Messages API. The server did call the real provider to validate a key, and an invalid key was correctly rejected.
