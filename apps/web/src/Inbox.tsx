@@ -32,6 +32,19 @@ function whatItDoes(tool: string, args: Record<string, any>, taskTitle: (id: unk
   }
   if (tool === "upload_asset") out.push(t("Add art: {name}", { name: String(args.name ?? "") }));
   if (tool === "propose_patch") out.push(String(args.title ?? ""));
+  if (tool === "schedule") {
+    const job = (args.job ?? {}) as { title?: string; who?: { type: string; id: string }; repeat?: { type: string; date?: string; at?: string } };
+    const who = job.who?.type === "agent" ? agentName(job.who.id) ?? job.who.id : job.who?.id;
+    const when = job.repeat?.type === "once" ? `${job.repeat.date} ${job.repeat.at}` : job.repeat ? t("Every week") : "";
+    out.push(args.op === "delete" ? t("Take off the calendar: {id}", { id: String(args.id ?? "") }) : t(args.op === "update" ? "Change on the calendar: {title}" : "Put on the calendar: {title}", { title: String(job.title ?? "") }));
+    if (who) out.push([who, when].filter(Boolean).join(" · "));
+  }
+  if (tool === "cleanup") out.push(t({ sweep: "Sweep into the trash now", empty: "Empty the trash now (for good)", restore: "Put an item back from the trash", preview: "Preview a sweep" }[String(args.op)] ?? String(args.op)));
+  if (tool === "suggest_config") {
+    out.push([agentName(args.agentId) ?? String(args.agentId ?? ""), ...["model", "effort", "contextLimit", "maxTurns"].filter((k) => args[k] !== undefined).map((k) => `${k}: ${String(args[k])}`)].join(" · "));
+    out.push(String(args.reason ?? ""));
+  }
+  if (tool === "request_permission") out.push(t("Permission {action}: {reason}", { action: String(args.action ?? ""), reason: String(args.reason ?? "") }));
   if (tool === "connector_call") out.push(t("{tool} on {connector}", { tool: String(args.tool ?? ""), connector: String(args.connector ?? "") }));
   return out.filter(Boolean);
 }

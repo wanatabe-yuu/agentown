@@ -61,6 +61,12 @@ async function fakeBridge(token: string) {
         return reply(m.id, { quads: [[10, 10, 30, 10, 30, 20, 10, 20]] });
       case "DOM.resolveNode":
         return reply(m.id, { object: { objectId: "O1" } });
+      case "DOM.getDocument":
+        return reply(m.id, { root: { nodeId: 1 } });
+      case "DOM.querySelector":
+        return reply(m.id, { nodeId: 42 });
+      case "DOM.describeNode":
+        return reply(m.id, { node: { backendNodeId: 77 } });
       case "Page.startScreencast":
         reply(m.id, {});
         return event("Page.screencastFrame", { data: "SlBFRw==", sessionId: 1, metadata: { deviceWidth: 1280, deviceHeight: 800 } }, "S1");
@@ -122,7 +128,15 @@ describe("the world's computers", () => {
     // Refs come from the latest look; agents cannot open browser-internal pages.
     expect((await invoke({ computer: "pc-1", action: "click", ref: "e99" })).status).toBe(400);
     expect((await invoke({ computer: "pc-1", action: "open", url: "chrome://settings" })).status).toBe(400);
-  });
+    // A render goes to the page's file picker; only the computer's own files under /workspace.
+    sent.length = 0;
+    expect((await invoke({ computer: "pc-1", action: "upload", path: "/workspace/remake/a/out/final.mp4" })).status).toBe(200);
+    expect(sent.find((m) => m.method === "DOM.setFileInputFiles")?.params).toEqual({ files: ["/workspace/remake/a/out/final.mp4"], backendNodeId: 77 });
+    for (const path of ["/etc/passwd", "/workspace/../etc/passwd", "/workspace/a/../../etc/passwd", "relative.mp4"]) {
+      expect((await invoke({ computer: "pc-1", action: "upload", path })).status).toBe(400);
+    }
+    expect((await invoke({ computer: "pc-1", action: "upload" })).status).toBe(400);
+  }, 15_000);
 
   it("the owner watches the screen and drives it by hand; agents cannot watch", async () => {
     const path = `/api/orgs/${env.instance.defaultOrgId}/computers/pc-1/screen`;

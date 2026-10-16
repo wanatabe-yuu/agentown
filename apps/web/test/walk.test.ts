@@ -9,7 +9,7 @@ import { errandSpot, type Roamer, stepErrand, stepRoamer } from "../src/office3d
 
 // The coffee shop as shipped, with a few people at their desks.
 const { catalog } = splitInstanceConfig(readFileSync(new URL("../../../config/agentown.yaml", import.meta.url), "utf8"));
-const doc = parseTemplate(readFileSync(new URL("../../../config/templates/coffee-store.yaml", import.meta.url), "utf8"), catalog).doc as { world: unknown; departments: Array<{ id: string; name: string; color: string }> };
+const doc = parseTemplate(readFileSync(new URL("../../../apps/server/test/fixtures/templates/coffee-store.yaml", import.meta.url), "utf8"), catalog).doc as { world: unknown; departments: Array<{ id: string; name: string; color: string }> };
 const world = worldSchema.parse(doc.world);
 const people = ["front", "bar", "kitchen", "management", "roastery", "studio"].map((d, i) => ({ id: `a-${i}`, departmentId: d, seat: 0, lifecycleState: "active", jobRole: "x" }));
 const layout = layoutWorld(world, doc.departments, people);

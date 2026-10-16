@@ -73,8 +73,9 @@ if [ -z "$YES" ]; then
 fi
 
 say "Stopping the agentown service"
-systemctl disable --now agentown-provision.timer agentown >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/agentown.service /etc/systemd/system/agentown-provision.service /etc/systemd/system/agentown-provision.timer
+systemctl disable --now agentown-selfpatch.path agentown-provision.timer agentown >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/agentown.service /etc/systemd/system/agentown-provision.service /etc/systemd/system/agentown-provision.timer \
+  /etc/systemd/system/agentown-selfpatch.service /etc/systemd/system/agentown-selfpatch.path
 systemctl daemon-reload
 
 if [ "$DRIVER" = kubernetes ] && command -v k3s >/dev/null && systemctl is-active -q k3s; then

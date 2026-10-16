@@ -26,7 +26,8 @@ async function bridge(token: string) {
       ws = socket as unknown as WebSocket;
       socket.on("message", (raw: Buffer) => {
         const m = JSON.parse(raw.toString());
-        if (m.agentown === "run") socket.send(JSON.stringify({ agentown: "ran", id: m.id, code: 0, output: `ran: ${m.command}\n`, timedOut: false }));
+        // A picture asked for (look) comes back empty here: no model is asked in these tests.
+        if (m.agentown === "run") socket.send(JSON.stringify({ agentown: "ran", id: m.id, code: 0, output: m.command.endsWith("base64 -w0") ? "" : `ran: ${m.command}\n`, timedOut: false }));
         if (m.agentown) return control.push(m);
         const result =
           m.method === "Target.getTargets" ? { targetInfos: [{ targetId: "T1", type: "page", url: "about:blank", title: "" }] }
@@ -59,6 +60,7 @@ beforeAll(async () => {
         { id: "pc-old", kind: "computer", room: "office", at: [3, 3] },
         { id: "pc-far", kind: "computer", room: "office", at: [4, 4], computer: { studio: true, remote: true } },
         { id: "pc-term", kind: "computer", room: "office", at: [5, 5], computer: { studio: true, apps: ["browser", "terminal"] } },
+        { id: "pc-look", kind: "computer", room: "office", at: [6, 6], computer: { studio: true, apps: ["terminal"] } },
       ],
       // Workstations: Linh's is a studio computer, Ava's just a desk.
       desks: { "lead-eng": { studio: true, apps: ["browser", "terminal"] }, ceo: { studio: true, label: "Ava's laptop" }, po: { studio: false } },
@@ -71,7 +73,7 @@ afterAll(async () => env?.close());
 describe("computers: one kind, each with its own settings", () => {
   it("only studio computers run; computers from before per-object settings still do", async () => {
     const list = (await env.call(env.owner, "GET", "/api/computers")).body.computers;
-    expect(list.map((c: { id: string }) => c.id).sort()).toEqual(["desk:ceo", "desk:lead-eng", "pc-far", "pc-old", "pc-on", "pc-term"]);
+    expect(list.map((c: { id: string }) => c.id).sort()).toEqual(["desk:ceo", "desk:lead-eng", "pc-far", "pc-look", "pc-old", "pc-on", "pc-term"]);
     expect(list.find((c: { id: string }) => c.id === "pc-on").apps).toEqual(["browser", "mcp"]);
     expect((await env.call(env.owner, "GET", "/api/computers/pc-off")).status).toBe(404);
   });
@@ -174,6 +176,18 @@ describe("computers: one kind, each with its own settings", () => {
     const objects = old.body.world.objects.map((o: { id: string }) => (o.id === "pc-term" ? { ...o, computer: { studio: true, apps: ["terminal"], network: "vpn" } } : o));
     expect((await env.call(env.owner, "PUT", "/api/world", { revision: old.body.revision, world: { ...old.body.world, objects } })).status).toBe(400);
     b.ws.terminate();
+  });
+
+  it("a computer looks at a picture of its own: read through its terminal as a small JPEG, then its model looks", async () => {
+    const l = await bridge(await env.service.kernel.identity.issueComputerToken("pc-look"));
+    await until(() => env.instance.computers!.list(env.service).find((c) => c.id === "pc-look")?.state === "on");
+    for (const path of ["/etc/passwd", "/workspace/../etc/x.jpg", "/workspace/it's.jpg"]) {
+      expect((await env.call(env.owner, "POST", "/api/computers/pc-look/requests", { app: "terminal", action: "look", path })).status).toBe(400);
+    }
+    const look = await env.call(env.owner, "POST", "/api/computers/pc-look/requests", { app: "terminal", action: "look", path: "/workspace/remake/a/ref/sheet.jpg" });
+    expect(look.body.message).toContain("could not read /workspace/remake/a/ref/sheet.jpg as a picture");
+    expect(l.control.some((m) => m.agentown === "run" && m.command.startsWith("ffmpeg ") && m.command.includes("'/workspace/remake/a/ref/sheet.jpg'") && m.command.endsWith("| base64 -w0"))).toBe(true);
+    l.ws.terminate();
   });
 
   it("a workstation is its person's own computer once its studio computer is on", async () => {

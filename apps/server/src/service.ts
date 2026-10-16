@@ -19,6 +19,7 @@ import {
   authHeaderSchema,
   worldAssets,
   canTalk,
+  isComputerKind,
   objectState,
   type World,
   PLAYBOOK_ARG_NAME,
@@ -52,7 +53,7 @@ import type { Permissions } from "./kernel/permissions.ts";
 
 export type { LoadedPolicy, Share };
 import type { SecretBox } from "./secrets.ts";
-import { type Language, languageInstruction, translateNames } from "./locales.ts";
+import { type Language, languageInstruction, say, translateNames } from "./locales.ts";
 import {
   ApiError,
   actorRef,
@@ -90,6 +91,7 @@ export interface AgentRow {
   last_heartbeat_at: Date | null;
   created_at: Date;
   credential_id: string | null;
+  config_set_by: string | null;
   model: string | null;
   effort: Effort | null;
   instructions: string;
@@ -451,9 +453,8 @@ export class Service {
   async requestLeadReview(leadId: string, proposalId: string, proposer: Actor, what: string, args: unknown, fromTask: string | null) {
     const who = proposer.kind === "agent" ? (await this.getAgentRow(proposer.id)).display_name : "someone";
     const from = fromTask ? (await this.getTaskRow(fromTask)).title : null;
-    const vi = this.config.organization.language === "vi";
     await this.createTask(await this.ownerActor(), {
-      title: `${vi ? "Duyệt" : "Review"}: ${what} — ${who}`.slice(0, 200),
+      title: `${say(this.config.organization.language, "Review")}: ${what} — ${who}`.slice(0, 200),
       description: [
         `${who} asks to run "${what}"${from ? ` while working on "${from}"` : ""}. The owner lets you decide requests like this.`,
         `Arguments:\n${JSON.stringify(args, null, 2).slice(0, 4000)}`,
@@ -537,17 +538,29 @@ export class Service {
   }
 
   /** Objects someone can talk to or do something with: where they are, what they are doing, what they offer. */
-  async objectCatalog() {
+  /**
+   * What is in the world to use: objects with actions or states, ones that talk, and the
+   * ones with a job (computers, the cleaning robot, the trash can, the wall calendar).
+   * For an agent's department, whether it can reach each one to do its actions.
+   */
+  async objectCatalog(departmentId?: string) {
     const world = this.config.world;
     if (!world) return [];
     const active = new Map((await this.objectStates()).map((x) => [x.objectId, x]));
-    const rooms = new Map(world.floors.flatMap((f) => f.rooms).map((r) => [r.id, r.name]));
+    const rooms = new Map(world.floors.flatMap((f) => f.rooms).map((r) => [r.id, r]));
     return world.objects.flatMap((o) => {
       const k = world.kinds[o.kind];
-      if (!o.id || !k || !(k.actions.length || k.states.length || canTalk(world, o))) return [];
+      const use = !k ? null : isComputerKind(k) ? "a computer: agentown computer / browser" : k.cleaner ? "the cleaning robot: agentown cleanup" : k.trash ? "the trash can: agentown cleanup" : k.calendar ? "the wall calendar: agentown calendar" : null;
+      if (!o.id || !k || !(k.actions.length || k.states.length || canTalk(world, o) || use)) return [];
       const a = active.get(o.id);
       const state = objectState(k, o.id, Date.now(), a ? { state: a.state, until: Date.parse(a.until) } : null);
-      return [{ id: o.id, name: o.label ?? k.name, kind: k.name, room: rooms.get(o.room) ?? o.room, state: state?.id ?? null, actions: k.actions.map((x) => ({ id: x.id, name: x.name })), talks: canTalk(world, o) }];
+      const room = rooms.get(o.room);
+      return [{
+        id: o.id, name: o.label ?? k.name, kind: k.name, room: room?.name ?? o.room, state: state?.id ?? null,
+        actions: k.actions.map((x) => ({ id: x.id, name: x.name })), talks: canTalk(world, o),
+        ...(use ? { use } : {}),
+        ...(departmentId !== undefined ? { reachable: !room?.department || room.department === departmentId || k.behaviors.some((b) => b.type === "roam") } : {}),
+      }];
     });
   }
 
@@ -594,6 +607,24 @@ export class Service {
         [this.orgId, objectId, action.id, action.state, who.type, who.id, seconds],
       );
       const out = { objectId, action: action.id, state: action.state, by: who, until: (rows[0].until as Date).toISOString() };
+      await this.emit(ctx, { type: "org.object", payload: out });
+      return out;
+    });
+  }
+
+  /** An object busy with its own work for a while (the cleaning robot sweeping); skipped when its kind has no such state. */
+  async objectBusy(objectId: string, state: string, seconds: number) {
+    const object = this.config.world?.objects.find((o) => o.id === objectId);
+    const kind = object && this.config.world!.kinds[object.kind];
+    if (!kind?.states.some((x) => x.id === state)) return null;
+    return this.withTx(async (ctx) => {
+      const { rows } = await ctx.c.query(
+        `INSERT INTO object_states(org_id, object_id, action, state, by_type, by_id, until) VALUES ($1,$2,$3,$3,'object',$2, now() + make_interval(secs => $4))
+         ON CONFLICT (org_id, object_id) DO UPDATE SET action=EXCLUDED.action, state=EXCLUDED.state, by_type=EXCLUDED.by_type, by_id=EXCLUDED.by_id, until=EXCLUDED.until, at=now()
+         RETURNING until`,
+        [this.orgId, objectId, state, seconds],
+      );
+      const out = { objectId, action: state, state, by: { type: "object", id: objectId }, until: (rows[0].until as Date).toISOString() };
       await this.emit(ctx, { type: "org.object", payload: out });
       return out;
     });
@@ -1307,7 +1338,8 @@ export class Service {
       // The preset's default model is a Claude model: only meaningful with an Anthropic key.
       model: a.model ?? (provider === null || provider === "anthropic" ? (preset.model ?? null) : null),
       effort: a.effort,
-      instructions: [languageInstruction(this.config.organization.language), a.instructions].filter(Boolean).join("\n\n"),
+      // The job's own instructions (how the work is done here), then the agent's.
+      instructions: [languageInstruction(this.config.organization.language), this.config.agentTemplates.find((t) => t.id === a.template_id)?.instructions, a.instructions].filter(Boolean).join("\n\n"),
       maxTurns: a.max_turns,
       contextLimit: a.context_limit,
       hasCredential: !!a.credential_id,
@@ -1532,14 +1564,26 @@ export class Service {
         q: ctx.c,
         detail: { credentialId: change.credentialId, model: change.model, effort: change.effort, instructionsChanged: change.instructions !== undefined },
       });
+      // An agent sizes itself for its work (key, model, effort, limits); what it is told to be is its manager's to write.
+      if (actor.kind === "agent" && actor.id === id && change.instructions !== undefined && change.instructions !== a.instructions) {
+        throw deny("an agent tunes its own key, model, effort and limits; its instructions are set by whoever manages it");
+      }
+      // What a person chose for an agent stands: agents may only suggest changing it.
+      const sizing = (["credentialId", "model", "effort", "maxTurns", "contextLimit"] as const).filter((k) => change[k] !== undefined);
+      const current = this.agentConfig(a);
+      const resizes = sizing.some((k) => change[k] !== current[k]);
+      if (actor.kind === "agent" && resizes && a.config_set_by?.startsWith("human:")) {
+        throw conflict("owner_configured", `a person chose ${a.display_name}'s key and model: suggest a change instead (agentown agent suggest ${id} ... --reason "why")`);
+      }
       if (options.expectedRevision !== undefined && options.expectedRevision !== a.config_revision) throw conflict("stale_config", "Agent configuration changed. Reload the saved settings before editing again.");
       const next = await this.validateConfig(ctx.c, a.department_id, this.agentConfig(a), change);
       const before = { credentialId: a.credential_id, model: a.model, effort: a.effort, maxTurns: a.max_turns, contextLimit: a.context_limit };
       const after = { credentialId: next.credentialId, model: next.model, effort: next.effort, maxTurns: next.maxTurns, contextLimit: next.contextLimit };
       const configChange = { agentId: id, before, after, revision: a.config_revision + 1, changedFields: Object.keys(after).filter(k => before[k as keyof typeof before] !== after[k as keyof typeof after]), instructionsChanged: a.instructions !== next.instructions };
       await ctx.c.query(
-        `UPDATE agents SET credential_id=$2, model=$3, effort=$4, instructions=$5, max_turns=$6, context_limit=$7, config_revision=config_revision+1 WHERE id=$1`,
-        [id, next.credentialId, next.model, next.effort, next.instructions, next.maxTurns, next.contextLimit],
+        `UPDATE agents SET credential_id=$2, model=$3, effort=$4, instructions=$5, max_turns=$6, context_limit=$7, config_revision=config_revision+1,
+           config_set_by=CASE WHEN $8 THEN $9 ELSE config_set_by END WHERE id=$1`,
+        [id, next.credentialId, next.model, next.effort, next.instructions, next.maxTurns, next.contextLimit, resizes, actorRef(actor)],
       );
       await this.emit(ctx, {
         type: "agent.configured",
@@ -1736,7 +1780,26 @@ export class Service {
   }
 
   /** Fail before creating a task that its assigned runtime cannot execute. */
+  /** An agent nobody gave a key takes one the organization has for its department, then sizes itself. */
+  private async autoCredential(a: AgentRow, q: Queryable) {
+    if (a.credential_id) return;
+    const { rows } = await q.query<{ id: string; provider: string; models: string[] }>(
+      `SELECT id, provider, models FROM credentials WHERE org_id=$1 AND revoked_at IS NULL AND cardinality(models) > 0 AND (departments IS NULL OR $2 = ANY(departments))
+       ORDER BY (provider='anthropic') DESC, created_at LIMIT 1`,
+      [this.orgId, a.department_id],
+    );
+    const key = rows[0];
+    if (!key) return;
+    // Its runtime's default model when the key has it, else one the key has (a balanced one first).
+    const preset = this.config.runtimeCatalog.find((p) => p.id === this.template(a.template_id).template.runtimePreset);
+    const model = a.model ?? (key.provider === "anthropic" && preset?.model && key.models.includes(preset.model) ? null : (key.models.find((m) => /sonnet/i.test(m)) ?? key.models[0]!));
+    await q.query("UPDATE agents SET credential_id=$2, model=$3, config_set_by='auto', config_revision=config_revision+1 WHERE id=$1 AND credential_id IS NULL", [a.id, key.id, model]);
+    a.credential_id = key.id;
+    a.model = model;
+  }
+
   private async requirePromptable(a: AgentRow, q: Queryable) {
+    await this.autoCredential(a, q);
     const connection = (await q.query("SELECT r.preset_id,c.provider,c.models,c.revoked_at,c.departments FROM agent_runtimes r LEFT JOIN credentials c ON c.id=$2 AND c.org_id=$3 WHERE r.agent_id=$1", [a.id, a.credential_id, this.orgId])).rows[0];
     const reason = this.promptBlockReason(a, connection);
     if (reason) throw badRequest(reason);
@@ -2040,7 +2103,7 @@ export class Service {
     try {
       if (!creator) throw new Error("the campaign's creator no longer exists");
       await this.createTask(creator, {
-        title: `${c.title} · ${this.config.organization.language === "vi" ? "bước" : "step"} ${step}${broken.some((t) => t.campaign_step !== null) ? (this.config.organization.language === "vi" ? " (làm lại)" : " (retry)") : ""}`,
+        title: `${c.title} · ${say(this.config.organization.language, "step")} ${step}${broken.some((t) => t.campaign_step !== null) ? ` (${say(this.config.organization.language, "retry")})` : ""}`,
         description,
         acceptanceCriteria: "The step moved the campaign toward its goal, or the campaign was marked done or failed.",
         assigneeAgentId: c.lead_agent_id,

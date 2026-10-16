@@ -1,4 +1,4 @@
-import type { Action, Actor } from "@agentown/core";
+import { ACTIONS, type Action, type Actor, authorize, EFFORTS } from "@agentown/core";
 import { z } from "zod";
 import { needsApproval, patchDocument } from "./chat/tools.ts";
 import type { ChatTool, ToolContext } from "./chat/types.ts";
@@ -37,6 +37,11 @@ export interface CapabilityDescriptor {
   requiresApproval?: (args: any) => boolean;
   /** Same, when the answer depends on the organization (a connector's own setting). */
   requiresApprovalIn?: (service: Service, args: any) => boolean;
+  /**
+   * May the caller make this particular call itself? When not, the call never bounces:
+   * it becomes a request whoever approves (the owner, or the lead) carries out themself.
+   */
+  allowed?: (ctx: Omit<ToolContext, "idempotencyKey">, args: any) => Promise<boolean>;
   execute?: (ctx: ToolContext, args: any) => Promise<unknown>;
 }
 
@@ -68,6 +73,135 @@ const TOOL_PERMISSION: Record<string, Action | "owner" | null> = {
  */
 const WORLD_TOOLS = new Set(["patch_world", "replace_world", "upload_asset"]);
 
+const ORG_LEVEL = new Set<Action>(["org.design", "audit.view", "user.manage", "credential.manage"]);
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "a day like 2026-10-20");
+const scopeSchema = z.union([
+  z.object({ kind: z.enum(["self", "direct-reports", "descendants", "team", "department", "org"]) }).strict(),
+  z.object({ kind: z.enum(["agents", "projects", "departments"]), ids: z.array(z.string().min(1).max(64)).min(1).max(50) }).strict(),
+]);
+const designs = async ({ service, actor }: { service: Service; actor: Actor }) => authorize(actor, "org.design", {}, await service.kernel.permissions.load()).allowed;
+
+/** Everything in the world an agent can use: objects, the wall calendar, the cleaning robot and trash can. */
+export function worldCapabilities(): CapabilityDescriptor[] {
+  return [
+    {
+      id: "objects",
+      title: "look at objects",
+      description:
+        "The world's objects you can use: id, name, room, what each is doing now, its actions, whether you can reach it (your department's rooms, shared rooms, things that walk about), and for the ones with a job how to use them (computers, the cleaning robot, the trash can, the wall calendar).",
+      input: z.object({}).strict(),
+      permission: null,
+      effect: "read",
+      approval: "never",
+      executor: "kernel",
+      execute: async ({ service, actor }) => ({ objects: await service.objectCatalog(actor.kind === "agent" ? (await service.getAgentRow(actor.id)).department_id : undefined) }),
+    },
+    {
+      id: "use_object",
+      title: "use an object",
+      description:
+        "Do one of an object's actions yourself (pull an espresso, pet the shop cat, dim the lamps): you walk over and do it and everyone sees it. Only objects you can reach (see objects); for one in another department's room, ask someone who works there.",
+      input: z.object({ objectId: z.string().min(1).max(64), action: z.string().min(1).max(64) }).strict(),
+      permission: null,
+      effect: "write",
+      approval: "never",
+      executor: "kernel",
+      execute: async ({ service, actor }, a) => service.objectAction(actor, a.objectId, { action: a.action }),
+    },
+    {
+      id: "calendar",
+      title: "read the calendar",
+      description:
+        "The wall calendar: every scheduled job (objects doing their actions, tasks for agents, the cleaning robot's sweeps, the trash can's emptying) and what ran between two days, from and to as YYYY-MM-DD (at most 62 days apart).",
+      input: z.object({ from: day, to: day }).strict(),
+      permission: null,
+      effect: "read",
+      approval: "never",
+      executor: "kernel",
+      execute: async ({ instance, service, actor }, a) => instance.calendar!.view(service, actor, a.from, a.to),
+    },
+    {
+      id: "schedule",
+      title: "change the calendar",
+      description:
+        "Put a job on the wall calendar (op create, with job), change one (op update, id, job) or take it off (op delete, id). A job: {title, who: {type: 'object'|'agent', id}, action (one of the object's action ids) or prompt (the agent's task), repeat: {type: 'weekly', times: [7 entries, Sunday first, each 'HH:MM' or null]} or {type: 'once', date: 'YYYY-MM-DD', at: 'HH:MM'}, timeZone (IANA, e.g. Asia/Ho_Chi_Minh), enabled}. An object's job needs leave to change the world; an agent's needs leave to give that agent tasks (yourself, your reports). Without it this asks the owner, who sets the job up if they agree.",
+      input: z.discriminatedUnion("op", [
+        z.object({ op: z.literal("create"), job: z.record(z.string(), z.unknown()) }).strict(),
+        z.object({ op: z.literal("update"), id: z.string().min(1).max(64), job: z.record(z.string(), z.unknown()) }).strict(),
+        z.object({ op: z.literal("delete"), id: z.string().min(1).max(64) }).strict(),
+      ]),
+      permission: null,
+      effect: "write",
+      approval: "policy",
+      executor: "kernel",
+      allowed: ({ instance, service, actor }, a) => instance.calendar!.may(service, actor, a),
+      execute: async ({ instance, service, actor }, a) =>
+        a.op === "create" ? instance.calendar!.create(service, actor, a.job) : a.op === "update" ? instance.calendar!.update(service, actor, a.id, a.job) : instance.calendar!.remove(service, actor, a.id),
+    },
+    {
+      id: "cleanup",
+      title: "use the cleaning robot and trash can",
+      description:
+        "The cleaning robot and the trash can. op view: their settings, what is in the trash, the last sweeps. op preview: what a sweep now would take. op sweep: sweep now (old leftovers go into the trash, where they can be put back). op empty: delete everything in the trash for good. op restore with itemId: put one item back. Viewing is open to everyone; the rest need leave to change the world, else this asks the owner.",
+      input: z.object({ op: z.enum(["view", "preview", "sweep", "empty", "restore"]), itemId: z.string().min(1).max(64).optional() }).strict()
+        .refine((a) => a.op !== "restore" || !!a.itemId, { message: "restore needs itemId", path: ["itemId"] }),
+      permission: null,
+      effect: "write",
+      approval: "policy",
+      executor: "kernel",
+      allowed: async (ctx, a) => a.op === "view" || designs(ctx),
+      execute: async ({ instance, service, actor }, a) => {
+        const c = instance.cleanup!;
+        if (a.op === "view") return c.view(service, actor);
+        if (a.op === "preview" || a.op === "sweep") return c.sweepNow(service, actor, a.op === "preview");
+        if (a.op === "empty") return c.emptyNow(service, actor);
+        return c.restore(service, actor, a.itemId!);
+      },
+    },
+    {
+      id: "suggest_config",
+      title: "suggest a configuration",
+      description:
+        "Suggest a different key, model, effort or limits for yourself (or an agent you may configure) where a person chose them; the owner decides, and sets it if they agree. Where nobody chose, configure directly (agentown agent configure).",
+      input: z.object({
+        agentId: z.string().min(1).max(64),
+        credentialId: z.string().min(1).max(64).optional(),
+        model: z.string().min(1).max(120).optional(),
+        effort: z.enum(EFFORTS).optional(),
+        contextLimit: z.number().int().min(8192).max(1_000_000).optional(),
+        maxTurns: z.number().int().min(1).max(200).optional(),
+        reason: z.string().trim().min(1).max(1000),
+      }).strict().refine((a) => ["credentialId", "model", "effort", "contextLimit", "maxTurns"].some((k) => (a as Record<string, unknown>)[k] !== undefined), "suggest at least one setting"),
+      permission: "agent.configure",
+      effect: "write",
+      approval: "always",
+      executor: "kernel",
+      // Always asked of the owner, but only for an agent the caller may configure.
+      allowed: async ({ service, actor }, a) => {
+        if (!authorize(actor, "agent.configure", { agentId: a.agentId }, await service.kernel.permissions.load()).allowed) throw deny(`you may not configure ${a.agentId}`);
+        return false;
+      },
+      execute: async ({ service, actor }, { agentId, reason: _, ...change }) => service.configureAgent(actor, agentId, change),
+    },
+    {
+      id: "request_permission",
+      title: "ask for a permission",
+      description:
+        "Ask for a lasting permission you lack (see `agentown whoami` for what you hold), saying what it is for. The owner decides; granted, it is yours from then on. scope (default: org for organization-wide rights such as org.design, else self): self (only you), direct-reports, descendants, team (you and your reports), department, org, or agents / projects / departments by id. For a single thing, rather call its tool: one you lack leave for asks the owner to do it.",
+      input: z.object({ action: z.enum(ACTIONS), scope: scopeSchema.optional(), reason: z.string().trim().min(1).max(1000), agentId: z.string().min(1).max(64) }).strict(),
+      permission: null,
+      effect: "destructive",
+      approval: "always",
+      executor: "kernel",
+      // Always asked: it runs as whoever approves, granting it to the agent who asked.
+      allowed: async () => false,
+      // Organization-wide rights (changing the world, reading the audit log) only mean something org-wide.
+      execute: async ({ service, actor }, a) =>
+        service.delegate(actor, { principalId: a.agentId, action: a.action, scope: a.scope ?? { kind: ORG_LEVEL.has(a.action) ? "org" : "self" } }),
+    },
+  ];
+}
+
 /** The registry: the organization tools (the same Service operations the UI uses) plus team and runtime tools. */
 export function capabilityRegistry(tools: ChatTool[]): CapabilityDescriptor[] {
   const fromTools = tools.map<CapabilityDescriptor>((t) => ({
@@ -84,6 +218,7 @@ export function capabilityRegistry(tools: ChatTool[]): CapabilityDescriptor[] {
   }));
   return [
     ...fromTools,
+    ...worldCapabilities(),
     {
       id: "propose_patch",
       title: "propose patch",
@@ -100,10 +235,10 @@ export function capabilityRegistry(tools: ChatTool[]): CapabilityDescriptor[] {
       id: "browser",
       title: "use a computer",
       description:
-        "Use one of the world's computers (a real Chromium; `agentown browser list` shows them). Each call does one thing and returns the page as text: what it says and what can be clicked or typed into, each with a ref (e5) to use in the next call. A site that needs someone to log in: ask the owner (`agentown browser COMPUTER login \"why\"`), who logs in on the computer's screen; the login stays.",
+        "Use one of the world's computers (a real Chromium; `agentown browser list` shows them). Each call does one thing and returns the page as text: what it says and what can be clicked or typed into, each with a ref (e5) to use in the next call. upload (path, ref?) hands one of the computer's own files (under /workspace, e.g. a render) to the page's file picker, the ref's or the page's first. A site that needs someone to log in: ask the owner (`agentown browser COMPUTER login \"why\"`), who logs in on the computer's screen; the login stays.",
       input: z.object({
         computer: z.string().min(1).max(40),
-        action: z.enum(["look", "open", "click", "type", "key", "scroll", "back", "tab"]),
+        action: z.enum(["look", "open", "click", "type", "key", "scroll", "back", "tab", "upload"]),
         url: z.string().max(2000).optional(),
         ref: z.string().regex(/^e\d+$/).optional(),
         x: z.number().min(0).max(4000).optional(),
@@ -113,8 +248,9 @@ export function capabilityRegistry(tools: ChatTool[]): CapabilityDescriptor[] {
         key: z.enum(BROWSER_KEYS as [string, ...string[]]).optional(),
         dy: z.number().min(-10000).max(10000).optional(),
         index: z.number().int().min(0).max(50).optional(),
+        path: z.string().max(500).optional(),
       }).strict().superRefine((a, ctx) => {
-        const need = { open: "url", type: "text", key: "key", tab: "index" }[a.action as string];
+        const need = { open: "url", type: "text", key: "key", tab: "index", upload: "path" }[a.action as string];
         if (need && (a as Record<string, unknown>)[need] === undefined) ctx.addIssue({ code: "custom", message: `${a.action} needs ${need}` });
         if (a.action === "click" && !a.ref && (a.x === undefined || a.y === undefined)) ctx.addIssue({ code: "custom", message: "click needs ref (or x and y)" });
       }),
@@ -250,6 +386,11 @@ export class CapabilityGateway {
   async invoke(service: Service, actor: Actor, id: string, rawArgs: unknown, idempotencyKey?: string, context: { taskId?: string | null } = {}) {
     const d = this.find(id);
     if (d.executor !== "kernel" || !d.execute) throw badRequest(`${id} runs inside the caller's runtime, not through the server`);
+    if (id === "request_permission") {
+      // An agent asks for itself; people ask the owner in person.
+      if (actor.kind !== "agent") throw badRequest("people ask the owner for permissions directly");
+      rawArgs = { ...(rawArgs as Record<string, unknown>), agentId: actor.id };
+    }
     const parsed = d.input.safeParse(rawArgs ?? {});
     if (!parsed.success) throw badRequest(z.prettifyError(parsed.error));
     if (!(await this.discover(service, actor)).some((c) => c.id === id)) {
@@ -258,14 +399,17 @@ export class CapabilityGateway {
     }
     const owner = actor.kind === "human" && actor.owner;
     const world = WORLD_TOOLS.has(id) ? this.worldGate(service, actor, (await this.permits(service, actor))(d.permission)) : null;
+    // A call the caller may not make itself becomes a request: whoever approves carries it out.
+    const short = !world && !owner && !!d.allowed && !(await d.allowed({ instance: this.instance, service, actor }, parsed.data));
+    const asApprover = world?.runAs === "approver" || short;
     const needs = world
       ? world.approval === "always"
-      : d.approval === "always" || (d.approval === "policy" && !!(d.requiresApprovalIn ? d.requiresApprovalIn(service, parsed.data) : d.requiresApproval?.(parsed.data)));
+      : short || d.approval === "always" || (d.approval === "policy" && !!(d.requiresApprovalIn ? d.requiresApprovalIn(service, parsed.data) : d.requiresApproval?.(parsed.data)));
     // With the kernel setting approver "lead", the agent at the top decides instead of the owner (code changes stay the owner's).
-    const lead = needs && !owner && id !== "propose_patch" && service.config.kernel.approver === "lead" ? await service.leadAgentId() : null;
+    const lead = needs && !owner && id !== "propose_patch" && id !== "request_permission" && id !== "suggest_config" && service.config.kernel.approver === "lead" ? await service.leadAgentId() : null;
     if (lead && actor.kind === "agent" && actor.id === lead) {
       // Its own requests go through at once, on the owner's authority where its own permission falls short.
-      const runner = world?.runAs === "approver" ? await service.ownerActor() : actor;
+      const runner = asApprover ? await service.ownerActor() : actor;
       const result = await this.run(service, runner, d, parsed.data, idempotencyKey);
       await service.kernel.permissions.audit(service.db, actor, "capability.self_approved", id, true, "approver: lead (kernel setting)");
       return { status: "applied" as const, result };
@@ -299,16 +443,17 @@ export class CapabilityGateway {
         );
         for (const o of older.rows) await recordProposal(service.db, { type: o.source_type, id: o.source_id }, { status: "withdrawn", decision: { by: actorRef(actor), verdict: "reject", note: "replaced by a newer world edit" } });
       }
-      const rule = world ? (world.runAs === "approver" ? "world:no_permission" : "world:approve") : d.approval === "always" ? "always" : `effect:${d.effect}`;
+      const rule = world ? (world.runAs === "approver" ? "world:no_permission" : "world:approve") : id === "request_permission" ? "permission:request" : short ? "permission:missing" : d.approval === "always" ? "always" : `effect:${d.effect}`;
       const reason = world
         ? world.runAs === "approver" ? "the caller may not design the world; the owner applies the change if they approve it" : "world edits wait for the owner (kernel setting worldEdits: approve)"
-        : "this call changes the organization and needs the owner's approval";
+        : id === "request_permission" ? `asks for ${(parsed.data as { action: string }).action}: ${(parsed.data as { reason: string }).reason}`
+        : short ? "the caller lacks the permission for this; whoever approves it carries it out" : "this call changes the organization and needs the owner's approval";
       const p = await openProposal(service.db, {
         orgId: service.orgId, kind: world ? "world_change" : "capability_call", title: `${d.title}`, proposer: actorRef(actor),
         subject: actor.kind === "agent" ? { type: "agent", id: actor.id } : null,
         payload: {
           capability: id, args: parsed.data, idempotencyKey: idempotencyKey ?? null,
-          ...(world?.runAs === "approver" ? { runAs: "approver" } : {}),
+          ...(asApprover ? { runAs: "approver" } : {}),
           // The task it came from waits for the decision (and is told the outcome).
           ...(context.taskId ? { taskId: context.taskId } : {}),
         },

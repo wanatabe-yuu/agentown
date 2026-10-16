@@ -1,11 +1,13 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t as tr } from "./i18n.ts";
 import { AdminDialog } from "./Admin.tsx";
+import { CreateWorldDialog, WORLD_DOCS } from "./CreateWorld.tsx";
 import { AgentPanel, type PanelTab } from "./AgentPanel.tsx";
 import { AssetsDialog } from "./Assets.tsx";
 import { CredentialsDialog } from "./Credentials.tsx";
 import { OrgEditor } from "./OrgEditor.tsx";
 import { NewTaskDialog, TaskDialog } from "./TaskDialogs.tsx";
+const CalendarDialog = lazy(() => import("./Calendar.tsx").then((m) => ({ default: m.CalendarDialog })));
 import { ProjectsView } from "./Projects.tsx";
 import { chatSelectionKey, OwnerChatDialog, type ChatTarget } from "./OwnerChat.tsx";
 import { Avatar, AvatarRoster } from "./Avatar.tsx";
@@ -44,6 +46,7 @@ export function App() {
   const [account, setAccount] = useState<Account | null | undefined>(undefined);
   const [orgId, setOrgId] = useState<string | null>(orgFromUrl());
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [creatingWorld, setCreatingWorld] = useState(false);
 
   const reloadAccount = useCallback(() => {
     api<Account>("GET", "/api/me")
@@ -82,12 +85,51 @@ export function App() {
   }
   const current = account.orgs.find((o) => o.id === orgId) ?? account.orgs[0];
   const signOut = () => void api("DELETE", "/api/session").finally(() => setAccount(null));
+  const switchOrg = (id: string) => {
+    history.pushState(null, "", `/o/${id}/`);
+    setOrgId(id);
+  };
   if (!current) {
+    // A fresh install has no world: the admin makes the first one.
+    if (account.user?.admin) {
+      return (
+        <div className="center">
+          <div className="login">
+            <h1>{tr("No world yet")}</h1>
+            <p className="muted">{tr("Create your first world from a template on the marketplace, or upload one you wrote.")}</p>
+            <p className="muted small">
+              <a href={WORLD_DOCS} target="_blank" rel="noreferrer">
+                {tr("How to write a world")}
+              </a>
+            </p>
+            <div className="btn-row">
+              <button type="button" className="primary" onClick={() => setCreatingWorld(true)}>
+                {tr("Create world")}
+              </button>
+              <button type="button" className="ghost" onClick={signOut}>
+                {tr("Sign out")}
+              </button>
+            </div>
+          </div>
+          {creatingWorld && (
+            <CreateWorldDialog
+              account={account}
+              onClose={() => setCreatingWorld(false)}
+              onCreated={(id) => {
+                setCreatingWorld(false);
+                if (id) switchOrg(id);
+                reloadAccount();
+              }}
+            />
+          )}
+        </div>
+      );
+    }
     return (
       <div className="center">
         <div className="login">
           <h1>{tr("No organization yet")}</h1>
-          <p className="muted">You are signed in as {account.user?.displayName}, but you do not belong to any organization. Ask your admin to add you.</p>
+          <p className="muted">{tr("You are signed in as {name}, but you do not belong to any organization. Ask your admin to add you.", { name: account.user?.displayName ?? "" })}</p>
           <button type="button" onClick={signOut}>
             {tr("Sign out")}
           </button>
@@ -96,10 +138,6 @@ export function App() {
     );
   }
   setOrg(current.id);
-  const switchOrg = (id: string) => {
-    history.pushState(null, "", `/o/${id}/`);
-    setOrgId(id);
-  };
   // A new key per organization: every store, stream and scene starts fresh.
   return (
     <OrgApp
@@ -113,6 +151,9 @@ export function App() {
     />
   );
 }
+
+/** The org switcher's last entry: opens "Create a new world" instead of switching. */
+const NEW_WORLD = "__new_world__";
 
 function OrgApp({
   account,
@@ -131,6 +172,7 @@ function OrgApp({
 }) {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showNewWorld, setShowNewWorld] = useState(false);
   const [showOrg, setShowOrg] = useState(false);
   const [showAssets, setShowAssets] = useState(false);
   const [worldEditing, setWorldEditing] = useState(false);
@@ -200,6 +242,15 @@ function OrgApp({
   const { snapshot, status, feed, effectiveWork, now } = useOffice(!!me, onEvent);
   // The open world's own colors (a café's caramel) tint the whole interface.
   const theme = snapshot?.world?.theme;
+  // Clicking the wall calendar opens the month of scheduled jobs, not an inspector.
+  const [showCalendar, setShowCalendar] = useState(false);
+  useEffect(() => {
+    const o = selectedObject ? snapshot?.world?.objects.find((x) => x.id === selectedObject) : undefined;
+    if (o && snapshot!.world!.kinds[o.kind]?.calendar) {
+      setShowCalendar(true);
+      setSelectedObject(null);
+    }
+  }, [selectedObject, snapshot?.world]);
   useEffect(() => {
     const el = document.documentElement;
     const vars = ["--world-accent", "--world-bg", "--world-ink"];
@@ -238,6 +289,7 @@ function OrgApp({
     ...(me.actor.owner ? [{ label: t("Organization"), hint: t("departments, teams, jobs, permissions"), onSelect: () => setShowOrg(true) }] : []),
     ...(me.can["user.manage"] ? [{ label: t("People"), hint: t("invite, roles, permissions"), onSelect: () => setShowUsers(true) }] : []),
     ...(me.can["credential.manage"] ? [{ label: t("API keys"), hint: t("model providers for agents"), onSelect: () => setShowKeys(true) }] : []),
+    ...(me.actor.owner || me.can["org.design"] ? [{ label: t("Calendar"), hint: t("scheduled jobs, a month at a time"), onSelect: () => setShowCalendar(true) }] : []),
     ...(me.can["org.design"] ? [{ label: t("Art"), hint: t("3D models and textures"), onSelect: () => setShowAssets(true) }] : []),
     ...(me.can["audit.view"] ? [{ label: t("Audit log"), hint: t("who did what, allowed or denied"), onSelect: () => setShowAudit(true) }] : []),
     ...(account.user?.admin ? [{ label: t("All organizations"), hint: t("instance admin"), onSelect: () => setShowAdmin(true) }] : []),
@@ -269,13 +321,20 @@ function OrgApp({
           <span className="logo" aria-hidden>
             ▦
           </span>
-          {account.orgs.length > 1 ? (
-            <select className="org-switch" value={orgId} onChange={(e) => onSwitch(e.target.value)} aria-label={t("Organization")}>
+          {account.orgs.length > 1 || account.user?.admin ? (
+            // The worlds to switch between, and (for admins) a new one at the bottom.
+            <select className="org-switch" value={orgId} onChange={(e) => (e.target.value === NEW_WORLD ? setShowNewWorld(true) : onSwitch(e.target.value))} aria-label={t("Organization")}>
               {account.orgs.map((o) => (
                 <option key={o.id} value={o.id}>
                   {o.name}
                 </option>
               ))}
+              {account.user?.admin && (
+                <>
+                  <option disabled>──────────</option>
+                  <option value={NEW_WORLD}>{t("+ New world")}</option>
+                </>
+              )}
             </select>
           ) : (
             <span className="org-name">{snapshot.organization.name}</span>
@@ -498,7 +557,24 @@ function OrgApp({
       {entityChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} key={`${orgId}:${entityChat.type}:${entityChat.id}`} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} subject={entityChat} onClose={() => setEntityChat(null)} onKeys={() => { setEntityChat(null); setShowKeys(true); }} onOpenChat={openChat} />}
       {showOwnerChat && me.actor.owner && <OwnerChatDialog agents={snapshot.agents} tasks={snapshot.tasks} orgId={orgId} ownerId={me.actor.id} orgName={snapshot.organization.name} onClose={() => setShowOwnerChat(false)} onKeys={() => { setShowOwnerChat(false); setShowKeys(true); }} onOpenChat={openChat} />}
       {showAssets && <AssetsDialog onClose={() => setShowAssets(false)} notify={notify} />}
+      {showCalendar && (
+        <Suspense fallback={null}>
+          <CalendarDialog world={snapshot.world} agents={snapshot.agents} canEdit={!!me.actor.owner || !!me.can["org.design"]} notify={notify} onClose={() => setShowCalendar(false)}
+            onOpenObject={(id) => { setShowCalendar(false); selectObject(id); }} onOpenTask={(id) => { setShowCalendar(false); setOpenTask(id); }} />
+        </Suspense>
+      )}
       {showOrg && <OrgEditor orgId={orgId} catalog={catalog} snapshot={snapshot} onClose={() => setShowOrg(false)} notify={notify} />}
+      {showNewWorld && (
+        <CreateWorldDialog
+          account={account}
+          onClose={() => setShowNewWorld(false)}
+          onCreated={(id) => {
+            setShowNewWorld(false);
+            onAccountChanged();
+            if (id) onSwitch(id);
+          }}
+        />
+      )}
       {showAdmin && (
         <AdminDialog
           account={account}

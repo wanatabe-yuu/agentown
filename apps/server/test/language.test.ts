@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { say } from "../src/locales.ts";
 import { setup } from "./helpers.ts";
 
 let env: Awaited<ReturnType<typeof setup>>;
@@ -10,9 +11,15 @@ afterAll(async () => {
 });
 
 describe("template language", () => {
+  it("messages the server writes itself come in every language, English when one is missing", () => {
+    expect(say("zh", "{name} is waiting for your confirmation in their chat.", { name: "Vy" })).toBe("Vy 正在其聊天中等待你的确认。");
+    expect(say("en", "Review")).toBe("Review");
+    expect(say("th", "no such message")).toBe("no such message");
+  });
+
   it("only the owner sets it; names switch over and agents are told to write in it", async () => {
     expect((await env.call(env.token("lead-eng"), "PUT", "/api/language", { language: "vi" })).status).toBe(403);
-    expect((await env.call(env.owner, "PUT", "/api/language", { language: "fr" })).status).toBe(400);
+    expect((await env.call(env.owner, "PUT", "/api/language", { language: "xx" })).status).toBe(400);
     expect((await env.call(env.owner, "PUT", "/api/language", { language: "vi" })).status).toBe(200);
 
     const snap = (await env.call(env.owner, "GET", "/api/office/snapshot")).body;
@@ -26,6 +33,17 @@ describe("template language", () => {
     const back = (await env.call(env.owner, "GET", "/api/office/snapshot")).body;
     expect(back.departments.find((d: any) => d.id === "eng").name).toBe("Engineering");
     expect((await (await env.instance.org("agentown")).runConfig(agent)).instructions).not.toMatch(/Vietnamese/);
+  });
+
+  it("a job's own instructions reach every agent with that job, before the agent's", async () => {
+    const { revision, doc } = (await env.call(env.owner, "GET", "/api/config")).body;
+    doc.agentTemplates.find((t: { id: string }) => t.id === "leader-v1").instructions = "Leaders here write a plan first.";
+    expect((await env.call(env.owner, "PUT", "/api/config", { revision, doc })).status).toBe(200);
+    await env.db.query("UPDATE agents SET instructions='Linh likes tables.' WHERE id='lead-eng'");
+    const agent = (await env.db.query("SELECT * FROM agents WHERE id='lead-eng'")).rows[0];
+    const text = (await (await env.instance.org("agentown")).runConfig(agent)).instructions;
+    expect(text.indexOf("Leaders here write a plan first.")).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf("Leaders here write a plan first.")).toBeLessThan(text.indexOf("Linh likes tables."));
   });
 
   it("a template carries what its world is called; the importer can rename it", async () => {

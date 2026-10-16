@@ -8,6 +8,7 @@ import { Avatar, WhoName } from "./Avatar.tsx";
 import { uploadAsset } from "./Assets.tsx";
 import { ColorInput, StatusPill } from "./ui.tsx";
 import { ComputerConfig, ComputerDesk, ComputerHealth, ComputerScreen } from "./ComputerScreen.tsx";
+import { CleanerConfig, TrashConfig } from "./Cleanup.tsx";
 import { deskStates } from "./office3d/live.ts";
 
 const ObjectStudio = lazy(() => import("./office3d/ObjectStudio.tsx"));
@@ -247,8 +248,8 @@ function PlacedPanel(p: PanelProps) {
   const [lookOpen, setLookOpen] = useState(false);
   const [doer, setDoer] = useState<Record<string, string>>({});
   const [refs, setRefs] = useState<Array<{ chatId: string; title: string; subject: { type: "owner" | "agent" | "object"; id: string } }>>([]);
-  /** A computer's inspector: its look, its screen (a studio computer), its settings. */
-  const [tab, setTab] = useState<"appearance" | "pc" | "config">("pc");
+  /** A computer's inspector: its look, its screen (a studio computer), its settings; the robot's and the trash can's: their schedules. */
+  const [tab, setTab] = useState<"appearance" | "pc" | "config" | "clean">("pc");
   const clock = useTick(1000);
   // The conversations it came up in (asked, used, named): the owner can open them.
   useEffect(() => {
@@ -298,7 +299,8 @@ function PlacedPanel(p: PanelProps) {
   // Its settings as they are (objects from before per-computer settings run as their kind said).
   const legacy = computerOf(kind);
   const pcOf = (o: typeof object) => o.computer ?? { studio: !!legacy, apps: legacy?.apps ?? ["browser"], home: legacy?.home, connectors: legacy?.connectors ?? [], stream: legacy?.stream, camera: legacy?.camera, network: "direct" as const, remote: false };
-  const shownTab = !pcTabs ? "appearance" : tab === "pc" && !computer ? "config" : tab;
+  const cleanTabs = !!(kind.cleaner || kind.trash) && (p.owner || p.canDesign);
+  const shownTab = cleanTabs ? (tab === "appearance" ? "appearance" : "clean") : !pcTabs ? "appearance" : tab === "pc" && !computer ? "config" : tab === "clean" ? "pc" : tab;
   const roams = kind.behaviors.some((b) => b.type === "roam");
   const behaviors = [...new Set(kind.behaviors.map((b) => t(BEHAVIOR[b.type] ?? b.type)))];
   const changed = !!draft && !settling && (JSON.stringify(draft.object) !== JSON.stringify(saved) || JSON.stringify(draft.kind) !== JSON.stringify(world.kinds[saved.kind]));
@@ -448,7 +450,27 @@ function PlacedPanel(p: PanelProps) {
           </nav>
         </div>
       )}
+      {cleanTabs && (
+        <div className="tabs-row">
+          <nav className="tabs" role="tablist">
+            {(["clean", "appearance"] as const).map((x) => (
+              <button key={x} role="tab" aria-selected={shownTab === x} className={shownTab === x ? "active" : ""} onClick={() => setTab(x)}>
+                {x === "appearance" ? t("Appearance") : kind.cleaner ? t("Cleaning") : t("Trash")}
+              </button>
+            ))}
+          </nav>
+        </div>
+      )}
       <div className="panel-body">
+        {shownTab === "clean" && (
+          <>
+            {kind.cleaner ? (
+              <CleanerConfig value={object.cleaner} canEdit={!!p.canDesign || !!p.owner} onChange={(v) => edit({ cleaner: v })} notify={p.notify} />
+            ) : (
+              <TrashConfig value={object.trash} canEdit={!!p.canDesign || !!p.owner} onChange={(v) => edit({ trash: v })} notify={p.notify} />
+            )}
+          </>
+        )}
         {shownTab === "pc" && computer && (
           <>
             <ComputerScreen objectId={p.objectId} apps={computer.apps} notify={p.notify} />

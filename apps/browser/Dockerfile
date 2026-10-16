@@ -26,7 +26,17 @@ RUN mkdir -p /opt/agentown/xterm \
  && rm /tmp/xterm.tgz
 # Input as a person's: mouse and keys on the screen itself (the browser's bar, menus, extensions).
 RUN apk add --no-cache xdotool
+# yt-dlp for the terminal app (reading a reference video: its subtitles, cuts and sound), the
+# standalone musl build, pinned. It solves YouTube's player with node (--js-runtimes node).
+ARG YTDLP=https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_musllinux
+ARG YTDLP_SHA256=f3dec9cfeaf304cec98290fe41c6ad465d4b747d302473559643e7af24929722
+RUN wget -qO /usr/local/bin/yt-dlp "$YTDLP" \
+ && echo "$YTDLP_SHA256  /usr/local/bin/yt-dlp" | sha256sum -c - \
+ && chmod 0755 /usr/local/bin/yt-dlp
 COPY bridge.mjs /opt/agentown/bridge.mjs
+# render-shots: a video from a shot list (see the file), for the terminal app.
+COPY render-shots.mjs /opt/agentown/render-shots.mjs
+RUN printf '#!/bin/sh\nexec node /opt/agentown/render-shots.mjs "$@"\n' > /usr/local/bin/render-shots && chmod 0755 /usr/local/bin/render-shots
 USER 1000:1000
 # Chromium needs a writable home; the root filesystem is read-only.
 ENV HOME=/workspace/home

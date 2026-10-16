@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { api } from "./api.ts";
-import { type Lang, langChoice, languageLabel, LANGUAGES, setLang, t } from "./i18n.ts";
+import { browserLang, type Lang, langChoice, languageLabel, LANGUAGES, setLang, t } from "./i18n.ts";
 import { Modal } from "./ui.tsx";
 import { ConnectorsSettings } from "./Connectors.tsx";
 
-const browserLang = (): Lang => (navigator.language?.toLowerCase().startsWith("vi") ? "vi" : "en");
 const nameOf = (id: Lang) => LANGUAGES.find((l) => l.id === id)!.name;
 
 /** Per-person interface language, and the organization's template language (owner only). */

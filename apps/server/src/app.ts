@@ -27,6 +27,8 @@ import { forwardModel } from "./model-broker.ts";
 import { redactProviderKeys, redactedBody } from "./key-redaction.ts";
 import { redactLine } from "./util.ts";
 import { LANGUAGES } from "./locales.ts";
+import { Calendar } from "./calendar.ts";
+import { Cleanup } from "./cleanup.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -181,7 +183,13 @@ const S = {
   orgWorld: z.object({ revision: z.number().int(), world: z.record(z.string(), z.unknown()).nullable() }),
   assetQuery: z.object({ kind: z.enum(["model", "texture"]), name: z.string().max(200).default("") }),
   saveTemplate: z.object({ name: z.string().trim().min(1).max(80), description: z.string().max(500).default(""), term: termSchema.optional() }),
-  importTemplate: z.object({ yaml: z.string().min(1).max(256 * 1024), term: termSchema.optional() }),
+  installWorld: z.object({ id: z.string().min(1).max(200) }),
+  importTemplate: z.object({
+    yaml: z.string().min(1).max(256 * 1024),
+    term: termSchema.optional(),
+    /** A world bundle's art: the assets/ files its world uses. */
+    files: z.array(z.object({ path: z.string().max(64), contentBase64: z.string().max(28_000_000) })).max(64).default([]),
+  }),
   createUser: z.object({ displayName: z.string().trim().min(1).max(60), roleId: z.string().nullable().optional() }),
   updateUser: z.object({ displayName: z.string().trim().min(1).max(60).optional(), disabled: z.boolean().optional(), roleId: z.string().optional() }),
   grantUser: z.object({
@@ -286,6 +294,10 @@ export async function buildApp(opts: AppOptions) {
   });
   const computers = new Computers(instance, driver, { apiUrl: opts.runtimeApiUrl ?? "http://host.docker.internal:8080", log: (msg, extra) => console.log(`[computers] ${msg}`, extra ?? ""), chatModelFactory: opts.chatModelFactory, cloudflared: opts.cloudflared, remote: opts.remote });
   instance.computers = computers;
+  const cleanup = new Cleanup(instance, driver);
+  const calendar = new Calendar(instance);
+  instance.cleanup = cleanup;
+  instance.calendar = calendar;
   if (driver) computers.start();
   app.addHook("onClose", async () => computers.stop());
   const gateway = new CapabilityGateway(instance, proposals, ownerTools(S));
@@ -387,10 +399,16 @@ export async function buildApp(opts: AppOptions) {
 
   // ---- instance admin: organizations and their templates
   app.get("/api/templates", async (req) => ({ templates: await instance.listTemplates(principalOf(req)) }));
-  app.post("/api/templates", async (req, reply) => {
+  // A world bundle: its YAML and the art it uses (base64), up to 100 MB of art.
+  app.post("/api/templates", { bodyLimit: 140 * 1024 * 1024 }, async (req, reply) => {
     reply.status(201);
     const body = parse(S.importTemplate, req.body);
-    return instance.importTemplate(principalOf(req), body.yaml, body.term);
+    return instance.importTemplate(principalOf(req), body.yaml, body.term, body.files.map((f) => ({ path: f.path, content: Buffer.from(f.contentBase64, "base64") })));
+  });
+  app.get("/api/marketplace", async (req) => instance.listMarketplace(principalOf(req)));
+  app.post("/api/marketplace/install", async (req, reply) => {
+    reply.status(201);
+    return instance.installFromMarketplace(principalOf(req), parse(S.installWorld, req.body).id);
   });
   app.get<{ Params: { id: string } }>("/api/templates/:id/export", async (req, reply) => {
     const yaml = await instance.exportTemplate(principalOf(req), req.params.id);
@@ -556,6 +574,24 @@ export async function buildApp(opts: AppOptions) {
   r.post<{ Params: { id: string } }>("/objects/:id/actions", async (req) => {
     const b = parse(z.object({ action: z.string().min(1).max(64), agentId: z.string().min(1).max(64).optional() }).strict(), req.body);
     return svcOf(req).objectAction(actorOf(req), req.params.id, { action: b.action }, b.agentId ? { type: "agent", id: b.agentId } : undefined);
+  });
+
+  // ---- the cleaning robot and the trash can
+  r.get("/cleanup", async (req) => cleanup.view(svcOf(req), actorOf(req)));
+  r.post("/cleanup/sweep", async (req) => cleanup.sweepNow(svcOf(req), actorOf(req), parse(z.object({ dryRun: z.boolean().default(false) }).strict(), req.body ?? {}).dryRun));
+  r.post("/cleanup/empty", async (req) => cleanup.emptyNow(svcOf(req), actorOf(req)));
+  r.post<{ Params: { id: string } }>("/cleanup/items/:id/restore", async (req) => cleanup.restore(svcOf(req), actorOf(req), req.params.id));
+
+  // ---- the wall calendar
+  r.get<{ Querystring: { from?: string; to?: string } }>("/calendar", async (req) => calendar.view(svcOf(req), actorOf(req), req.query.from ?? "", req.query.to ?? ""));
+  r.post("/schedules", async (req, reply) => {
+    reply.status(201);
+    return calendar.create(svcOf(req), actorOf(req), req.body);
+  });
+  r.put<{ Params: { id: string } }>("/schedules/:id", async (req) => calendar.update(svcOf(req), actorOf(req), req.params.id, req.body));
+  r.delete<{ Params: { id: string } }>("/schedules/:id", async (req, reply) => {
+    await calendar.remove(svcOf(req), actorOf(req), req.params.id);
+    return reply.status(204).send();
   });
 
   // ---- agents
@@ -953,5 +989,5 @@ export async function buildApp(opts: AppOptions) {
     });
   }
 
-  return { app, recheckTerminals, terminals, ownerChat };
+  return { app, recheckTerminals, terminals, ownerChat, cleanup, calendar };
 }

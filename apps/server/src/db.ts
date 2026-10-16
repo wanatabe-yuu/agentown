@@ -581,6 +581,73 @@ const MIGRATIONS: string[] = [
      last_seen_at timestamptz,
      PRIMARY KEY (org_id, object_id)
    );`,
+  // 31: the cleaning robot and the trash can. What the robot sweeps waits in trash_items
+  // (rows moved out of their tables, files moved aside in their volume, archived chats
+  // marked) until the trash can deletes it for good; trash_runs remembers each sweep and empty.
+  `CREATE TABLE IF NOT EXISTS trash_items (
+     id text PRIMARY KEY,
+     org_id text NOT NULL REFERENCES organizations(id),
+     run_id text NOT NULL,
+     part text NOT NULL CHECK (part IN ('workspace','downloads','history','chats','assets')),
+     label text NOT NULL,
+     count int NOT NULL,
+     bytes bigint NOT NULL,
+     source jsonb NOT NULL,
+     rows jsonb,
+     trashed_at timestamptz NOT NULL DEFAULT now()
+   );
+   CREATE INDEX IF NOT EXISTS trash_items_org ON trash_items(org_id, trashed_at);
+   CREATE TABLE IF NOT EXISTS trash_runs (
+     id text PRIMARY KEY,
+     org_id text NOT NULL REFERENCES organizations(id),
+     kind text NOT NULL CHECK (kind IN ('sweep','empty')),
+     by text NOT NULL,
+     local_day text,
+     started_at timestamptz NOT NULL DEFAULT now(),
+     finished_at timestamptz,
+     report jsonb NOT NULL DEFAULT '{}',
+     error text
+   );
+   CREATE INDEX IF NOT EXISTS trash_runs_org ON trash_runs(org_id, kind, started_at DESC);
+   ALTER TABLE owner_chats ADD COLUMN IF NOT EXISTS trashed_at timestamptz;`,
+  // 32: the wall calendar. A schedule is a job (an object's action, or a task for an agent)
+  // repeating weekly or once; schedule_runs keeps each time it ran, one per local day.
+  `CREATE TABLE IF NOT EXISTS schedules (
+     id text PRIMARY KEY,
+     org_id text NOT NULL REFERENCES organizations(id),
+     job jsonb NOT NULL,
+     created_by text NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now(),
+     updated_at timestamptz NOT NULL DEFAULT now()
+   );
+   CREATE INDEX IF NOT EXISTS schedules_org ON schedules(org_id);
+   CREATE TABLE IF NOT EXISTS schedule_runs (
+     id text PRIMARY KEY,
+     org_id text NOT NULL REFERENCES organizations(id),
+     schedule_id text NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+     local_day text NOT NULL,
+     at timestamptz NOT NULL DEFAULT now(),
+     status text NOT NULL CHECK (status IN ('running','done','failed')),
+     task_id text,
+     error text,
+     UNIQUE (schedule_id, local_day)
+   );
+   CREATE INDEX IF NOT EXISTS schedule_runs_org ON schedule_runs(org_id, local_day);`,
+  // 33: who last chose an agent's key and model ("human:<id>", "agent:<id>", or "auto" when it
+  // took the organization's key itself). One a person chose, the agent may only suggest changing.
+  `ALTER TABLE agents ADD COLUMN IF NOT EXISTS config_set_by text;`,
+  // 34: the art a template carries (a world bundle's assets/ files), copied into each
+  // organization made from it.
+  `CREATE TABLE IF NOT EXISTS template_assets (
+     template_id text NOT NULL REFERENCES templates(id) ON DELETE CASCADE,
+     path text NOT NULL,
+     kind text NOT NULL,
+     content_type text NOT NULL,
+     size int NOT NULL,
+     sha256 text NOT NULL,
+     content bytea NOT NULL,
+     PRIMARY KEY (template_id, path)
+   );`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

@@ -51,7 +51,16 @@ export class FakeDriver implements RuntimeDriver {
   async teardown(_ns: string, runtimeId: string) {
     this.identities.delete(runtimeId);
   }
-  async exec(_ns: string, _pod: string, _cmd: string[], _s: ExecStreams) {
+  /** Commands run in pods; with execReply set, a command answers with its output and exits (a shell stays open otherwise). */
+  execs: string[][] = [];
+  execReply: ((cmd: string[]) => string) | null = null;
+  async exec(_ns: string, _pod: string, cmd: string[], s: ExecStreams) {
+    this.execs.push(cmd);
+    const reply = this.execReply;
+    if (reply) setImmediate(() => {
+      s.stdout.write(reply(cmd));
+      s.onExit({ status: "Success" });
+    });
     return { close: () => {} };
   }
 }
@@ -77,12 +86,12 @@ export async function setup(chatModelFactory?: ChatModelFactory, extra?: Partial
     }
     return apiKey.includes("small") ? ["claude-haiku-5-5"] : ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
   };
-  const instance = new Instance(db, configText, bus, SecretBox.forTests(), modelLister, new URL("../../../config/templates", import.meta.url).pathname);
-  const { ownerToken } = await instance.bootstrap();
+  const instance = new Instance(db, configText, bus, SecretBox.forTests(), modelLister, new URL("./fixtures/templates", import.meta.url).pathname);
+  const { ownerToken } = await instance.bootstrap({ seedDefaultOrg: true });
   const service = await instance.org(instance.defaultOrgId);
   const driver = new FakeDriver();
   const controller = new RuntimeController(instance, driver, { apiUrlForRuntimes: "http://test" });
-  const { app, recheckTerminals, ownerChat } = await buildApp({ instance, driver, chatModelFactory, ...extra });
+  const { app, recheckTerminals, ownerChat, cleanup, calendar } = await buildApp({ instance, driver, chatModelFactory, ...extra });
   // Two passes: create pods, then observe them Ready.
   const settle = async () => {
     await controller.reconcileAll();
@@ -124,6 +133,8 @@ export async function setup(chatModelFactory?: ChatModelFactory, extra?: Partial
     app,
     recheckTerminals,
     ownerChat,
+    cleanup,
+    calendar,
     owner: ownerToken!,
     /**
      * An agent's session token, as its team runtime would get it (one per agent per test).

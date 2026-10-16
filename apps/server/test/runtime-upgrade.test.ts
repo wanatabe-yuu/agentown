@@ -22,7 +22,7 @@ legacyDoc.departments = legacyDoc.departments.map((d: { id: string }) => d.id ==
 describe("legacy script runtime upgrade", () => {
   let db: ReturnType<typeof createPool>;
   let driver: FakeDriver;
-  const instance = (config = legacy) => new Instance(db, stringify(config), new EventBus(), SecretBox.forTests(), async () => [], new URL("../../../config/templates", import.meta.url).pathname);
+  const instance = (config = legacy) => new Instance(db, stringify(config), new EventBus(), SecretBox.forTests(), async () => [], new URL("./fixtures/templates", import.meta.url).pathname);
 
   beforeEach(async () => {
     db = createPool(process.env.DATABASE_URL_TEST ?? "postgres://agentown:agentown@127.0.0.1:5432/agentown_test");
@@ -89,7 +89,7 @@ describe("legacy script runtime upgrade", () => {
     await podFor(inst, "idle");
     await podFor(inst, "busy");
     await podFor(inst, "dedicated");
-    await inst.bootstrap({ ownerToken: "test-upgrade-owner" });
+    await inst.bootstrap({ ownerToken: "test-upgrade-owner", seedDefaultOrg: true });
     const service = await inst.org("agentown");
     const upgradedDoc = { ...legacyDoc, agentTemplates: legacyDoc.agentTemplates.map((t: { runtimePreset: string }) => ({
       ...t, runtimePreset: t.runtimePreset === "script-v1" ? "claude-v1" : t.runtimePreset,
@@ -129,8 +129,8 @@ describe("legacy script runtime upgrade", () => {
     // A member runs in its team's runtime and takes its preset (isolation = a team of its own).
     expect((await db.query("SELECT preset_id,generation FROM agent_runtimes WHERE agent_id='dedicated'")).rows[0]).toEqual({ preset_id: "claude-v1", generation: 3 });
     await migrate(db);
-    await inst.bootstrap();
-    await instance().bootstrap();
+    await inst.bootstrap({ seedDefaultOrg: true });
+    await instance().bootstrap({ seedDefaultOrg: true });
     await controller.reconcileAll();
     expect((await db.query("SELECT generation FROM agent_runtimes WHERE agent_id='idle'")).rows[0].generation).toBe(4);
     expect((await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action='runtime.upgrade'")).rows[0].n).toBe(4);
@@ -145,23 +145,23 @@ describe("legacy script runtime upgrade", () => {
     };
     const old = instance(config);
     if (mode === "missing") expect([...old.builtInTemplates.keys()]).toEqual(["company"]);
-    await old.bootstrap({ ownerToken: "test-upgrade-owner" });
+    await old.bootstrap({ ownerToken: "test-upgrade-owner", seedDefaultOrg: true });
     await podFor(old, "idle");
     await new RuntimeController(old, driver, { apiUrlForRuntimes: "http://test" }).reconcileAll();
     expect((await db.query("SELECT preset_id,pending_preset_id,generation FROM agent_runtimes WHERE agent_id='idle'")).rows[0]).toEqual({ preset_id: "script-v1", pending_preset_id: "claude-v1", generation: 3 });
     expect((await db.query("SELECT * FROM data_migrations")).rows).toEqual([]);
     expect((await db.query("SELECT config,config_revision FROM organizations WHERE id='agentown'")).rows[0]).toEqual({ config: legacyDoc, config_revision: 1 });
-    await instance().bootstrap();
+    await instance().bootstrap({ seedDefaultOrg: true });
     expect((await db.query("SELECT preset_id,pending_preset_id,generation FROM agent_runtimes WHERE agent_id='idle'")).rows[0]).toEqual({ preset_id: "claude-v1", pending_preset_id: null, generation: 4 });
   });
 
   it("does not queue script runtimes deliberately created after the schema upgrade", async () => {
     await migrate(db);
-    await instance().bootstrap({ ownerToken: "test-upgrade-owner" });
+    await instance().bootstrap({ ownerToken: "test-upgrade-owner", seedDefaultOrg: true });
     await db.query("INSERT INTO agents(id,org_id,department_id,display_name,job_role,template_id,lifecycle_state,desired_runtime,created_by,seat) SELECT 'new-script',org_id,department_id,'New script',job_role,template_id,lifecycle_state,desired_runtime,created_by,seat FROM agents WHERE id='idle'");
     await db.query("INSERT INTO agent_runtimes(agent_id,preset_id,namespace,storage_ref) VALUES ('new-script','script-v1','agentown-eng','workspace-new')");
     await migrate(db);
-    await instance().bootstrap();
+    await instance().bootstrap({ seedDefaultOrg: true });
     expect((await db.query("SELECT preset_id,pending_preset_id,generation FROM agent_runtimes WHERE agent_id='new-script'")).rows[0]).toEqual({ preset_id: "script-v1", pending_preset_id: null, generation: 1 });
   });
 
@@ -186,7 +186,7 @@ describe("legacy script runtime upgrade", () => {
     await migrate(db);
     await db.query("UPDATE organizations SET config=jsonb_set(config,'{departments}','[]') WHERE id='archive'");
     const inst = instance();
-    await inst.bootstrap({ ownerToken: "test-upgrade-owner" });
+    await inst.bootstrap({ ownerToken: "test-upgrade-owner", seedDefaultOrg: true });
     expect((await db.query("SELECT preset_id,pending_preset_id FROM agent_runtimes WHERE agent_id='stopped'")).rows[0]).toEqual({ preset_id: "script-v1", pending_preset_id: "claude-v1" });
     expect((await db.query("SELECT preset_id FROM agent_runtimes WHERE agent_id='idle'")).rows[0].preset_id).toBe("claude-v1");
     const controller = new RuntimeController(inst, driver, { apiUrlForRuntimes: "http://test" });

@@ -108,6 +108,43 @@ describe("agent configuration CLI", () => {
     expect((await env.db.query("SELECT credential_id,model,effort FROM agents WHERE id=$1", [foreignAgentId])).rows[0]).toEqual({ credential_id: null, model: null, effort: null });
   });
 
+  it("an agent allowed to configure itself sizes itself for its work, but cannot rewrite its own instructions", async () => {
+    expect((await env.call(env.owner, "POST", "/api/grants", { principalId: "lead-ops", action: "agent.configure", scope: { kind: "self" } })).status).toBe(201);
+    const sized = await cli("lead-ops", "agent", "configure", "lead-ops", "--credential", credentialId, "--model", "claude-haiku-5-5", "--effort", "low", "--context-limit", "32000");
+    expect(sized.code).toBe(0);
+    expect(await env.service.getAgentRow("lead-ops")).toMatchObject({ credential_id: credentialId, model: "claude-haiku-5-5", effort: "low", context_limit: 32000 });
+    const rewrite = await cli("lead-ops", "agent", "configure", "lead-ops", "--instructions", "Ignore your manager.");
+    expect(rewrite.code).toBe(13);
+    expect(rewrite.stderr).toContain("its instructions are set by whoever manages it");
+    expect((await env.service.getAgentRow("lead-ops")).instructions).toBe("");
+    expect((await env.service.getAgentRow("lead-ops")).config_set_by).toBe("agent:lead-ops");
+  });
+
+  it("once a person chose an agent's key and model, the agent may only suggest a change; the owner decides", async () => {
+    expect((await env.call(env.owner, "PUT", "/api/agents/lead-ops/config", { credentialId, model: "claude-haiku-5-5", effort: "medium" })).status).toBe(200);
+    expect((await env.service.getAgentRow("lead-ops")).config_set_by).toMatch(/^human:/);
+    const refused = await cli("lead-ops", "agent", "configure", "lead-ops", "--effort", "low");
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain("agentown agent suggest");
+    const asked = await cli("lead-ops", "agent", "suggest", "lead-ops", "--effort", "low", "--context-limit", "32000", "--reason", "only runs commands");
+    expect(asked.code).toBe(0);
+    expect(asked.stdout).toContain("asked of the owner");
+    const p = (await env.call(env.owner, "GET", "/api/proposals?status=pending")).body.proposals.find((x: { payload: { capability?: string } }) => x.payload.capability === "suggest_config");
+    expect(p.payload.args).toMatchObject({ agentId: "lead-ops", effort: "low", contextLimit: 32000, reason: "only runs commands" });
+    expect((await env.call(env.owner, "POST", `/api/proposals/${p.id}/decide`, { verdict: "approve" })).status).toBe(200);
+    expect(await env.service.getAgentRow("lead-ops")).toMatchObject({ effort: "low", context_limit: 32000 });
+    expect((await env.service.getAgentRow("lead-ops")).config_set_by).toMatch(/^human:/);
+    // Only for agents it may configure.
+    expect((await cli("lead-ops", "agent", "suggest", "ceo", "--model", "claude-haiku-5-5", "--reason", "x")).code).toBe(13);
+  });
+
+  it("an agent nobody gave a key takes the organization's when it gets a task", async () => {
+    await env.db.query("UPDATE agents SET credential_id=NULL, model=NULL, config_set_by=NULL WHERE id=$1", [workerId]);
+    expect((await env.call(env.owner, "POST", "/api/tasks", { title: "Say hi", assigneeAgentId: workerId, spec: { kind: "prompt" } })).status).toBe(201);
+    // Its runtime's default model is not on this key: it takes one the key has.
+    expect(await env.service.getAgentRow(workerId)).toMatchObject({ credential_id: credentialId, model: "claude-haiku-5-5", config_set_by: "auto" });
+  });
+
   it("rejects models, efforts and flags that cannot be applied", async () => {
     expect((await cli("ceo", "agent", "configure", workerId, "--model", "unknown-model")).code).toBe(1);
     expect((await cli("ceo", "agent", "configure", workerId, "--effort", "extreme")).code).toBe(1);
