@@ -1191,5 +1191,9 @@
  "{n} art files": "{n} fichiers d'art",
  "{n} departments": "{n} services",
  "{n} objects": "{n} objets",
- "+ New world": "+ Nouveau monde"
+ "+ New world": "+ Nouveau monde",
+ "What can you help me with?": "En quoi peux-tu m'aider ?",
+ "Let's look at where things stand": "Faisons le point ensemble",
+ "Summarize where things stand": "Résume la situation actuelle",
+ "Who needs me to handle something?": "Qui a besoin que je m'occupe de quelque chose ?"
 }

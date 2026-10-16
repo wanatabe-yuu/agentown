@@ -268,5 +268,14 @@
  "Marketing website": "เว็บไซต์การตลาด",
  "Operations": "ปฏิบัติการ",
  "Product": "ผลิตภัณฑ์",
- "Reviewer": "ผู้ตรวจทาน"
+ "Reviewer": "ผู้ตรวจทาน",
+ "Finished, waiting for your review": "เสร็จแล้ว รอคุณตรวจ",
+ "Done": "เสร็จแล้ว",
+ "Couldn't finish": "ทำไม่สำเร็จ",
+ "Blocked": "ติดขัด",
+ "Cancelled": "ยกเลิกแล้ว",
+ "{name} is waiting for your confirmation in their chat.": "{name} กำลังรอให้คุณยืนยันในแชตของตน",
+ "Review": "ตรวจ",
+ "step": "ขั้นที่",
+ "retry": "ทำใหม่"
 }

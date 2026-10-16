@@ -8,7 +8,7 @@ import { openProposal, recordProposal } from "./proposals.ts";
 import { createChatModel, ModelError } from "./chat/provider.ts";
 import { needsApproval } from "./chat/tools.ts";
 import { chatConfigSchema, emptyUsage, type ChatConfig, type ChatModelFactory, type ChatTool, type Message, type ModelInput, type Usage } from "./chat/types.ts";
-import { type Language, LANGUAGE_NAME } from "./locales.ts";
+import { type Language, LANGUAGE_NAME, say } from "./locales.ts";
 import type { Service } from "./service.ts";
 import { canTalk } from "@agentown/core/world";
 
@@ -89,19 +89,19 @@ export class OwnerChat {
   /** Work this chat handed off reports back once it is done, needs review or is stuck, from whoever did it. */
   private async reportTasks(service: Service, owner: Actor, chatId: string) {
     const links = (await this.db.query<{ task_id: string; reported_status: string | null }>("SELECT task_id, reported_status FROM chat_tasks WHERE chat_id=$1", [chatId])).rows;
-    const vi = service.config.organization.language === "vi";
+    const lang = service.config.organization.language;
     for (const l of links) {
       const t = await service.getTask(owner, l.task_id).catch(() => null);
       if (!t || !["review", "done", "failed", "blocked", "cancelled"].includes(t.status) || t.status === l.reported_status) continue;
       const claimed = await this.db.query("UPDATE chat_tasks SET reported_status=$3 WHERE chat_id=$1 AND task_id=$2 AND reported_status IS DISTINCT FROM $3", [chatId, l.task_id, t.status]);
       if (!claimed.rowCount) continue;
-      const head = ({
-        review: vi ? "Đã làm xong, chờ bạn duyệt" : "Finished, waiting for your review",
-        done: vi ? "Đã xong" : "Done",
-        failed: vi ? "Không làm được" : "Couldn't finish",
-        blocked: vi ? "Đang bị kẹt" : "Blocked",
-        cancelled: vi ? "Đã huỷ" : "Cancelled",
-      } as Record<string, string>)[t.status]!;
+      const head = say(lang, ({
+        review: "Finished, waiting for your review",
+        done: "Done",
+        failed: "Couldn't finish",
+        blocked: "Blocked",
+        cancelled: "Cancelled",
+      } as Record<string, string>)[t.status]!);
       const text = `**${head}: ${t.title}**${t.summary ? `\n\n${t.summary}` : t.statusReason ? `\n\n${t.statusReason}` : ""}`;
       await this.transcript(chatId, null, "assistant", text, false, t.assigneeAgentId ? { type: "agent", id: t.assigneeAgentId } : undefined);
     }
@@ -316,8 +316,7 @@ export class OwnerChat {
     const status = (await this.db.query<{ status: string }>("SELECT status FROM owner_chat_runs WHERE id=$1", [theirs])).rows[0]?.status ?? "unknown";
     const reply = (await this.db.query<{ text: string }>("SELECT string_agg(text, E'\n\n' ORDER BY id) AS text FROM owner_chat_messages WHERE run_id=$1 AND role='assistant' AND NOT partial", [theirs])).rows[0]?.text ?? null;
     if (reply) await this.transcript(c.id, runId, "assistant", reply, false, subject);
-    const vi = ctx.service.config.organization.language === "vi";
-    if (status === "waiting_approval") await this.transcript(c.id, runId, "notice", vi ? `${entity.profile.name} đang chờ bạn xác nhận trong chat riêng.` : `${entity.profile.name} is waiting for your confirmation in their chat.`, false, subject);
+    if (status === "waiting_approval") await this.transcript(c.id, runId, "notice", say(ctx.service.config.organization.language, "{name} is waiting for your confirmation in their chat.", { name: entity.profile.name }), false, subject);
     return { from: entity.profile.name, status, reply, shownToOwner: !!reply, chatId };
   }
   private async resolveCalls(c: ChatRow, r: RunRow, signal: AbortSignal) {

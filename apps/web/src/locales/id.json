@@ -1191,5 +1191,9 @@
  "{n} art files": "{n} file art",
  "{n} departments": "{n} departemen",
  "{n} objects": "{n} objek",
- "+ New world": "+ Dunia baru"
+ "+ New world": "+ Dunia baru",
+ "What can you help me with?": "Apa yang bisa kamu bantu?",
+ "Let's look at where things stand": "Mari lihat kondisi saat ini",
+ "Summarize where things stand": "Ringkas kondisi saat ini",
+ "Who needs me to handle something?": "Siapa yang perlu saya tangani?"
 }

@@ -268,5 +268,14 @@
  "Marketing website": "营销官网",
  "Operations": "运营部",
  "Product": "产品部",
- "Reviewer": "审核人"
+ "Reviewer": "审核人",
+ "Finished, waiting for your review": "已完成，等待你审核",
+ "Done": "已完成",
+ "Couldn't finish": "未能完成",
+ "Blocked": "受阻",
+ "Cancelled": "已取消",
+ "{name} is waiting for your confirmation in their chat.": "{name} 正在其聊天中等待你的确认。",
+ "Review": "审核",
+ "step": "步骤",
+ "retry": "重试"
 }

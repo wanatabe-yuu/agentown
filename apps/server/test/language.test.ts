@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { say } from "../src/locales.ts";
 import { setup } from "./helpers.ts";
 
 let env: Awaited<ReturnType<typeof setup>>;
@@ -10,6 +11,12 @@ afterAll(async () => {
 });
 
 describe("template language", () => {
+  it("messages the server writes itself come in every language, English when one is missing", () => {
+    expect(say("zh", "{name} is waiting for your confirmation in their chat.", { name: "Vy" })).toBe("Vy 正在其聊天中等待你的确认。");
+    expect(say("en", "Review")).toBe("Review");
+    expect(say("th", "no such message")).toBe("no such message");
+  });
+
   it("only the owner sets it; names switch over and agents are told to write in it", async () => {
     expect((await env.call(env.token("lead-eng"), "PUT", "/api/language", { language: "vi" })).status).toBe(403);
     expect((await env.call(env.owner, "PUT", "/api/language", { language: "xx" })).status).toBe(400);

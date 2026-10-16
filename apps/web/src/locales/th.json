@@ -1191,5 +1191,9 @@
  "{n} art files": "ไฟล์ art {n} ไฟล์",
  "{n} departments": "{n} แผนก",
  "{n} objects": "วัตถุ {n} ชิ้น",
- "+ New world": "+ โลกใหม่"
+ "+ New world": "+ โลกใหม่",
+ "What can you help me with?": "คุณช่วยอะไรฉันได้บ้าง?",
+ "Let's look at where things stand": "มาดูสถานการณ์ตอนนี้กัน",
+ "Summarize where things stand": "สรุปสถานการณ์ตอนนี้",
+ "Who needs me to handle something?": "ใครต้องการให้ฉันจัดการอะไรบ้าง?"
 }

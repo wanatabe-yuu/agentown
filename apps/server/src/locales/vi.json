@@ -268,5 +268,14 @@
  "Marketing website": "Website marketing",
  "Operations": "Vận hành",
  "Product": "Sản phẩm",
- "Reviewer": "Người duyệt"
+ "Reviewer": "Người duyệt",
+ "Finished, waiting for your review": "Đã làm xong, chờ bạn duyệt",
+ "Done": "Đã xong",
+ "Couldn't finish": "Không làm được",
+ "Blocked": "Đang bị kẹt",
+ "Cancelled": "Đã huỷ",
+ "{name} is waiting for your confirmation in their chat.": "{name} đang chờ bạn xác nhận trong chat riêng.",
+ "Review": "Duyệt",
+ "step": "bước",
+ "retry": "làm lại"
 }

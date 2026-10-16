@@ -1191,5 +1191,9 @@
  "{n} agents to start": "{n} agent ban đầu",
  "{n} art files": "{n} file art",
  "{n} departments": "{n} phòng ban",
- "{n} objects": "{n} đồ vật"
+ "{n} objects": "{n} đồ vật",
+ "What can you help me with?": "Bạn có thể giúp tôi những gì?",
+ "Let's look at where things stand": "Cùng phân tích tình trạng hiện tại",
+ "Summarize where things stand": "Tóm tắt tình trạng hiện tại",
+ "Who needs me to handle something?": "Ai đang cần tôi xử lý?"
 }

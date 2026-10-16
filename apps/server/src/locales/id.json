@@ -268,5 +268,14 @@
  "Marketing website": "Situs web pemasaran",
  "Operations": "Operasi",
  "Product": "Produk",
- "Reviewer": "Peninjau"
+ "Reviewer": "Peninjau",
+ "Finished, waiting for your review": "Selesai, menunggu tinjauan Anda",
+ "Done": "Selesai",
+ "Couldn't finish": "Tidak dapat diselesaikan",
+ "Blocked": "Terhambat",
+ "Cancelled": "Dibatalkan",
+ "{name} is waiting for your confirmation in their chat.": "{name} menunggu konfirmasi Anda di obrolannya.",
+ "Review": "Tinjau",
+ "step": "langkah",
+ "retry": "ulang"
 }

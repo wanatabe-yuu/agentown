@@ -1191,5 +1191,9 @@
  "{n} art files": "아트 파일 {n}개",
  "{n} departments": "부서 {n}개",
  "{n} objects": "오브젝트 {n}개",
- "+ New world": "+ 새 world"
+ "+ New world": "+ 새 world",
+ "What can you help me with?": "무엇을 도와줄 수 있나요?",
+ "Let's look at where things stand": "현재 상황을 함께 살펴봐요",
+ "Summarize where things stand": "현재 상황 요약",
+ "Who needs me to handle something?": "누가 내 처리를 기다리고 있나요?"
 }

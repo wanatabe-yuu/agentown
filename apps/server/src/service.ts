@@ -53,7 +53,7 @@ import type { Permissions } from "./kernel/permissions.ts";
 
 export type { LoadedPolicy, Share };
 import type { SecretBox } from "./secrets.ts";
-import { type Language, languageInstruction, translateNames } from "./locales.ts";
+import { type Language, languageInstruction, say, translateNames } from "./locales.ts";
 import {
   ApiError,
   actorRef,
@@ -453,9 +453,8 @@ export class Service {
   async requestLeadReview(leadId: string, proposalId: string, proposer: Actor, what: string, args: unknown, fromTask: string | null) {
     const who = proposer.kind === "agent" ? (await this.getAgentRow(proposer.id)).display_name : "someone";
     const from = fromTask ? (await this.getTaskRow(fromTask)).title : null;
-    const vi = this.config.organization.language === "vi";
     await this.createTask(await this.ownerActor(), {
-      title: `${vi ? "Duyệt" : "Review"}: ${what} — ${who}`.slice(0, 200),
+      title: `${say(this.config.organization.language, "Review")}: ${what} — ${who}`.slice(0, 200),
       description: [
         `${who} asks to run "${what}"${from ? ` while working on "${from}"` : ""}. The owner lets you decide requests like this.`,
         `Arguments:\n${JSON.stringify(args, null, 2).slice(0, 4000)}`,
@@ -2104,7 +2103,7 @@ export class Service {
     try {
       if (!creator) throw new Error("the campaign's creator no longer exists");
       await this.createTask(creator, {
-        title: `${c.title} · ${this.config.organization.language === "vi" ? "bước" : "step"} ${step}${broken.some((t) => t.campaign_step !== null) ? (this.config.organization.language === "vi" ? " (làm lại)" : " (retry)") : ""}`,
+        title: `${c.title} · ${say(this.config.organization.language, "step")} ${step}${broken.some((t) => t.campaign_step !== null) ? ` (${say(this.config.organization.language, "retry")})` : ""}`,
         description,
         acceptanceCriteria: "The step moved the campaign toward its goal, or the campaign was marked done or failed.",
         assigneeAgentId: c.lead_agent_id,

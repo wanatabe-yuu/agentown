@@ -268,5 +268,14 @@
  "Marketing website": "マーケティングサイト",
  "Operations": "運用",
  "Product": "プロダクト",
- "Reviewer": "レビュアー"
+ "Reviewer": "レビュアー",
+ "Finished, waiting for your review": "完了しました。確認をお待ちしています",
+ "Done": "完了",
+ "Couldn't finish": "完了できませんでした",
+ "Blocked": "止まっています",
+ "Cancelled": "キャンセル済み",
+ "{name} is waiting for your confirmation in their chat.": "{name} がチャットであなたの確認を待っています。",
+ "Review": "確認",
+ "step": "ステップ",
+ "retry": "再試行"
 }

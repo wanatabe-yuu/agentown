@@ -268,5 +268,14 @@
  "Marketing website": "마케팅 웹사이트",
  "Operations": "운영",
  "Product": "제품",
- "Reviewer": "검토자"
+ "Reviewer": "검토자",
+ "Finished, waiting for your review": "완료됨, 검토를 기다리는 중",
+ "Done": "완료",
+ "Couldn't finish": "완료하지 못함",
+ "Blocked": "막힘",
+ "Cancelled": "취소됨",
+ "{name} is waiting for your confirmation in their chat.": "{name}이(가) 대화에서 확인을 기다리고 있습니다.",
+ "Review": "검토",
+ "step": "단계",
+ "retry": "재시도"
 }

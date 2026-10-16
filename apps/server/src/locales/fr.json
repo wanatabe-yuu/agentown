@@ -268,5 +268,14 @@
  "Marketing website": "Site marketing",
  "Operations": "Opérations",
  "Product": "Produit",
- "Reviewer": "Relecteur"
+ "Reviewer": "Relecteur",
+ "Finished, waiting for your review": "Terminé, en attente de ta validation",
+ "Done": "Terminé",
+ "Couldn't finish": "Pas pu terminer",
+ "Blocked": "Bloqué",
+ "Cancelled": "Annulé",
+ "{name} is waiting for your confirmation in their chat.": "{name} attend ta confirmation dans son chat.",
+ "Review": "Validation",
+ "step": "étape",
+ "retry": "nouvel essai"
 }

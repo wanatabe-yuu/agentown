@@ -335,7 +335,7 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
         {!messages.length && !active && !readOnly && <div className="chat-welcome">
           <h3>{subject ? t("Talk with {name}", { name: assistantName }) : t("Your world, one conversation")}</h3>
           <p>{subject ? t("Ask a question or think something through together. Tasks are created when there is work to do.") : t("Ask about your team, or tell me what you want to change.")}</p>
-          <div className="chat-suggestions">{(subject ? ["Bạn có thể giúp tôi những gì?", "Cùng phân tích tình trạng hiện tại"] : ["Tóm tắt tình trạng hiện tại", "Ai đang cần tôi xử lý?"]).map(text => <button type="button" key={text} onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}</div>
+          <div className="chat-suggestions">{(subject ? [t("What can you help me with?"), t("Let's look at where things stand")] : [t("Summarize where things stand"), t("Who needs me to handle something?")]).map(text => <button type="button" key={text} onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}</div>
           <small className="muted">{subject ? t("Private to you · Important changes need confirmation.") : t("Private to you · I read everything but change nothing myself: I ask the right person, or hand work to the CEO once you confirm.")}</small>
         </div>}
         {timeline.map(row => row.kind === "action" ? <ActionCard key={row.item.id} action={row.item} busy={busy} decide={decide} agents={agents} tasks={tasks} credentials={index?.credentials ?? []} /> : row.kind === "activity" ? <details className="chat-activity" key={row.runId}>

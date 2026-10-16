@@ -1191,5 +1191,9 @@
  "{n} art files": "アートファイル {n} 件",
  "{n} departments": "{n} 部署",
  "{n} objects": "{n} 個のオブジェクト",
- "+ New world": "+ 新しい世界"
+ "+ New world": "+ 新しい世界",
+ "What can you help me with?": "何を手伝ってもらえますか？",
+ "Let's look at where things stand": "今の状況を一緒に見てみましょう",
+ "Summarize where things stand": "今の状況をまとめて",
+ "Who needs me to handle something?": "誰が私の対応を待っていますか？"
 }

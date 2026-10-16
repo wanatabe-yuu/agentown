@@ -1191,5 +1191,9 @@
  "{n} art files": "{n} файлов графики",
  "{n} departments": "{n} отделов",
  "{n} objects": "{n} объектов",
- "+ New world": "+ Новый мир"
+ "+ New world": "+ Новый мир",
+ "What can you help me with?": "Чем ты можешь мне помочь?",
+ "Let's look at where things stand": "Давай разберём текущую ситуацию",
+ "Summarize where things stand": "Кратко опиши текущую ситуацию",
+ "Who needs me to handle something?": "Кому нужно, чтобы я что-то решил?"
 }

@@ -1191,5 +1191,9 @@
  "{n} art files": "{n} 个美术文件",
  "{n} departments": "{n} 个部门",
  "{n} objects": "{n} 件物品",
- "+ New world": "+ 新建世界"
+ "+ New world": "+ 新建世界",
+ "What can you help me with?": "你能帮我做什么？",
+ "Let's look at where things stand": "一起分析一下当前情况",
+ "Summarize where things stand": "总结当前情况",
+ "Who needs me to handle something?": "谁需要我处理事情？"
 }

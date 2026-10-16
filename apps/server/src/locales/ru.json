@@ -268,5 +268,14 @@
  "Marketing website": "Сайт маркетинга",
  "Operations": "Операции",
  "Product": "Продукт",
- "Reviewer": "Рецензент"
+ "Reviewer": "Рецензент",
+ "Finished, waiting for your review": "Готово, ждёт вашей проверки",
+ "Done": "Готово",
+ "Couldn't finish": "Не удалось завершить",
+ "Blocked": "Заблокировано",
+ "Cancelled": "Отменено",
+ "{name} is waiting for your confirmation in their chat.": "{name} ждёт вашего подтверждения в своём чате.",
+ "Review": "Проверка",
+ "step": "шаг",
+ "retry": "повтор"
 }

@@ -32,6 +32,10 @@ export const languageInstruction = (l: Language) =>
 export const DICTS: Record<Language, Record<string, string>> = { en: {}, vi, zh, ja, ko, es, fr, de, pt, ru, id: idn, th };
 const TEXT_FIELDS = new Set(["name", "title", "label"]);
 
+/** A message the server writes itself, in the organization's language ({name} fills in). */
+export const say = (l: Language, s: string, vars: Record<string, string> = {}) =>
+  (DICTS[l][s] ?? s).replace(/\{(\w+)\}/g, (m, k: string) => vars[k] ?? m);
+
 /** The same document with template names moved from one language to another. */
 export function translateNames<T>(doc: T, from: Language, to: Language): T {
   if (from === to) return doc;
