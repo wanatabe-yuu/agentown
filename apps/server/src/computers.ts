@@ -1521,8 +1521,11 @@ echo "Agentown answers directly at $DIRECT (encrypted end to end)."
 # sudo may leave out where Docker Desktop, OrbStack or Homebrew put it.
 PATH="$PATH:/usr/local/bin:/opt/homebrew/bin"
 if ! command -v docker >/dev/null 2>&1; then
-  [ "$(uname -s)" = Linux ] || { echo "Install Docker first (Docker Desktop or OrbStack), then run this again." >&2; exit 1; }
-  echo "Installing Docker..."; curl -fsSL https://get.docker.com | sh
+  # Not installed for you: a script piped from the internet would run as root here, and nothing could pin it.
+  echo "Docker is not installed. Install it first, then run this again:" >&2
+  echo "  Linux: your distribution's docker package, or https://docs.docker.com/engine/install/" >&2
+  echo "  macOS/Windows: Docker Desktop or OrbStack" >&2
+  exit 1
 fi
 command -v systemctl >/dev/null 2>&1 && systemctl enable --now docker >/dev/null 2>&1 || true
 CPUS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 0)

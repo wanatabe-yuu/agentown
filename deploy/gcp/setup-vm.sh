@@ -24,10 +24,12 @@ fi
 
 # Node 24 + pnpm
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 24 ]; then
-  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
-  apt-get install -y -q nodejs
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  apt-get update -q && apt-get install -y -q nodejs
 fi
-corepack enable && corepack prepare pnpm@10 --activate
+corepack enable && corepack prepare pnpm@10.0.0 --activate
 
 # PostgreSQL: role + databases
 sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='agentown'" | grep -q 1 \

@@ -8,7 +8,7 @@
 // frames going up are H.264 video (1 byte: 1 = keyframe, 0 = not, then one access unit).
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync, statfsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, statfsSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -222,10 +222,11 @@ function startShell() {
   });
   term.shell = sh;
 }
+const XTERM_FILES = { "/xterm.js": ["./xterm/lib/xterm.js", "text/javascript"], "/xterm.css": ["./xterm/css/xterm.css", "text/css"] };
 const termPage = `<!doctype html><meta charset="utf-8"><title>Terminal</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/6.0.0/xterm.min.css">
+<link rel="stylesheet" href="/xterm.css">
 <style>html,body{margin:0;height:100%;background:#0b0e14;overflow:hidden}#t{height:100%;display:flex;align-items:center;justify-content:center}</style>
-<div id="t"></div><script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/6.0.0/xterm.js"></script><script>
+<div id="t"></div><script src="/xterm.js"></script><script>
 const key=${JSON.stringify(termKey)};
 const size=Math.max(10,Math.floor(Math.min(innerWidth/(120*0.61),innerHeight/(36*1.22))));
 const term=new Terminal({cols:120,rows:36,fontSize:size,cursorBlink:true,scrollback:5000,theme:{background:"#0b0e14"}});
@@ -241,6 +242,9 @@ http
     if (req.headers.host !== `127.0.0.1:${TERM_PORT}`) return res.writeHead(403).end();
     const guard = { "x-frame-options": "DENY", "content-security-policy": "frame-ancestors 'none'", "cache-control": "no-store" };
     if (req.method === "GET" && req.url === "/") return res.writeHead(200, { ...guard, "content-type": "text/html; charset=utf-8" }).end(termPage);
+    // xterm.js, put in the image at build time (pinned by SHA-256 in the Dockerfile); never fetched from a CDN.
+    const asset = req.method === "GET" && XTERM_FILES[req.url];
+    if (asset) return res.writeHead(200, { ...guard, "content-type": asset[1] }).end(readFileSync(new URL(asset[0], import.meta.url)));
     if (req.headers["x-agentown-term"] !== termKey) return res.writeHead(403).end();
     if (req.method === "GET" && req.url === "/out") {
       res.writeHead(200, { ...guard, "content-type": "text/event-stream" });

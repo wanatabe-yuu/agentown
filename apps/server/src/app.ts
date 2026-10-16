@@ -1,7 +1,7 @@
 import type { RemotePort } from "./remote-port.ts";
 import { chatSubjectSchema, type ChatSubject } from "./chat/subjects.ts";
-import { createReadStream, existsSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
+import { createReadStream, existsSync, readFileSync } from "node:fs";
+import { join, resolve as resolvePath } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { ACTIONS, type Actor, EFFORTS, WORK_STATES, authHeaderSchema, termSchema } from "@agentown/core";
 import fastifyStatic from "@fastify/static";
@@ -338,14 +338,25 @@ export async function buildApp(opts: AppOptions) {
   const player = async (req: FastifyRequest<{ Querystring: { src?: string } }>, reply: FastifyReply) => {
     const src = String(req.query.src ?? "");
     if (!/^https?:\/\//i.test(src) || src.length > 1000) throw badRequest("src must be an http(s) link");
-    reply.type("text/html; charset=utf-8").header("content-security-policy", "default-src 'none'; media-src * blob: data:; img-src * data:; connect-src *; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; worker-src blob:");
+    reply.type("text/html; charset=utf-8").header("content-security-policy", "default-src 'none'; media-src * blob: data:; img-src * data:; connect-src *; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self'; worker-src blob:");
     return `<!doctype html><meta charset="utf-8"><title>Player</title><style>html,body{margin:0;height:100%;background:#000}video{width:100%;height:100%;object-fit:contain}</style>` +
-      `<video id="v" autoplay muted playsinline controls loop></video><script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>` +
+      `<video id="v" autoplay muted playsinline controls loop></video><script src="player.js"></script>` +
       `<script>const src=${JSON.stringify(src).replace(/</g, "\\u003c")};const v=document.getElementById("v");` +
       `if(/\\.m3u8(\\?|#|$)/i.test(src)&&window.Hls&&Hls.isSupported()){const h=new Hls({capLevelToPlayerSize:true});h.loadSource(src);h.attachMedia(v)}else v.src=src;</script>`;
   };
   app.get("/player", player);
   app.get("/api/browser/player", player);
+  // hls.js, built into the web UI (pinned in the lockfile) and served from here, never from a CDN. The page's relative
+  // "player.js" lands on whichever of these two its own address is next to.
+  let hls: Buffer | undefined;
+  const hlsJs = async (_req: FastifyRequest, reply: FastifyReply) => {
+    const file = opts.webDist && join(opts.webDist, "vendor/hls.min.js");
+    if (!file || !existsSync(file)) throw notFound("the player script (build the web UI)");
+    hls ??= readFileSync(file);
+    return reply.type("text/javascript; charset=utf-8").header("cache-control", "public, max-age=3600").send(hls);
+  };
+  app.get("/player.js", hlsJs);
+  app.get("/api/browser/player.js", hlsJs);
   app.get("/api/me", async (req) => instance.me(principalOf(req)));
 
   // ---- team runtimes: list their members and start a session (own token) for each.

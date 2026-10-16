@@ -16,6 +16,14 @@ RUN apk add --no-cache chromium xvfb xkbcomp xkeyboard-config ttf-dejavu font-no
  && mkdir -p /workspace && chown 1000:1000 /workspace
 # The terminal app: bash in a real terminal (`script` makes one), and a few everyday tools.
 RUN apk add --no-cache bash util-linux-misc ncurses curl git
+# xterm.js for the terminal app, from the npm tarball (its published sha512 is TQwDdQGt…MOYg==), served by bridge.mjs itself.
+ARG XTERM=https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz
+ARG XTERM_SHA256=908e66e04af6c8dc6b00dd3b54de088e2e81e5ed866284fd6c2fb3c2d1c7a3f6
+RUN mkdir -p /opt/agentown/xterm \
+ && wget -qO /tmp/xterm.tgz "$XTERM" \
+ && echo "$XTERM_SHA256  /tmp/xterm.tgz" | sha256sum -c - \
+ && tar -xzf /tmp/xterm.tgz -C /opt/agentown/xterm --strip-components=1 package/lib/xterm.js package/css/xterm.css \
+ && rm /tmp/xterm.tgz
 # Input as a person's: mouse and keys on the screen itself (the browser's bar, menus, extensions).
 RUN apk add --no-cache xdotool
 COPY bridge.mjs /opt/agentown/bridge.mjs

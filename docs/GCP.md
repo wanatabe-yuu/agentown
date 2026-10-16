@@ -108,6 +108,19 @@ scripts/demo.sh                                          # CEO → leader → en
 
 When running from source in a real environment, set `AGENTOWN_SECRET_KEY` (32 bytes, base64: `openssl rand -base64 32`) instead of the auto-generated dev key file `.agentown/secret-key`. Store this key somewhere safe: lose the key and you lose the stored API keys.
 
+## A public address through a Cloudflare tunnel (optional)
+
+Port 8080 stays closed. To reach the UI on a domain of yours, run a [Cloudflare tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) on the same host that points your hostname at `localhost:8080` (the server trusts the proxy's `X-Forwarded-Proto` only from the host itself). The same `cloudflared` binary also gives pairing links their temporary address; without it they use the server's own address (`AGENTOWN_PAIR_TUNNEL=off` turns it off).
+
+Install the latest stable `cloudflared` release (not Cloudflare's `next.pkg.cloudflare.com` apt channel, which is pre-release). No checksum is pinned on purpose: "latest" moves, and a pinned hash would break the install as soon as it does.
+
+```bash
+curl -fsSL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+sudo install -m 0755 /tmp/cloudflared /usr/local/bin/cloudflared
+```
+
+Run it as a service with the tunnel token in a root-only file passed with `--token-file`, not on the command line. Upgrade by running the two commands again and restarting the service.
+
 ## Adding nodes (one node per employee)
 
 Each agent is **always** its own Pod. If you want an agent to have **its own machine**, hire the agent with a template that uses the `claude-dedicated-v1` preset (for example `engineer-claude-dedicated-v1`) and add one “dedicated” VM for each such agent:

@@ -41,12 +41,14 @@ To try a release build locally: `scripts/package-release.sh v0.1.0 out/` (needs 
 | npm dependencies changing silently | `pnpm install --frozen-lockfile` in CI and release. Only `esbuild` may run install scripts (`onlyBuiltDependencies`). |
 | A poisoned CI cache reaching a signed build | The release job uses no dependency cache. |
 | The workflow token being abused | Default permissions are `contents: read`. Only the release job gets `contents: write`, `id-token: write`, `attestations: write`. `actions/checkout` runs with `persist-credentials: false`. |
+| A script or file loaded by the UI or a computer from a CDN | There is none: hls.js (the video player) is a pinned dependency of the web build and is served by the server itself; xterm.js (a computer's terminal) is downloaded when the browser image is built, checked against a SHA-256 in `apps/browser/Dockerfile`, and served by the computer's own bridge. |
+| The pairing script installing software as root on someone's machine | It no longer installs Docker (it used to pipe `get.docker.com` into a shell); it stops and says to install Docker first. |
 | Knowing what a release contains | A CycloneDX SBOM ships with it, and it is listed in `SHA256SUMS`, so it is signed too. |
 
 Remaining gaps to be aware of:
 
 - `curl … install.sh | sudo bash` trusts TLS and GitHub for the installer itself: the script that does the verifying is not verified before it runs. If you need more, download `install.sh` and `SHA256SUMS*` from the Release page, verify them as shown below, and run it then. `install.sh` is listed in the signed `SHA256SUMS`. From the second install on, `agentownctl upgrade` uses the `install.sh` inside the already-verified release.
-- NodeSource, Docker and k3s are installed through their official channels: apt repositories with GPG signatures, and the k3s installer checks the binary's SHA-256. Agentown does not pin these.
+- NodeSource, Docker and k3s are installed through their official channels: apt repositories with GPG signatures (the signing keys are fetched from the vendors, not pinned, so a vendor can rotate a key without breaking installs), and the k3s installer checks the binary's SHA-256. Agentown does not pin these.
 - The runtime image is built for `linux/amd64` only.
 - Turn on **branch protection** for `main` and **tag protection** (a ruleset) for `v*`. Anyone who can push a `v*` tag, or run the Release workflow on `main` (anyone with write access), can produce a validly signed release.
 

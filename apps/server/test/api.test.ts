@@ -726,7 +726,12 @@ describe("people and their permissions", () => {
     }
     expect(String((await get("/healthz", { "x-forwarded-proto": "https" })).headers["strict-transport-security"])).toMatch(/max-age=\d+/);
     // A route's own CSP wins over the default.
-    expect(String((await get("/player?src=https://example.com/a.mp4")).headers["content-security-policy"])).toContain("default-src 'none'");
+    const player = await get("/player?src=https://example.com/a.mp4");
+    expect(String(player.headers["content-security-policy"])).toContain("default-src 'none'");
+    // No third party in the player: its script comes from this server, so it is missing until the web UI is built.
+    expect(String(player.headers["content-security-policy"])).not.toMatch(/cdnjs|jsdelivr|unpkg/);
+    expect(player.body).not.toMatch(/https:\/\/[^"']*\.js/);
+    expect((await get("/player.js")).statusCode).toBe(404);
   });
 
   it("task controls follow the caller's rights", async () => {

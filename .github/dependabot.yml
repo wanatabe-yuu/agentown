@@ -27,6 +27,14 @@ updates:
     ignore:
       - dependency-name: node
         update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker
+    directory: /apps/browser
+    schedule: { interval: weekly }
+    cooldown:
+      default-days: 14
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: gomod
     directory: /cli
     schedule: { interval: weekly }
