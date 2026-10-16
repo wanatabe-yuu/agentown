@@ -19,7 +19,7 @@ projects:
 runtimeCatalog:
   # Deterministic adapter: runs the task's shell script. No model involved.
   - id: script-v1
-    image: agentown/harness:0.4.0
+    image: agentown/harness:0.5.0
     imagePullPolicy: Never
     harness: script
     workspace: { size: 256Mi }
@@ -30,7 +30,7 @@ runtimeCatalog:
   # (OpenAI, DeepSeek, Grok, Gemini, Mistral, Groq, OpenRouter, Together, custom).
   # `model` below is the default for Anthropic keys only.
   - id: claude-v1
-    image: agentown/harness:0.4.0
+    image: agentown/harness:0.5.0
     imagePullPolicy: Never
     harness: claude
     model: claude-opus-5-5
@@ -41,7 +41,7 @@ runtimeCatalog:
     member: { cpu: 100m, memory: 192Mi }
   # Same runtime, but the agent gets a node of its own (see scripts/add-node.sh).
   - id: claude-dedicated-v1
-    image: agentown/harness:0.4.0
+    image: agentown/harness:0.5.0
     imagePullPolicy: Never
     harness: claude
     model: claude-opus-5-5
@@ -53,7 +53,7 @@ runtimeCatalog:
   # screen, driven by agents and watched by people. Not for agents' runtimes;
   # each computer that is on runs one pod of this size.
   - id: browser-v1
-    image: agentown/browser:0.4.0
+    image: agentown/browser:0.5.0
     imagePullPolicy: Never
     harness: browser
     workspace: { size: 2Gi }
