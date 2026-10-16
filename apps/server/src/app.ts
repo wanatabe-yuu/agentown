@@ -256,7 +256,19 @@ export async function buildApp(opts: AppOptions) {
   const { instance, driver } = opts;
   // Register keys internally so old logs/chat responses are filtered after a restart too.
   for (const row of (await instance.db.query("SELECT ciphertext FROM credentials")).rows) instance.secrets.open(row.ciphertext);
-  const app = Fastify({ logger: opts.logger ? { level: "info" } : false, bodyLimit: 4 * 1024 * 1024, forceCloseConnections: true });
+  // trustProxy "loopback": the public address is a tunnel/proxy on this host (cloudflared), whose
+  // X-Forwarded-Proto says https. Anything else (pods, paired machines, the LAN) is not believed.
+  const app = Fastify({ logger: opts.logger ? { level: "info" } : false, bodyLimit: 4 * 1024 * 1024, forceCloseConnections: true, trustProxy: "loopback" });
+  // Nothing of ours is meant to be framed, sniffed or sent a referrer. Routes may replace the CSP (/player does).
+  // A script-src policy for the UI is not set here: it needs a pass over xterm, the 3D office and the video players.
+  app.addHook("onRequest", async (req, reply) => {
+    reply
+      .header("x-content-type-options", "nosniff")
+      .header("x-frame-options", "DENY")
+      .header("referrer-policy", "no-referrer")
+      .header("content-security-policy", "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'");
+    if (req.protocol === "https") reply.header("strict-transport-security", "max-age=31536000");
+  });
   const ownerChat = new OwnerChat(instance, ownerTools(S), opts.chatModelFactory, opts.onStateChange);
   // Proposals are decided here whatever proposed them; each source's own code carries the decision out.
   const proposals = new ProposalEngine(instance.db);

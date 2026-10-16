@@ -706,6 +706,29 @@ describe("people and their permissions", () => {
     expect(String(out.headers["set-cookie"])).toMatch(/Max-Age=0/);
   });
 
+  it("the session cookie is Secure only behind a proxy on this host", async () => {
+    const cookieOf = async (headers: Record<string, string>, remoteAddress?: string) =>
+      String((await env.app.inject({ method: "POST", url: "/api/session", payload: { token: env.owner }, headers, remoteAddress })).headers["set-cookie"]);
+    expect(await cookieOf({})).not.toMatch(/Secure/);
+    expect(await cookieOf({ "x-forwarded-proto": "https" })).toMatch(/; Secure/);
+    // The same header from anywhere else (a pod, the LAN) is not believed.
+    expect(await cookieOf({ "x-forwarded-proto": "https" }, "203.0.113.9")).not.toMatch(/Secure/);
+  });
+
+  it("responses carry the security headers, HSTS only over https", async () => {
+    const get = (url: string, headers: Record<string, string> = {}) => env.app.inject({ method: "GET", url, headers });
+    for (const res of [await get("/healthz"), await get("/api/agents")]) {
+      expect(res.headers["x-content-type-options"]).toBe("nosniff");
+      expect(res.headers["x-frame-options"]).toBe("DENY");
+      expect(res.headers["referrer-policy"]).toBe("no-referrer");
+      expect(String(res.headers["content-security-policy"])).toContain("frame-ancestors 'none'");
+      expect(res.headers["strict-transport-security"]).toBeUndefined();
+    }
+    expect(String((await get("/healthz", { "x-forwarded-proto": "https" })).headers["strict-transport-security"])).toMatch(/max-age=\d+/);
+    // A route's own CSP wins over the default.
+    expect(String((await get("/player?src=https://example.com/a.mp4")).headers["content-security-policy"])).toContain("default-src 'none'");
+  });
+
   it("task controls follow the caller's rights", async () => {
     const { token } = await invite("reviewer");
     const t = await env.call(env.owner, "POST", "/api/tasks", { title: "can I?", assigneeAgentId: "lead-ops" });
