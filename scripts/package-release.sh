@@ -3,6 +3,7 @@
 #
 #   agentown-<tag>.tar.gz                 server bundle, web UI, default config, installer, agentownctl
 #   agentown-harness-<tag>-amd64.tar.gz   agent runtime image (docker save), loaded on the host
+#   agentown-browser-<tag>-amd64.tar.gz   the world's computers (Chromium with a screen), loaded on the host
 #
 #   scripts/package-release.sh v0.1.0 out/
 #
@@ -47,6 +48,7 @@ cat > "$DIR/VERSION" <<EOF
 version=$TAG
 commit=$(git -C "$ROOT" rev-parse HEAD)
 harness_image=agentown/harness:$VERSION
+browser_image=agentown/browser:$VERSION
 EOF
 
 tar -C "$STAGE" --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$SOURCE_DATE_EPOCH" \
@@ -57,4 +59,7 @@ if [ "${AGENTOWN_SKIP_IMAGE:-}" != 1 ]; then
   docker build --platform linux/amd64 -t "agentown/harness:$VERSION" "$ROOT/apps/harness"
   docker save "agentown/harness:$VERSION" | gzip -n > "$OUT/agentown-harness-$TAG-amd64.tar.gz"
   echo "wrote $OUT/agentown-harness-$TAG-amd64.tar.gz"
+  docker build --platform linux/amd64 -t "agentown/browser:$VERSION" "$ROOT/apps/browser"
+  docker save "agentown/browser:$VERSION" | gzip -n > "$OUT/agentown-browser-$TAG-amd64.tar.gz"
+  echo "wrote $OUT/agentown-browser-$TAG-amd64.tar.gz"
 fi

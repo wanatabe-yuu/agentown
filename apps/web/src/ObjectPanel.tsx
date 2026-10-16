@@ -7,6 +7,7 @@ import type { Agent, Snapshot, WorkState } from "./types.ts";
 import { Avatar, WhoName } from "./Avatar.tsx";
 import { uploadAsset } from "./Assets.tsx";
 import { StatusPill } from "./ui.tsx";
+import { ComputerScreen } from "./ComputerScreen.tsx";
 import { deskStates } from "./office3d/live.ts";
 
 const ObjectStudio = lazy(() => import("./office3d/ObjectStudio.tsx"));
@@ -225,7 +226,9 @@ function PlacedPanel(p: PanelProps) {
         </button>
       </header>
       <div className="panel-body">
-        <section className="studio">
+        {kind.browser && (p.owner || p.canDesign) && <ComputerScreen objectId={p.objectId} notify={p.notify} />}
+        {kind.browser && !(p.owner || p.canDesign) && <p className="muted small">{t("A computer the agents use. Only the owner, and people who may design the world, see its screen.")}</p>}
+        <section className={`studio ${kind.browser && (p.owner || p.canDesign) ? "studio-small" : ""}`}>
           <Suspense fallback={<div className="studio-stage studio-loading" />}>
             <ObjectStudio kind={kind} scale={object.scale} walking={walking} state={shown} highlight={p.canDesign ? part : null} />
           </Suspense>
@@ -330,7 +333,9 @@ function PlacedPanel(p: PanelProps) {
           )}
           <div>{t("Can")}</div>
           <div>
-            {talks
+            {kind.browser
+              ? t("browse the web for the agents (agentown browser {id}). Logins you make on its screen stay; it turns itself off when unused.", { id: p.objectId })
+              : talks
               ? t("talk with the owner; it only knows its own room, changes only what it is doing itself, and suggests work to the CEO once the owner confirms")
               : kind.actions.length
                 ? t("be used: {actions}. No chat, no access to anything else.", { actions: kind.actions.map((a) => a.name).join(", ") })

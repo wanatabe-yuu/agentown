@@ -5,6 +5,8 @@ import type { ChatTool, ToolContext } from "./chat/types.ts";
 import { postTeamMessage } from "./conversations.ts";
 import type { Instance } from "./instance.ts";
 import { openProposal, type ProposalEngine, type ProposalRow, recordProposal } from "./proposals.ts";
+import { BROWSER_KEYS } from "./computers.ts";
+import { callConnector, connectorAsks, connectorTools, listConnectors } from "./connectors.ts";
 import { queuePatch } from "./selfpatch.ts";
 import type { Service } from "./service.ts";
 import { actorRef, ApiError, badRequest, deny, newId, notFound } from "./util.ts";
@@ -33,6 +35,8 @@ export interface CapabilityDescriptor {
   executor: "kernel" | "runtime-local";
   /** For "policy": does this particular call need approval? */
   requiresApproval?: (args: any) => boolean;
+  /** Same, when the answer depends on the organization (a connector's own setting). */
+  requiresApprovalIn?: (service: Service, args: any) => boolean;
   execute?: (ctx: ToolContext, args: any) => Promise<unknown>;
 }
 
@@ -91,6 +95,61 @@ export function capabilityRegistry(tools: ChatTool[]): CapabilityDescriptor[] {
       approval: "always",
       executor: "kernel",
       execute: async ({ service, idempotencyKey }, a) => queuePatch(service.orgId, idempotencyKey, a),
+    },
+    {
+      id: "browser",
+      title: "use a computer",
+      description:
+        "Use one of the world's computers (a real Chromium; `agentown browser list` shows them). Each call does one thing and returns the page as text: what it says and what can be clicked or typed into, each with a ref (e5) to use in the next call. A site that needs someone to log in: ask the owner (`agentown browser COMPUTER login \"why\"`), who logs in on the computer's screen; the login stays.",
+      input: z.object({
+        computer: z.string().min(1).max(40),
+        action: z.enum(["look", "open", "click", "type", "key", "scroll", "back", "tab"]),
+        url: z.string().max(2000).optional(),
+        ref: z.string().regex(/^e\d+$/).optional(),
+        x: z.number().min(0).max(4000).optional(),
+        y: z.number().min(0).max(4000).optional(),
+        text: z.string().max(10000).optional(),
+        submit: z.boolean().optional(),
+        key: z.enum(BROWSER_KEYS as [string, ...string[]]).optional(),
+        dy: z.number().min(-10000).max(10000).optional(),
+        index: z.number().int().min(0).max(50).optional(),
+      }).strict().superRefine((a, ctx) => {
+        const need = { open: "url", type: "text", key: "key", tab: "index" }[a.action as string];
+        if (need && (a as Record<string, unknown>)[need] === undefined) ctx.addIssue({ code: "custom", message: `${a.action} needs ${need}` });
+        if (a.action === "click" && !a.ref && (a.x === undefined || a.y === undefined)) ctx.addIssue({ code: "custom", message: "click needs ref (or x and y)" });
+      }),
+      permission: null,
+      effect: "write",
+      approval: "never",
+      executor: "kernel",
+      execute: async ({ instance, service }, { computer, ...a }) => {
+        if (!instance.computers) throw badRequest("this install has no computers");
+        return { page: await instance.computers.act(service, computer, a) };
+      },
+    },
+    {
+      id: "connector_tools",
+      title: "list outside tools",
+      description: "The world's connectors (outside services over MCP), or one connector's tools with their input schemas.",
+      input: z.object({ connector: z.string().max(40).optional() }).strict(),
+      permission: null,
+      effect: "read",
+      approval: "never",
+      executor: "kernel",
+      execute: async ({ service }, a) =>
+        a.connector ? { tools: await connectorTools(service, a.connector) } : { connectors: (await listConnectors(service)).map(({ credential, ...c }) => ({ ...c, ready: !!credential })) },
+    },
+    {
+      id: "connector_call",
+      title: "call an outside tool",
+      description: "Call one tool of a connector. Connectors set to ask wait for approval of every call; auto ones run at once.",
+      input: z.object({ connector: z.string().min(1).max(40), tool: z.string().min(1).max(200), arguments: z.record(z.string(), z.unknown()).default({}) }).strict(),
+      permission: null,
+      effect: "write",
+      approval: "policy",
+      executor: "kernel",
+      requiresApprovalIn: (service, a) => connectorAsks(service, a.connector),
+      execute: async ({ service }, a) => callConnector(service, a.connector, a.tool, a.arguments),
     },
     {
       id: "team_say",
@@ -183,7 +242,9 @@ export class CapabilityGateway {
     }
     const owner = actor.kind === "human" && actor.owner;
     const world = WORLD_TOOLS.has(id) ? this.worldGate(service, actor, (await this.permits(service, actor))(d.permission)) : null;
-    const needs = world ? world.approval === "always" : d.approval === "always" || (d.approval === "policy" && !!d.requiresApproval?.(parsed.data));
+    const needs = world
+      ? world.approval === "always"
+      : d.approval === "always" || (d.approval === "policy" && !!(d.requiresApprovalIn ? d.requiresApprovalIn(service, parsed.data) : d.requiresApproval?.(parsed.data)));
     // With the kernel setting approver "lead", the agent at the top decides instead of the owner (code changes stay the owner's).
     const lead = needs && !owner && id !== "propose_patch" && service.config.kernel.approver === "lead" ? await service.leadAgentId() : null;
     if (lead && actor.kind === "agent" && actor.id === lead) {
@@ -235,8 +296,11 @@ export class CapabilityGateway {
     const service = await this.instance.org(p.org_id);
     const source = { type: p.source_type, id: p.source_id };
     const decision = { by: actorRef(actor), verdict, ...(note ? { note } : {}) };
-    const tell = async (outcome: string) => {
-      if (p.payload.taskId) await service.resumeFromOwner(String(p.payload.taskId), `Your request "${p.title}" (${String(p.payload.capability)}) was ${outcome}${note ? `: ${note}` : "."}`);
+    const tell = async (outcome: string, result?: unknown) => {
+      // A call made for its answer (an outside tool) hands the answer back too.
+      const text = (result as { text?: unknown } | undefined)?.text;
+      const answer = typeof text === "string" ? `\nResult:\n${text.slice(0, 4000)}` : "";
+      if (p.payload.taskId) await service.resumeFromOwner(String(p.payload.taskId), `Your request "${p.title}" (${String(p.payload.capability)}) was ${outcome}${note ? `: ${note}` : "."}${answer}`);
     };
     if (verdict === "reject") {
       await recordProposal(service.db, source, { status: "rejected", decision });
@@ -250,7 +314,7 @@ export class CapabilityGateway {
     try {
       const result = await this.run(service, runner, d, d.input.parse(p.payload.args), (p.payload.idempotencyKey as string | null) ?? `proposal-${p.id}`);
       await recordProposal(service.db, source, { status: "applied", receipt: result });
-      await tell("approved and done");
+      await tell("approved and done", result);
       return result;
     } catch (err) {
       await recordProposal(service.db, source, { status: "failed", error: String((err as Error).message).slice(0, 2000) });

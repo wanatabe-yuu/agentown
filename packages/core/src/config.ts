@@ -39,7 +39,8 @@ const runtimePresetSchema = z.object({
   /** Image reference; must also be allow-listed in the cluster admission policy. */
   image: z.string(),
   imagePullPolicy: z.enum(["Always", "IfNotPresent", "Never"]).default("IfNotPresent"),
-  harness: z.enum(["script", "claude"]),
+  /** browser: not for agents; the image the world's computers run (a Chromium with a screen). */
+  harness: z.enum(["script", "claude", "browser"]),
   /** Default model when an agent has none configured; must exist on the agent's credential. */
   model: z.string().optional(),
   /**
@@ -128,6 +129,7 @@ export const orgConfigSchema = z
     const departments = new Set(cfg.departments.map((d) => d.id));
     for (const t of cfg.agentTemplates) {
       if (!presets.has(t.runtimePreset)) ctx.addIssue({ code: "custom", message: `template ${t.id}: unknown runtimePreset ${t.runtimePreset}` });
+      if (cfg.runtimeCatalog.find((p) => p.id === t.runtimePreset)?.harness === "browser") ctx.addIssue({ code: "custom", message: `template ${t.id}: ${t.runtimePreset} runs computers, not agents` });
       if (!cfg.policyProfiles[t.policyProfile]) ctx.addIssue({ code: "custom", message: `template ${t.id}: unknown policyProfile ${t.policyProfile}` });
     }
     for (const [name, caps] of Object.entries(cfg.policyProfiles)) {

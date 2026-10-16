@@ -45,6 +45,16 @@ export class Identity {
     return token;
   }
 
+  /** A computer's token (its pod): it can only connect its browser to /api/browser/bridge. */
+  async issueComputerToken(objectId: string): Promise<string> {
+    const principal = `${this.orgId}/${objectId}`;
+    await this.db.query("UPDATE tokens SET revoked_at=now() WHERE principal_kind='computer' AND principal_id=$1 AND revoked_at IS NULL", [principal]);
+    const token = `apc_${newSecret()}`;
+    await this.db.query("INSERT INTO tokens(hash, principal_kind, principal_id, label) VALUES ($1,'computer',$2,'computer')", [sha256(token), principal]);
+    await this.permissions.audit(this.db, "system:controller", "token.issue", principal, true, "computer credential (re)created");
+    return token;
+  }
+
   async revokeAgentTokens(q: Queryable, agentId: string): Promise<void> {
     await q.query("UPDATE tokens SET revoked_at=now() WHERE principal_kind='agent' AND principal_id=$1 AND revoked_at IS NULL", [agentId]);
   }

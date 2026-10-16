@@ -42,6 +42,16 @@ const HELP = `agentown <command>
                                            ask the person who gave you this task; then stop with
                                            BLOCKED: — the task resumes with their answer, or at the
                                            deadline (default 30 min) with leave to decide yourself
+  browser list                             the world's computers (real browsers): id, state, page
+  browser PC look | open URL | click REF | type [REF] TEXT [--submit] | key KEY | scroll [DY]
+             | back | tab N                use computer PC; prints the page as text, with a ref
+                                           (e5) on everything that can be clicked or typed into
+  browser PC login WHAT [--timeout MINUTES] ask the owner to log in (WHAT: which site/account) on
+                                           PC's screen; then stop with BLOCKED: — the login stays
+  connector list                           outside services (MCP connectors) of this world
+  connector tools ID                       a connector's tools and their input schemas
+  connector call ID TOOL [JSON_ARGS | @FILE]
+                                           call one; connectors set to ask wait for approval
   campaign get ID                          a campaign: goal, mode, status and its tasks (JSON)
   campaign done ID --summary S             you lead it and its goal is met: close it as achieved
   campaign fail ID --summary S             you lead it and the goal cannot be met: close it as failed
@@ -157,6 +167,32 @@ async function main() {
       });
       return out(`Asked (answer due by ${r.deadline}). Stop now: end your reply with a line starting "BLOCKED: waiting for the owner's answer". This task resumes with the answer, or at the deadline with leave to decide yourself.`);
     }
+    case "browser":
+      return browser(api, sub, rest);
+    case "connector": {
+      if (sub === "list") {
+        const r = await api.post("/api/tools/connector_tools/invoke", { args: {} });
+        for (const c of r.result.connectors) out(`${c.id}\t${c.approval}\t${c.ready ? "ready" : "no credential yet"}\t${c.name}${c.description ? ` — ${c.description}` : ""}`);
+        return;
+      }
+      if (sub === "tools" && rest[0]) return out((await api.post("/api/tools/connector_tools/invoke", { args: { connector: rest[0] } })).result.tools);
+      if (sub === "call" && rest[0] && rest[1]) {
+        const raw = rest.slice(2).join(" ").trim();
+        let args: unknown = {};
+        try {
+          args = raw ? JSON.parse(raw.startsWith("@") ? readFileSync(raw.slice(1), "utf8") : raw) : {};
+        } catch {
+          throw new Error("connector call arguments must be one JSON object");
+        }
+        const r = await api.request("POST", "/api/tools/connector_call/invoke", { args: { connector: rest[0], tool: rest[1], arguments: args } }, false, 120_000);
+        if (r.status === "pending") {
+          out(`Waiting for approval (proposal ${r.proposalId}). If the rest of your work depends on it, stop now with a reply starting "BLOCKED: waiting for approval"; the task resumes with the decision and its result.`);
+          return;
+        }
+        return out(r.result.isError ? `ERROR from ${rest[1]}:\n${r.result.text}` : r.result.structured ? r.result.structured : r.result.text);
+      }
+      throw new Error("usage: agentown connector list | connector tools ID | connector call ID TOOL [JSON | @FILE]");
+    }
     case "campaign": {
       const id = rest[0];
       if (!id || !["get", "done", "fail"].includes(sub ?? "")) throw new Error("usage: agentown campaign get|done|fail ID [--summary S]");
@@ -223,6 +259,42 @@ async function main() {
     default:
       throw new Error(`unknown command ${cmd}\n${HELP}`);
   }
+}
+
+async function browser(api: AgentownClient, pc: string | undefined, rest: string[]) {
+  if (pc === "list") {
+    const r = await api.get("/api/computers");
+    if (!r.computers.length) return out("This world has no computers.");
+    for (const c of r.computers) out(`${c.id}\t${c.state}\t${c.name}${c.url ? `\t${c.title ?? ""} ${c.url}` : ""}`);
+    return;
+  }
+  const [action, ...args] = rest;
+  const { pos, one } = parseFlags(args);
+  if (!pc || !action) throw new Error("usage: agentown browser list | agentown browser PC look|open|click|type|key|scroll|back|tab|login ...");
+  if (action === "login") {
+    const task = process.env.AGENTOWN_TASK_ID;
+    const what = pos.join(" ").trim();
+    if (!task || !what) throw new Error("usage (during a task): agentown browser PC login WHAT [--timeout MINUTES]");
+    const r = await api.post(`/api/tasks/${encodeURIComponent(task)}/ask`, {
+      question: `Please log in on computer ${pc}: ${what}`,
+      computer: pc,
+      options: ["Done, logged in"],
+      timeoutMinutes: Number(one("timeout") ?? 60),
+      fallback: "nobody logged in: carry on without that site, and say so",
+    });
+    return out(`Asked the owner to log in (by ${r.deadline}). Stop now: end your reply with a line starting "BLOCKED: waiting for a login on ${pc}". The task resumes when they are done.`);
+  }
+  const refFirst = /^e\d+$/.test(pos[0] ?? "");
+  const a: Record<string, unknown> = { computer: pc, action };
+  if (action === "open") a.url = pos.join(" ");
+  if (action === "click") Object.assign(a, refFirst ? { ref: pos[0] } : { x: Number(pos[0]), y: Number(pos[1]) });
+  if (action === "type") Object.assign(a, refFirst ? { ref: pos[0], text: pos.slice(1).join(" ") } : { text: pos.join(" ") }, one("submit") ? { submit: true } : {});
+  if (action === "key") a.key = pos[0];
+  if (action === "scroll" && pos[0]) a.dy = Number(pos[0]);
+  if (action === "tab") a.index = Number(pos[0]);
+  // A computer that is off starts on first use: that can take a minute or two.
+  const r = await api.request("POST", "/api/tools/browser/invoke", { args: a }, false, 180_000);
+  return out(r.result.page);
 }
 
 async function agent(api: AgentownClient, sub: string | undefined, rest: string[]) {

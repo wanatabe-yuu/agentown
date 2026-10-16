@@ -2450,7 +2450,7 @@ export class Service {
     return Number(rows[0]!.pending) === 0 && Number(rows[0]!.settled) > 0;
   }
 
-  async askOwner(actor: Actor, taskId: string, input: { question: string; options?: string[]; timeoutMinutes?: number; fallback?: string }) {
+  async askOwner(actor: Actor, taskId: string, input: { question: string; options?: string[]; timeoutMinutes?: number; fallback?: string; computer?: string }) {
     const agentId = this.requireAgent(actor);
     return this.withTx(async (ctx) => {
       const t = await this.getTaskRow(taskId, ctx.c, true);
@@ -2460,7 +2460,7 @@ export class Service {
       const p = await openProposal(ctx.c, {
         orgId: this.orgId, kind: "question", title: input.question.slice(0, 300), proposer: actorRef(actor),
         subject: { type: "task", id: t.id },
-        payload: { taskId: t.id, taskTitle: t.title, question: input.question, options: input.options ?? [], deadline, fallback: input.fallback ?? null },
+        payload: { taskId: t.id, taskTitle: t.title, question: input.question, options: input.options ?? [], deadline, fallback: input.fallback ?? null, ...(input.computer ? { computer: input.computer } : {}) },
         source: { type: "question", id: newId("q") },
         // The person who gave the work answers (the owner always can).
         approvers: { kind: "task_reviewer", createdBy: t.created_by },
@@ -2685,7 +2685,7 @@ export class Service {
     void actor;
     return {
       templates: this.config.agentTemplates,
-      presets: this.config.runtimeCatalog.map((p) => ({ id: p.id, version: p.version, harness: p.harness, image: p.image, resources: p.resources, member: p.member, placement: p.placement, model: p.model ?? null })),
+      presets: this.config.runtimeCatalog.filter((p) => p.harness !== "browser").map((p) => ({ id: p.id, version: p.version, harness: p.harness, image: p.image, resources: p.resources, member: p.member, placement: p.placement, model: p.model ?? null })),
       departments: this.config.departments,
       projects: this.config.projects,
       providers: PROVIDER_INFO,

@@ -49,6 +49,16 @@ runtimeCatalog:
     workspace: { size: 2Gi }
     resources: { cpu: "1", memory: 2Gi }
 
+  # The world's computers (objects whose kind has `browser`): Chromium with a
+  # screen, driven by agents and watched by people. Not for agents' runtimes;
+  # each computer that is on runs one pod of this size.
+  - id: browser-v1
+    image: agentown/browser:0.4.0
+    imagePullPolicy: Never
+    harness: browser
+    workspace: { size: 2Gi }
+    resources: { cpu: "1", memory: 2Gi }
+
 policyProfiles:
   ceo:
     - { action: org.view, scope: org }

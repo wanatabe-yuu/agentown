@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "./api.ts";
 import { type Lang, langChoice, languageLabel, LANGUAGES, setLang, t } from "./i18n.ts";
 import { Modal } from "./ui.tsx";
+import { ConnectorsSettings } from "./Connectors.tsx";
 
 const browserLang = (): Lang => (navigator.language?.toLowerCase().startsWith("vi") ? "vi" : "en");
 const nameOf = (id: Lang) => LANGUAGES.find((l) => l.id === id)!.name;
@@ -103,6 +104,7 @@ export function SettingsDialog({ org, kernel, lead, owner, onClose }: { org: { n
         {!owner && <p className="muted small">{t("Only the owner can change it.")}</p>}
         {kernelError && <p className="error small" role="alert">{kernelError}</p>}
       </section>
+      <ConnectorsSettings owner={owner} />
     </Modal>
   );
 }

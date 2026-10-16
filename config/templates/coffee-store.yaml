@@ -657,6 +657,31 @@ world:
       behaviors:
         - { type: blink, part: screen, speed: 0.2, amount: 0.25 }
         - { type: steam, part: cup, speed: 0.5, amount: 0.7 }
+    computer:
+      name: Computer
+      title: Browser
+      category: static
+      # A real browser: agents use it (agentown browser), people watch its screen in the inspector and log in there.
+      browser: {}
+      look:
+        parts:
+          # Desk
+          - { shape: roundbox, size: [1.3, 0.06, 0.66], offset: [0, 0.75, 0], color: "#c49a6c", finish: satin }
+          - { shape: box, size: [0.05, 0.72, 0.58], offset: [-0.6, 0.36, 0], color: "#8a6440", finish: satin }
+          - { shape: box, size: [0.05, 0.72, 0.58], offset: [0.6, 0.36, 0], color: "#8a6440", finish: satin }
+          # Monitor on its stand
+          - { shape: roundbox, size: [0.26, 0.02, 0.18], offset: [0, 0.79, -0.17], color: "#d9d4cc", finish: metal }
+          - { shape: box, size: [0.07, 0.24, 0.04], offset: [0, 0.91, -0.2], color: "#d9d4cc", finish: metal }
+          - { shape: roundbox, size: [0.8, 0.5, 0.04], offset: [0, 1.25, -0.19], color: "#2b2b30", finish: satin }
+          - { shape: box, size: [0.74, 0.43, 0.01], offset: [0, 1.26, -0.165], color: "#1b2a3a", emissive: "#7fc4ff", finish: gloss, part: screen }
+          - { shape: sphere, size: [0.025, 0.025, 0.01], offset: [0.35, 1.02, -0.165], color: "#3fe08a", emissive: "#3fe08a", part: led }
+          # Keyboard, mouse, a mug
+          - { shape: roundbox, size: [0.46, 0.022, 0.15], offset: [-0.04, 0.79, 0.12], color: "#efe9df", finish: satin }
+          - { shape: capsule, size: [0.05, 0.03, 0.08], offset: [0.32, 0.79, 0.13], rotation: [90, 0, 0], color: "#efe9df", finish: gloss }
+          - { shape: cylinder, size: [0.08, 0.1, 0.08], offset: [-0.5, 0.83, 0.05], color: "#c0773a", finish: gloss }
+      behaviors:
+        - { type: flicker, part: screen, speed: 0.3, amount: 0.25 }
+        - { type: blink, part: led, speed: 0.5, amount: 1 }
     whiteboard:
       name: Whiteboard
       category: static
@@ -813,6 +838,7 @@ world:
     - { kind: ceiling-fan, room: 2a, at: [6.0, 4.6] }
     - { kind: plant, room: 2a, at: [9.4, 7.4] }
     - { kind: rug, room: 2a, at: [6.0, 4.6] }
+    - { id: office-pc, kind: computer, room: 2a, at: [1.6, 0.5], label: Office PC }
     # 2B roastery
     - { kind: roaster-drum, room: 2b, at: [6.8, 4.8] }
     - { kind: coffee-bags, room: 2b, at: [8.6, 1.0] }
@@ -825,6 +851,7 @@ world:
     - { kind: ring-light, room: 2c, at: [5.6, 3.2], rotationY: 140 }
     - { kind: camera-tripod, room: 2c, at: [7.4, 2.6] }
     - { kind: plant, room: 2c, at: [9.4, 0.6] }
+    - { id: studio-pc, kind: computer, room: 2c, at: [1.6, 0.5], label: Studio PC }
 
   avatars:
     default: barista

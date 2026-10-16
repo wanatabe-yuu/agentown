@@ -104,7 +104,8 @@ DL="$(mktemp -d)"
 trap 'rm -rf "$DL"' EXIT
 BUNDLE="agentown-$TAG.tar.gz"
 IMAGE="agentown-harness-$TAG-amd64.tar.gz"
-for f in SHA256SUMS SHA256SUMS.sigstore.json "$BUNDLE" "$IMAGE"; do
+BROWSER="agentown-browser-$TAG-amd64.tar.gz"
+for f in SHA256SUMS SHA256SUMS.sigstore.json "$BUNDLE" "$IMAGE" "$BROWSER"; do
   curl -fsSL --retry 3 -o "$DL/$f" "https://github.com/$REPO/releases/download/$TAG/$f" || die "could not download $f from release $TAG"
 done
 
@@ -113,7 +114,7 @@ say "Verifying signature and checksums"
   --certificate-identity-regexp "$SIGNER_IDENTITY" --certificate-oidc-issuer "$SIGNER_ISSUER" \
   "$DL/SHA256SUMS" >/dev/null 2>&1 \
   || die "SHA256SUMS is not signed by $REPO's release workflow; refusing to install"
-for f in "$BUNDLE" "$IMAGE"; do
+for f in "$BUNDLE" "$IMAGE" "$BROWSER"; do
   line="$(awk -v f="$f" '$2 == f || $2 == "*" f' "$DL/SHA256SUMS")"
   [ -n "$line" ] || die "$f is not listed in SHA256SUMS"
   (cd "$DL" && echo "$line" | sha256sum -c --status) || die "checksum mismatch for $f"
@@ -154,6 +155,13 @@ elif ! grep -q "image: $HARNESS_IMAGE\$" "$ETC/agentown.yaml"; then
     sed -i -E "s#(image: )agentown/harness:[^[:space:]]+\$#\1$HARNESS_IMAGE#" "$ETC/agentown.yaml"
     echo "updated the agent image in $ETC/agentown.yaml to $HARNESS_IMAGE (backup kept next to it)"
   fi
+  BROWSER_IMAGE="$(sed -n 's/^browser_image=//p' "$PREFIX/current/VERSION")"
+  if [ -n "$BROWSER_IMAGE" ] && grep -qE "image: agentown/browser:[^[:space:]]+\$" "$ETC/agentown.yaml"; then
+    sed -i -E "s#(image: )agentown/browser:[^[:space:]]+\$#\1$BROWSER_IMAGE#" "$ETC/agentown.yaml"
+  elif [ -n "$BROWSER_IMAGE" ]; then
+    echo "note: the world's computers need a runtimeCatalog preset with harness: browser and image $BROWSER_IMAGE in $ETC/agentown.yaml (see $ETC/agentown.yaml.new)"
+    install -m 0640 -o root -g agentown "$PREFIX/current/config/agentown.yaml" "$ETC/agentown.yaml.new"
+  fi
   if ! grep -q "image: $HARNESS_IMAGE\$" "$ETC/agentown.yaml"; then
     install -m 0640 -o root -g agentown "$PREFIX/current/config/agentown.yaml" "$ETC/agentown.yaml.new"
     echo "note: $ETC/agentown.yaml does not use $HARNESS_IMAGE; compare it with $ETC/agentown.yaml.new"
@@ -191,6 +199,7 @@ if [ "$DRIVER" = kubernetes ]; then
   for _ in $(seq 60); do kc get nodes 2>/dev/null | grep -q " Ready" && break; sleep 2; done
   kc get nodes 2>/dev/null | grep -q " Ready" || die "k3s is not ready (journalctl -u k3s)"
   gunzip -c "$DL/$IMAGE" | k3s ctr -n k8s.io images import - >/dev/null
+  gunzip -c "$DL/$BROWSER" | k3s ctr -n k8s.io images import - >/dev/null
   AGENTOWN_CONFIG="$ETC/agentown.yaml" AGENTOWN_API_CIDR="$HOST_IP/32" \
     node "$PREFIX/current/server/tools/render-manifests.mjs" > "$STATE/manifests.yaml"
   kc apply -f "$STATE/manifests.yaml" >/dev/null
@@ -235,6 +244,7 @@ else
   say "Loading agent image into Docker"
   systemctl enable --now docker >/dev/null
   docker load -i "$DL/$IMAGE" >/dev/null
+  docker load -i "$DL/$BROWSER" >/dev/null
   # The docker driver talks to the Docker socket, which is root-equivalent.
   usermod -aG docker agentown
   RUNTIME_API_URL="http://host.docker.internal:8080"

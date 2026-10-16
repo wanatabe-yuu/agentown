@@ -92,7 +92,8 @@ export function renderManifests(opts: { images: string[]; namespaces: AgentNames
         apiVersion: "v1",
         kind: "ResourceQuota",
         metadata: { name: "agentown-quota", namespace: ns },
-        spec: { hard: { pods: "20", "requests.cpu": "4", "requests.memory": "4Gi", "limits.cpu": "4", "limits.memory": "4Gi", persistentvolumeclaims: "20" } },
+        // Room for a few teams and the world's computers (each up to 1 CPU / 2Gi while on).
+        spec: { hard: { pods: "30", "requests.cpu": "4", "requests.memory": "8Gi", "limits.cpu": "8", "limits.memory": "8Gi", persistentvolumeclaims: "40" } },
       },
     );
   }

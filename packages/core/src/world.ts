@@ -154,6 +154,12 @@ const objectKindSchema = z.object({
    * poses as offsets: position [m], rotation [deg], scale, color, visible.
    */
   script: z.string().max(8000).optional(),
+  /**
+   * A computer: each one placed is a real Chromium (with a screen, not
+   * headless) that agents drive with `agentown browser` and people watch, or
+   * take over to log in, from the object's inspector. `home` opens first.
+   */
+  browser: z.object({ home: z.string().url().max(500).optional() }).optional(),
 });
 export type ObjectKind = z.infer<typeof objectKindSchema>;
 
@@ -204,6 +210,19 @@ const placementSchema = z.object({
   image: z.string().min(1).max(64).optional(),
 });
 
+/**
+ * An MCP server the organization's agents may call (Streamable HTTP). Its
+ * credential is set by the owner and never part of the world. ask: every call
+ * waits for approval; auto: calls run at once.
+ */
+const connectorSchema = z.object({
+  name: z.string().min(1).max(60),
+  url: z.string().url().max(500),
+  description: z.string().max(400).optional(),
+  approval: z.enum(["ask", "auto"]).default("ask"),
+});
+export type Connector = z.infer<typeof connectorSchema>;
+
 export const worldSchema = z.object({
   /** The interface takes these colors while this world is open (a café's caramel, a lab's teal). */
   theme: z.object({ accent: color, surface: color.optional(), ink: color.optional() }).optional(),
@@ -219,6 +238,8 @@ export const worldSchema = z.object({
   zones: z.record(idSchema, z.array(idSchema).min(1)).default({}),
   kinds: z.record(idSchema, objectKindSchema).default({}),
   objects: z.array(placementSchema).max(2000).default([]),
+  /** Outside tools (MCP servers) that come with this world. */
+  connectors: z.record(idSchema, connectorSchema).default({}),
   /** How agents look: per job title, else the default (a person in the department's color). */
   avatars: z
     .object({

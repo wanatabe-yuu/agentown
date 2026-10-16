@@ -38,10 +38,10 @@ if (driverKind === "kubernetes") driver = new KubernetesDriver(env.AGENTOWN_KUBE
 else if (driverKind === "docker") driver = new DockerDriver(resolve(stateDir, "runtime-secrets"));
 else if (driverKind !== "none") throw new Error(`unknown AGENTOWN_RUNTIME_DRIVER ${driverKind}`);
 
+const runtimeApiUrl = env.AGENTOWN_RUNTIME_API_URL ?? (driverKind === "docker" ? "http://host.docker.internal:8080" : "http://172.17.0.1:8080");
 const controller = driver
   ? new RuntimeController(instance, driver, {
-      apiUrlForRuntimes:
-        env.AGENTOWN_RUNTIME_API_URL ?? (driverKind === "docker" ? "http://host.docker.internal:8080" : "http://172.17.0.1:8080"),
+      apiUrlForRuntimes: runtimeApiUrl,
       log: (msg, extra) => console.log(`[controller] ${msg}`, extra ?? ""),
     })
   : null;
@@ -52,6 +52,7 @@ const { app, recheckTerminals } = await buildApp({
   webDist: env.AGENTOWN_WEB_DIST ?? resolve(root, "apps/web/dist"),
   logger: env.AGENTOWN_LOG === "1",
   onStateChange: () => void controller?.reconcileAll(),
+  runtimeApiUrl,
 });
 
 // Policy, graph or runtime changes can invalidate an open terminal: re-check promptly.

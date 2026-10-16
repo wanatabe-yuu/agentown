@@ -179,7 +179,8 @@ export class KubernetesDriver implements RuntimeDriver {
                 imagePullPolicy: spec.preset.imagePullPolicy,
                 env,
                 resources: {
-                  requests: { cpu: spec.resources.cpu, memory: spec.resources.memory },
+                  // A computer idles most of the time: it reserves little CPU and bursts up to its limit.
+                  requests: { cpu: spec.preset.harness === "browser" ? "50m" : spec.resources.cpu, memory: spec.resources.memory },
                   limits: { cpu: spec.resources.cpu, memory: spec.resources.memory },
                 },
                 securityContext: {

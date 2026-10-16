@@ -28,7 +28,8 @@ export class AgentownClient {
     return new AgentownClient({ baseUrl: baseUrl.replace(/\/$/, ""), token, ...(process.env.AGENTOWN_RUN_ID && process.env.AGENTOWN_GENERATION ? { execution: { runId: process.env.AGENTOWN_RUN_ID, generation: process.env.AGENTOWN_GENERATION } } : {}) });
   }
 
-  async request<T = any>(method: string, path: string, body?: unknown, raw = false): Promise<T> {
+  /** `timeoutMs`: longer for calls that may wait on something slow (a computer starting up). */
+  async request<T = any>(method: string, path: string, body?: unknown, raw = false, timeoutMs = 30_000): Promise<T> {
     const res = await fetch(`${this.opts.baseUrl}${path}`, {
       method,
       headers: {
@@ -37,7 +38,7 @@ export class AgentownClient {
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 204) return null as T;
     if (raw && res.ok) return Buffer.from(await res.arrayBuffer()) as T;

@@ -3,7 +3,7 @@ name: Release
 # Publishes a release for the version in package.json, either by
 #   - "Run workflow" on main (Actions -> Release): creates the tag v<version>, or
 #   - pushing a tag v<version>.
-# Assets: agentown-<tag>.tar.gz, agentown-harness-<tag>-amd64.tar.gz, install.sh,
+# Assets: agentown-<tag>.tar.gz, agentown-harness-<tag>-amd64.tar.gz, agentown-browser-<tag>-amd64.tar.gz, install.sh,
 #   agentownctl_<os>_<arch> binaries with install-cli.sh, an SBOM,
 #   SHA256SUMS signed keylessly with Sigstore (verified by deploy/install.sh),
 #   and GitHub build-provenance attestations for every asset.

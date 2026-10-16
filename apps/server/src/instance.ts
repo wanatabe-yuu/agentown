@@ -7,6 +7,7 @@ import { type Actor, orgConfigFrom, parseTemplate, splitInstanceConfig, type Tem
 import { z } from "zod";
 import type { EventBus } from "./bus.ts";
 import { type Db, tx } from "./db.ts";
+import type { Computers } from "./computers.ts";
 import type { ModelLister } from "./providers.ts";
 import type { SecretBox } from "./secrets.ts";
 import { Service } from "./service.ts";
@@ -37,7 +38,9 @@ export type Principal =
   | { kind: "human"; id: string; admin: boolean }
   | { kind: "agent"; id: string; orgId: string }
   /** A team's shared runtime. It only lists its members and starts sessions for them; members act with their own tokens. */
-  | { kind: "runtime"; id: string; orgId: string; teamId: string };
+  | { kind: "runtime"; id: string; orgId: string; teamId: string }
+  /** A computer's pod: it only connects its browser (see computers.ts). */
+  | { kind: "computer"; id: string; orgId: string; objectId: string };
 
 /**
  * The install: accounts, tokens and the list of organizations. Everything inside
@@ -46,6 +49,8 @@ export type Principal =
  */
 export class Instance {
   private readonly cache = new Map<string, { revision: number; name: string; service: Service }>();
+  /** The world's computers (set by the app). */
+  computers: Computers | null = null;
   private readonly file: ReturnType<typeof splitInstanceConfig>;
   /** Built-in organization templates: the config file's own org ("company") plus templatesDir/*.yaml. */
   readonly builtInTemplates = new Map<string, OrgTemplate>();
@@ -110,6 +115,10 @@ export class Instance {
       const [orgId, teamId] = r.principal_id.split("/") as [string, string];
       return { kind: "runtime", id: r.principal_id, orgId, teamId };
     }
+    if (r.principal_kind === "computer") {
+      const [orgId, objectId] = r.principal_id.split("/") as [string, string];
+      return { kind: "computer", id: r.principal_id, orgId, objectId };
+    }
     return r.org_id ? { kind: "agent", id: r.principal_id, orgId: r.org_id } : null;
   }
 
@@ -148,7 +157,7 @@ export class Instance {
    * Anything else is "not found", so org ids are not probeable.
    */
   async resolve(p: Principal, orgId: string | undefined): Promise<{ service: Service; actor: Actor }> {
-    if (p.kind === "runtime") throw deny("a team runtime acts through its members' session tokens");
+    if (p.kind === "runtime" || p.kind === "computer") throw deny("a runtime acts through its members' session tokens");
     if (p.kind === "agent") {
       if (orgId && orgId !== p.orgId) throw notFound("organization");
       return { service: await this.org(p.orgId), actor: { kind: "agent", id: p.id } };

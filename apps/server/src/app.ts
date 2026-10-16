@@ -17,6 +17,8 @@ import { OwnerChat } from "./owner-chat.ts";
 import { FEED_KINDS, type FeedKind, feed, listTeamMessages, postTeamMessage } from "./conversations.ts";
 import { PROPOSAL_KINDS, PROPOSAL_STATUSES, ProposalEngine } from "./proposals.ts";
 import { CapabilityGateway } from "./capabilities.ts";
+import { Computers } from "./computers.ts";
+import { connectorTools, listConnectors, setConnectorCredential } from "./connectors.ts";
 import { ownerTools } from "./chat/tools.ts";
 import type { ChatModelFactory } from "./chat/types.ts";
 import { forwardModel } from "./model-broker.ts";
@@ -155,7 +157,10 @@ const S = {
     options: z.array(z.string().trim().min(1).max(200)).max(6).optional(),
     timeoutMinutes: z.number().int().min(5).max(1440).optional(),
     fallback: z.string().trim().max(1000).optional(),
+    /** A login (or anything by hand) the owner does on one of the world's computers. */
+    computer: z.string().regex(/^[a-z0-9-]{1,40}$/).optional(),
   }).strict(),
+  connectorCredential: z.object({ header: z.string().trim().regex(/^[A-Za-z0-9-]{1,64}$/).default("Authorization"), value: z.string().trim().min(1).max(8000) }).strict(),
   finishCampaign: z.object({ outcome: z.enum(["achieved", "failed"]), summary: z.string().trim().min(1).max(4000) }).strict(),
   assign: z.object({ assigneeAgentId: z.string() }),
   cancel: z.object({ reason: z.string().max(500).default("") }).prefault({}),
@@ -237,6 +242,8 @@ export interface AppOptions {
   logger?: boolean;
   onStateChange?: () => void;
   chatModelFactory?: ChatModelFactory;
+  /** How pods (agent runtimes, computers) reach this server. */
+  runtimeApiUrl?: string;
 }
 
 export async function buildApp(opts: AppOptions) {
@@ -259,6 +266,10 @@ export async function buildApp(opts: AppOptions) {
   proposals.register("task", {
     decide: async (actor, p, verdict, note) => (await instance.org(p.org_id)).reviewTask(actor, String(p.payload.taskId), verdict, note),
   });
+  const computers = new Computers(instance, driver, { apiUrl: opts.runtimeApiUrl ?? "http://host.docker.internal:8080", log: (msg, extra) => console.log(`[computers] ${msg}`, extra ?? "") });
+  instance.computers = computers;
+  if (driver) computers.start();
+  app.addHook("onClose", async () => computers.stop());
   const gateway = new CapabilityGateway(instance, proposals, ownerTools(S));
   await ownerChat.recover();
   app.addHook("onClose", async () => ownerChat.close());
@@ -532,6 +543,30 @@ export async function buildApp(opts: AppOptions) {
     if (!(actor.kind === "human" && actor.owner)) throw deny("only the owner reviews code proposals");
     return reply.header("content-type", "text/plain; charset=utf-8").header("content-security-policy", "sandbox").send(await proposalDiff(svc.db, svc.orgId, req.params.id));
   });
+  // ---- the world's computers: listed for everyone, watched and used by hand by the owner (and designers).
+  r.get("/computers", async (req) => ({ computers: computers.list(svcOf(req)) }));
+  r.get<{ Params: { id: string } }>("/computers/:id", async (req) => computers.status(svcOf(req), req.params.id));
+  r.post<{ Params: { id: string } }>("/computers/:id/stop", async (req) => {
+    if (!(await computers.mayWatch(svcOf(req), actorOf(req)))) throw deny("only the owner, or people who may design the world, turn computers off");
+    return computers.shutDown(svcOf(req), req.params.id);
+  });
+  r.get<{ Params: { id: string } }>("/computers/:id/screen", { websocket: true }, (socket, req) => {
+    // Mouse and keyboard reach a logged-in browser: only from our own pages.
+    const origin = req.headers.origin;
+    if (origin && (() => { try { return new URL(origin).host !== req.headers.host; } catch { return true; } })()) return socket.close(4403, "cross-origin");
+    computers.watch(svcOf(req), actorOf(req), req.params.id, socket).catch((err) => {
+      try {
+        socket.send(JSON.stringify({ t: "status", state: "error", detail: (err as Error).message }));
+      } catch {}
+      socket.close(4403, "denied");
+    });
+  });
+  // ---- connectors (MCP servers of the world): their credentials are the owner's.
+  r.get("/connectors", async (req) => ({ connectors: await listConnectors(svcOf(req)) }));
+  r.get<{ Params: { id: string } }>("/connectors/:id/tools", async (req) => ({ tools: await connectorTools(svcOf(req), req.params.id) }));
+  r.put<{ Params: { id: string } }>("/connectors/:id/credential", async (req) =>
+    setConnectorCredential(svcOf(req), actorOf(req), req.params.id, parse(S.connectorCredential, req.body)));
+  r.delete<{ Params: { id: string } }>("/connectors/:id/credential", async (req) => setConnectorCredential(svcOf(req), actorOf(req), req.params.id, null));
   // Room for a base64 model (upload_asset) or a whole world.
   r.post<{ Params: { id: string } }>("/tools/:id/invoke", { bodyLimit: Math.ceil(MODEL_MAX * 1.4) + 4096 }, async (req, reply) => {
     const body = parse(S.invoke, req.body);
@@ -755,6 +790,13 @@ export async function buildApp(opts: AppOptions) {
   };
   await app.register(orgRoutes, { prefix: "/api", people: false });
   await app.register(orgRoutes, { prefix: "/api/orgs/:orgId", people: true });
+
+  // ---- a computer's pod connects its browser here (its own token; see computers.ts).
+  app.get("/api/browser/bridge", { websocket: true }, (socket, req) => {
+    const p = req.principal;
+    if (p?.kind !== "computer") return socket.close(4401, "computer token required");
+    void computers.attachBridge(p.orgId, p.objectId, socket);
+  });
 
   // ---- terminal: the WebSocket redeems the one-time ticket (the ticket names the org).
   const terminals = new Map<string, (reason: string) => void>();

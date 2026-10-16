@@ -2580,3 +2580,60 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
 .agent-bubble[data-tone="bad"] { pointer-events: auto; cursor: pointer; white-space: nowrap; }
 .key-missing { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .key-missing .small-btn { min-height: 32px; padding: 0 12px; font-size: 12px; }
+
+/* ---- a computer of the world: its live screen in the inspector (full screen to log in) */
+.computer { display: flex; flex-direction: column; gap: 6px; margin: 0 0 12px; }
+.computer-bar { display: flex; align-items: center; gap: 4px; }
+.computer-bar .icon-btn { flex-shrink: 0; }
+.computer-address { flex: 1; min-width: 0; }
+.computer-address input { width: 100%; border-radius: 999px; padding: 0 12px; font-size: 13px; }
+.computer-screen {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0b0f17;
+  border: 1px solid var(--border-strong);
+  outline: none;
+  touch-action: none;
+  user-select: none;
+  cursor: default;
+}
+.computer-screen:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.computer-screen img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.computer-screen img.hidden { display: none; }
+.computer-off { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 16px; text-align: center; color: #e6eaf2; }
+.computer-off .muted { color: #8b95a8; }
+.computer-led { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; flex-shrink: 0; }
+.computer-led.led-on { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.computer-led.led-starting { background: var(--warn); animation: studio-pulse 1s ease-in-out infinite; }
+.computer-led.led-error { background: var(--bad); }
+.computer-type { display: flex; gap: 4px; }
+.computer-type input { flex: 1; min-width: 0; font-size: 13px; }
+.computer-type button { flex-shrink: 0; min-width: 36px; padding: 0 8px; }
+.computer-foot { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.computer-foot > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.computer-foot .spacer { flex: 1; }
+.computer-big {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  margin: 0;
+  padding: 10px max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  background: var(--bg);
+}
+.computer-big .computer-screen { flex: 1; aspect-ratio: auto; min-height: 0; }
+.computer-big .computer-screen img { object-fit: contain; }
+.studio-small .studio-stage { height: 200px; }
+
+/* ---- connectors (Settings) */
+.connector-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.connector { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.connector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.connector-url { overflow-wrap: anywhere; }
+.connector-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.connector-cred { display: flex; gap: 6px; flex-wrap: wrap; }
+.connector-cred .connector-header { width: 140px; flex-shrink: 0; }
+.connector-cred input[type="password"] { flex: 1; min-width: 140px; }
+.computer-keys { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; resize: none; border: 0; padding: 0; pointer-events: none; }
+.computer-screen:focus-within { box-shadow: 0 0 0 2px var(--accent); }

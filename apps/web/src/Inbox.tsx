@@ -32,6 +32,7 @@ function whatItDoes(tool: string, args: Record<string, any>, taskTitle: (id: unk
   }
   if (tool === "upload_asset") out.push(t("Add art: {name}", { name: String(args.name ?? "") }));
   if (tool === "propose_patch") out.push(String(args.title ?? ""));
+  if (tool === "connector_call") out.push(t("{tool} on {connector}", { tool: String(args.tool ?? ""), connector: String(args.connector ?? "") }));
   return out.filter(Boolean);
 }
 
@@ -176,8 +177,15 @@ export function NeedsYou({ snapshot, now, refreshKey, onOpenTask, onAgents }: { 
 function QuestionReply({ p, busy, onAnswer }: { p: Proposal; busy: boolean; onAnswer: (text: string, declined?: boolean) => void }) {
   const [text, setText] = useState("");
   const options = (p.payload.options ?? []) as string[];
+  const computer = typeof p.payload.computer === "string" ? p.payload.computer : null;
   return (
     <div className="question-reply">
+      {computer && (
+        // A login (or anything by hand) on one of the world's computers: open its screen.
+        <button type="button" className="primary" onClick={() => { location.hash = ""; location.hash = `object=${computer}`; }}>
+          {t("Open computer {id}", { id: computer })}
+        </button>
+      )}
       {options.length > 0 && (
         <div className="question-options">
           {options.map((o) => (

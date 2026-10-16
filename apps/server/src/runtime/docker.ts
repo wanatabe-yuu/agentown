@@ -164,7 +164,8 @@ export class DockerDriver implements RuntimeDriver {
           Privileged: false,
           Memory: mem,
           NanoCpus: Math.round(cpu * 1e9),
-          PidsLimit: 256,
+          // Chromium (a computer) runs a few hundred threads.
+          PidsLimit: spec.preset.harness === "browser" ? 2048 : 256,
           RestartPolicy: { Name: "on-failure", MaximumRetryCount: 5 },
           ExtraHosts: ["host.docker.internal:host-gateway"],
         },
