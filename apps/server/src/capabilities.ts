@@ -1,6 +1,6 @@
 import type { Action, Actor } from "@agentown/core";
 import { z } from "zod";
-import { needsApproval } from "./chat/tools.ts";
+import { needsApproval, patchDocument } from "./chat/tools.ts";
 import type { ChatTool, ToolContext } from "./chat/types.ts";
 import { postTeamMessage } from "./conversations.ts";
 import type { Instance } from "./instance.ts";
@@ -254,7 +254,29 @@ export class CapabilityGateway {
       await service.kernel.permissions.audit(service.db, actor, "capability.self_approved", id, true, "approver: lead (kernel setting)");
       return { status: "applied" as const, result };
     }
+    if (needs && !owner && (id === "patch_world" || id === "replace_world")) {
+      // A world that would not save is sent back now, for the agent to fix, not put in front of the approver.
+      const a = parsed.data as { world?: Record<string, unknown> | null; operations?: Parameters<typeof patchDocument>[1] };
+      const world = id === "replace_world" ? a.world ?? null : ((await service.db.query("SELECT config->'world' AS w FROM organizations WHERE id=$1", [service.orgId])).rows[0].w ?? null);
+      if (id === "patch_world" && !world) throw badRequest("world has no custom layout; use replace_world to create one");
+      await this.instance.checkOrgWorld(service, id === "patch_world" ? (patchDocument(world, a.operations!) as Record<string, unknown>) : world);
+    }
     if (needs && !owner) {
+      // The same request asked again (an agent retrying) waits on the first one.
+      const same = await service.db.query<{ id: string }>(
+        `SELECT id FROM proposals WHERE org_id=$1 AND status='pending' AND source_type='gateway' AND proposer=$2
+            AND payload->>'capability'=$3 AND (payload->'args') - 'revision' = ($4::jsonb) - 'revision' LIMIT 1`,
+        [service.orgId, actorRef(actor), id, JSON.stringify(parsed.data)],
+      );
+      if (same.rows[0]) return { status: "pending" as const, proposalId: same.rows[0].id };
+      // One world edit waits per agent: a newer one replaces what it proposed before (it is meant to hold every change).
+      if (world) {
+        const older = await service.db.query<{ source_type: string; source_id: string }>(
+          "SELECT source_type, source_id FROM proposals WHERE org_id=$1 AND status='pending' AND kind='world_change' AND proposer=$2",
+          [service.orgId, actorRef(actor)],
+        );
+        for (const o of older.rows) await recordProposal(service.db, { type: o.source_type, id: o.source_id }, { status: "withdrawn", decision: { by: actorRef(actor), verdict: "reject", note: "replaced by a newer world edit" } });
+      }
       const rule = world ? (world.runAs === "approver" ? "world:no_permission" : "world:approve") : d.approval === "always" ? "always" : `effect:${d.effect}`;
       const reason = world
         ? world.runAs === "approver" ? "the caller may not design the world; the owner applies the change if they approve it" : "world edits wait for the owner (kernel setting worldEdits: approve)"
@@ -302,22 +324,35 @@ export class CapabilityGateway {
       const answer = typeof text === "string" ? `\nResult:\n${text.slice(0, 4000)}` : "";
       if (p.payload.taskId) await service.resumeFromOwner(String(p.payload.taskId), `Your request "${p.title}" (${String(p.payload.capability)}) was ${outcome}${note ? `: ${note}` : "."}${answer}`);
     };
-    if (verdict === "reject") {
-      await recordProposal(service.db, source, { status: "rejected", decision });
-      return tell("rejected");
-    }
-    await recordProposal(service.db, source, { status: "applying", decision });
     // A caller without the permission proposed it: the approving owner carries it out.
     // The lead approves on the owner's authority: a change the proposer may not make itself runs as the owner.
     const runner = p.payload.runAs === "approver" ? (lead ? await service.ownerActor() : actor) : await service.kernel.identity.parseActorRef(p.proposer);
     const d = this.find(String(p.payload.capability));
+    // Copies of the same request (from before duplicates were folded) share its fate.
+    const closeCopies = async (outcome: string) => {
+      const copies = await service.db.query<{ source_type: string; source_id: string }>(
+        `SELECT source_type, source_id FROM proposals WHERE org_id=$1 AND status='pending' AND id<>$2 AND source_type='gateway' AND proposer=$3
+            AND payload->>'capability'=$4 AND (payload->'args') - 'revision' = ($5::jsonb) - 'revision'`,
+        [service.orgId, p.id, p.proposer, d.id, JSON.stringify(p.payload.args)],
+      );
+      for (const c of copies.rows) await recordProposal(service.db, { type: c.source_type, id: c.source_id }, { status: "rejected", decision: { by: actorRef(actor), verdict: "reject", note: `same as ${p.id}, which ${outcome}` } });
+    };
+    if (verdict === "reject") {
+      await recordProposal(service.db, source, { status: "rejected", decision });
+      await closeCopies("was rejected");
+      return tell("rejected");
+    }
+    await recordProposal(service.db, source, { status: "applying", decision });
+    const args = d.input.parse(p.payload.args);
     try {
-      const result = await this.run(service, runner, d, d.input.parse(p.payload.args), (p.payload.idempotencyKey as string | null) ?? `proposal-${p.id}`);
+      const result = await this.run(service, runner, d, args, (p.payload.idempotencyKey as string | null) ?? `proposal-${p.id}`);
       await recordProposal(service.db, source, { status: "applied", receipt: result });
+      await closeCopies("was applied");
       await tell("approved and done", result);
       return result;
     } catch (err) {
       await recordProposal(service.db, source, { status: "failed", error: String((err as Error).message).slice(0, 2000) });
+      await closeCopies("failed");
       await tell(`approved but failed (${String((err as Error).message).slice(0, 300)})`);
       throw err;
     }

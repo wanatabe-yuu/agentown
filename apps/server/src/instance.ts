@@ -367,6 +367,17 @@ export class Instance {
     return service.replaceWorld(actor, input, (doc) => orgConfigFrom(doc, { id: service.orgId, name: org.name }, this.file.catalog));
   }
 
+  /** Would this world be accepted (as a whole document)? Throws the same error a save would, saves nothing. */
+  async checkOrgWorld(service: Service, world: Record<string, unknown> | null) {
+    const { rows } = await this.db.query("SELECT name, config FROM organizations WHERE id=$1", [service.orgId]);
+    const { world: _old, ...rest } = rows[0].config as Record<string, unknown>;
+    try {
+      orgConfigFrom(worldIdentities(world ? { ...rest, world } : rest), { id: service.orgId, name: rows[0].name }, this.file.catalog);
+    } catch (err) {
+      throw badRequest(err instanceof z.ZodError ? z.prettifyError(err) : (err as Error).message);
+    }
+  }
+
   /** Change an organization's structure, validated against this install's runtime catalog. */
   async updateOrgConfig(service: Service, actor: Actor, input: { revision: number; doc: Record<string, unknown> }) {
     const org = (await this.db.query("SELECT name FROM organizations WHERE id=$1", [service.orgId])).rows[0];

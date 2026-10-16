@@ -76,6 +76,7 @@ export function NeedsYou({ snapshot, now, refreshKey, onOpenTask, onAgents }: { 
       await load();
     } catch (e) {
       setError((e as Error).message);
+      await load(); // a request that failed when approved is settled: it leaves the list
     } finally {
       setBusy(null);
     }

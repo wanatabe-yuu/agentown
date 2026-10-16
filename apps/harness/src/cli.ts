@@ -26,6 +26,8 @@ const HELP = `agentown <command>
   tool ID [JSON_ARGS | @FILE]              call a capability through the gateway; a call that needs
                                            approval prints {"status":"pending","proposalId":...}
                                            @FILE reads the JSON arguments from a file (large worlds)
+  world                                    the current world (rooms, kinds, objects) as JSON, to
+                                           write patch_world operations against (no revision needed)
   asset upload FILE [--name N]             add a PNG/JPEG/WebP texture or a GLB model to the art
                                            library (upload_asset); prints its id or a proposal
   code checkout DIR                        download this install's own source into DIR as a git
@@ -201,6 +203,8 @@ async function main() {
       if (!one("summary")) throw new Error(`campaign ${sub} requires --summary`);
       return out(await api.post(`/api/campaigns/${encodeURIComponent(id)}/finish`, { outcome: sub === "done" ? "achieved" : "failed", summary: one("summary") }));
     }
+    case "world":
+      return out((await api.get("/api/office/snapshot")).world ?? null);
     case "asset": {
       if (sub !== "upload" || !rest[0]) throw new Error("usage: agentown asset upload FILE [--name N]");
       const file = rest[0];

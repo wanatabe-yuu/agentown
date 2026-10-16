@@ -1036,4 +1036,11 @@ const VI: Record<string, string> = {
   "Remove credential": "Xoá khoá",
   "Credential removed.": "Đã xoá khoá.",
   "browse the web for the agents (agentown browser {id}). Logins you make on its screen stay; it turns itself off when unused.": "duyệt web cho các agent (agentown browser {id}). Các lần đăng nhập bạn làm trên màn hình được giữ lại; máy tự tắt khi không dùng.",
+  "Release to reload": "Thả ra để tải lại",
+  "Pull to reload": "Kéo xuống để tải lại",
+  "Reloading…": "Đang tải lại…",
+  "The server runs a newer version. Reload so things keep working.": "Server đang chạy phiên bản mới hơn. Hãy tải lại để mọi thứ hoạt động đúng.",
+  "Chat template for “{title}”": "Mẫu chat cho “{title}”",
+  "Show more": "Xem thêm",
+  "Show less": "Thu gọn",
 };

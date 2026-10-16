@@ -1,5 +1,5 @@
 import { chatInstructionTemplate, type Actor } from "@agentown/core";
-import { canTalk } from "@agentown/core/world";
+import { canTalk, chatTemplateOf } from "@agentown/core/world";
 import { z } from "zod";
 import type { Service } from "../service.ts";
 import { badRequest, conflict, deny, notFound } from "../util.ts";
@@ -18,6 +18,8 @@ export async function entityProfile(service: Service, owner: Actor, subject: Cha
   let actor = owner;
   let roomId: string | null = null;
   let kindStates: string[] = [];
+  /** The world's persona for this object's title, in place of the built-in default. */
+  let titleTemplate: string | undefined;
   if (subject.type === "agent") {
     const agent = await service.getAgent(owner, subject.id);
     if (agent.lifecycleState === "retired") throw conflict("retired", "This agent is retired. Its chat history is preserved.");
@@ -38,6 +40,7 @@ export async function entityProfile(service: Service, owner: Actor, subject: Cha
     character = "character" in kind.look ? kind.look.character : "object";
     instructions = [kind.chat?.instructions, object.chat?.instructions].filter(Boolean).join("\n\n");
     kindStates = kind.states.map(x => x.id);
+    titleTemplate = chatTemplateOf(world, object)?.instructions;
     const agents = await service.listAgents(owner);
     const root = agents.find(a => !a.reportsToAgentId && a.lifecycleState !== "retired");
     config = root ? (await service.getAgent(owner, root.id)).config : null;
@@ -45,7 +48,7 @@ export async function entityProfile(service: Service, owner: Actor, subject: Cha
   const allowed = credentials.filter(c => !departmentId || !c.departments || c.departments.includes(departmentId));
   const preferred = allowed.find(c => c.id === config?.credentialId) ?? allowed[0];
   const defaults = preferred ? { credentialId: preferred.id, model: preferred.models.includes(config?.model ?? "") ? config!.model : preferred.models[0], effort: config?.effort ?? "medium", contextLimit: config?.contextLimit ?? 64000 } : null;
-  const template = chatInstructionTemplate(character, role, category);
+  const template = titleTemplate ?? chatInstructionTemplate(character, role, category);
   const profile = { type: subject.type, id: subject.id, name, role, character, template, instructions,
     authority: subject.type === "agent" ? "Uses this agent's current task permissions." : "Knows only its own room and changes only what it is doing; work it suggests goes to the CEO once the owner confirms." };
   const capabilities = subject.type === "agent" ? await service.chatTaskCapabilities(actor) : null;

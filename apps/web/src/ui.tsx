@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, type InputHTMLAttributes, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t as tr } from "./i18n.ts";
 import { t } from "./i18n.ts";
 
@@ -147,4 +147,25 @@ export function Menu({ trigger, items, label, align = "right", header }: { trigg
       )}
     </div>
   );
+}
+
+/**
+ * A color field that reports its color once it is picked (the native "change",
+ * when the picker closes), not on every move. Re-rendering the page while iOS
+ * shows its color sheet closes the sheet, so nothing changes until the person is done.
+ */
+export function ColorInput({ value, onChange, ...rest }: { value: string; onChange: (color: string) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type">) {
+  const el = useRef<HTMLInputElement>(null);
+  const report = useRef(onChange);
+  report.current = onChange;
+  useEffect(() => {
+    const input = el.current!;
+    const done = () => report.current(input.value);
+    input.addEventListener("change", done);
+    return () => input.removeEventListener("change", done);
+  }, []);
+  useEffect(() => {
+    if (el.current && el.current.value !== value) el.current.value = value;
+  }, [value]);
+  return <input ref={el} type="color" defaultValue={value} {...rest} />;
 }

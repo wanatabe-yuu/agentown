@@ -157,6 +157,47 @@ describe("capability system", () => {
     await env.call(env.owner, "PUT", "/api/kernel", { worldEdits: "approve" });
   });
 
+  it("an approved world edit applies to the world as it is now; asking again waits on the first request", async () => {
+    const rev = async () => (await env.call(env.owner, "GET", "/api/world")).body.revision as number;
+    const ops = (revision: number) => ({ revision, operations: [{ op: "add", path: "/kinds/lamp", value: { name: "Lamp", category: "static", look: { parts: [{ shape: "box" }] } } }] });
+    const start = (await env.call(env.owner, "GET", "/api/world")).body;
+    await env.call(env.owner, "PUT", "/api/world", { revision: start.revision, world: { ...start.world, kinds: {} } });
+    const first = await env.call(env.token(worker), "POST", "/api/tools/patch_world/invoke", { args: ops(await rev()) });
+    expect(first.status).toBe(202);
+    // The agent retries: no second request in the inbox.
+    expect((await env.call(env.token(worker), "POST", "/api/tools/patch_world/invoke", { args: ops(await rev()) })).body.proposalId).toBe(first.body.proposalId);
+    // A copy from before folding existed is settled along with it.
+    await env.db.query(
+      `INSERT INTO proposals(id, org_id, kind, title, proposer, subject_type, subject_id, payload, source_type, source_id, status, evaluation, approvers)
+       SELECT 'p-copy', org_id, kind, title, proposer, subject_type, subject_id, payload, source_type, 'cg-copy', status, evaluation, approvers FROM proposals WHERE id=$1`,
+      [first.body.proposalId],
+    );
+    // Meanwhile the owner changes the world.
+    const cur = (await env.call(env.owner, "GET", "/api/world")).body;
+    expect((await env.call(env.owner, "PUT", "/api/world", { revision: cur.revision, world: { ...cur.world, zones: { upstairs: ["eng"] } } })).status).toBe(200);
+    const ok = await env.call(env.owner, "POST", `/api/proposals/${first.body.proposalId}/decide`, { verdict: "approve" });
+    expect(ok.body, JSON.stringify(ok.body)).toMatchObject({ proposal: { status: "applied" } });
+    expect((await env.call(env.owner, "GET", "/api/world")).body.world.kinds.lamp).toMatchObject({ name: "Lamp" });
+    expect((await env.db.query("SELECT status FROM proposals WHERE id='p-copy'")).rows[0].status).toBe("rejected");
+    // A world that would not save goes back to the agent at once, with the reason; nothing reaches the inbox.
+    const before = (await proposals()).length;
+    const bad = await env.call(env.token(worker), "POST", "/api/tools/patch_world/invoke", {
+      args: { revision: await rev(), operations: [{ op: "add", path: "/objects", value: [{ id: "sign", kind: "lamp", room: "lobby", at: [1, 1] }] }] },
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toMatch(/unknown room lobby/);
+    expect((await proposals()).length).toBe(before);
+    // No revision needed; a newer edit from the same agent replaces its earlier one in the inbox.
+    const add = (id: string) => ({ operations: [{ op: "add", path: `/kinds/${id}`, value: { name: id, category: "static", look: { parts: [{ shape: "box" }] } } }] });
+    const one = await env.call(env.token(worker), "POST", "/api/tools/patch_world/invoke", { args: add("chair") });
+    const two = await env.call(env.token(worker), "POST", "/api/tools/patch_world/invoke", { args: add("stool") });
+    expect([one.status, two.status]).toEqual([202, 202]);
+    const pendingWorld = (await proposals(env.owner, "?status=pending")).filter((x) => x.kind === "world_change" && x.proposer === `agent:${worker}`);
+    expect(pendingWorld.map((x) => x.id)).toEqual([two.body.proposalId]);
+    expect((await env.db.query("SELECT status FROM proposals WHERE id=$1", [one.body.proposalId])).rows[0].status).toBe("withdrawn");
+    expect((await env.call(env.owner, "POST", `/api/proposals/${two.body.proposalId}/decide`, { verdict: "approve" })).body.proposal.status).toBe("applied");
+  });
+
   it("self-patching: a code proposal waits for the owner, who reads the diff; approving queues it and the build result comes back", async () => {
     const dir = mkdtempSync(join(tmpdir(), "selfpatch-"));
     process.env.AGENTOWN_SELFPATCH_DIR = dir;

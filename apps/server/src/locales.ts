@@ -23,6 +23,7 @@ const VI: Record<string, string> = {
   "Floor 1": "Tầng 1", "Floor 2": "Tầng 2", "Front of house": "Khu phục vụ", "Jukebox": "Máy hát", "Kitchen": "Bếp", "Management": "Quản lý",
   "Manager": "Người quản lý", "Music player": "Máy phát nhạc", "Oven": "Lò nướng", "Plant": "Cây cảnh", "Roaster": "Thợ rang", "Roastery": "Xưởng rang",
   "Shelf": "Kệ", "Shift supervisor": "Giám sát ca", "Shop cat": "Mèo của quán", "Social media": "Mạng xã hội", "Sofa": "Ghế sofa", "Viewer": "Người xem", "Neon sign": "Biển neon",
+  "Order here": "Gọi món tại đây", "Menu": "Thực đơn", "Shop sign": "Biển hiệu", "Planning board": "Bảng kế hoạch", "Studio camera": "Máy quay studio", "Browser": "Trình duyệt",
   // what coffee things do
   "Wandering": "Đi dạo", "Napping": "Ngủ trưa", "Purring": "Rừ rừ", "Playing": "Đang chơi", "Pet": "Vuốt ve", "Play with": "Chơi cùng",
   "Ready": "Sẵn sàng", "Brewing": "Đang pha", "Pull a shot": "Pha một shot", "Paused": "Tạm dừng", "Pause the music": "Tắt nhạc",
@@ -50,9 +51,10 @@ export function translateNames<T>(doc: T, from: Language, to: Language): T {
   if (from === to) return doc;
   const toEn = Object.fromEntries(Object.entries(DICTS[from]).map(([en, x]) => [x, en]));
   const map = (s: string) => DICTS[to][toEn[s] ?? s] ?? toEn[s] ?? s;
-  const walk = (v: unknown): unknown =>
-    Array.isArray(v) ? v.map(walk)
-    : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, TEXT_FIELDS.has(k) && typeof x === "string" ? map(x) : walk(x)]))
+  // Chat templates are keyed by title: their keys follow the titles they belong to.
+  const walk = (v: unknown, parent = ""): unknown =>
+    Array.isArray(v) ? v.map((x) => walk(x))
+    : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [parent === "chatTemplates" ? map(k) : k, TEXT_FIELDS.has(k) && typeof x === "string" ? map(x) : walk(x, k)]))
     : v;
   return walk(doc) as T;
 }

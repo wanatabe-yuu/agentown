@@ -1,3 +1,4 @@
+import { ColorInput } from "../ui.tsx";
 import { requestId } from "../requestId.ts";
 import { t as tr } from "../i18n.ts";
 import { chatInstructionTemplate } from "@agentown/core";
@@ -251,11 +252,11 @@ function RoomsTab(p: EditorProps) {
           <div className="nums">
             <label className="num">
               <span>{tr("floor")}</span>
-              <input type="color" value={room.floorColor ?? "#e5e0d8"} onChange={(e) => set((r) => (r.floorColor = e.target.value))} />
+              <ColorInput value={room.floorColor ?? "#e5e0d8"} onChange={(v) => set((r) => (r.floorColor = v))} />
             </label>
             <label className="num">
               <span>{tr("walls")}</span>
-              <input type="color" value={room.wallColor ?? "#9aa3ad"} onChange={(e) => set((r) => (r.wallColor = e.target.value))} />
+              <ColorInput value={room.wallColor ?? "#9aa3ad"} onChange={(v) => set((r) => (r.wallColor = v))} />
             </label>
             {(["floorTexture", "wallTexture"] as const).map((k) => (
               <label key={k} className="num">
@@ -463,7 +464,7 @@ function KindsTab(p: EditorProps) {
           </div>
 
           <h4>{tr("Look")}</h4>
-          <details className="object-chat-field"><summary>{tr("Default chat persona")}</summary><p className="muted small">{chatInstructionTemplate(k.look.character ?? "object", k.title ?? "", k.category)}</p></details>
+          <details className="object-chat-field"><summary>{k.title && p.draft.chatTemplates?.[k.title] ? tr("Chat template for “{title}”", { title: k.title }) : tr("Default chat persona")}</summary><p className="muted small">{(k.title && p.draft.chatTemplates?.[k.title]?.instructions) || chatInstructionTemplate(k.look.character ?? "object", k.title ?? "", k.category)}</p></details>
           <label className="check object-chat-field">
             <input type="checkbox" checked={!!k.chat && k.chat.enabled !== false} onChange={(e) => set((x) => { x.chat = e.target.checked ? { ...x.chat, enabled: undefined } : undefined; })} />
             {tr("Things of this kind can be talked to")}
@@ -499,11 +500,11 @@ function KindsTab(p: EditorProps) {
               </label>
               <label className="num">
                 <span>{tr("color")}</span>
-                <input type="color" value={k.look.color ?? "#6b7280"} onChange={(e) => set((x) => (x.look.color = e.target.value))} />
+                <ColorInput value={k.look.color ?? "#6b7280"} onChange={(v) => set((x) => (x.look.color = v))} />
               </label>
               <label className="num">
                 <span>{tr("accent")}</span>
-                <input type="color" value={k.look.accent ?? "#3b2a20"} onChange={(e) => set((x) => (x.look.accent = e.target.value))} />
+                <ColorInput value={k.look.accent ?? "#3b2a20"} onChange={(v) => set((x) => (x.look.accent = v))} />
               </label>
               <Num label={tr("scale")} value={k.look.scale ?? 1} min={0.1} max={5} onChange={(v) => set((x) => (x.look.scale = v))} />
             </div>
@@ -520,7 +521,7 @@ function KindsTab(p: EditorProps) {
                   <Vec3 label={tr("size")} value={part.size} onChange={(v) => set((x) => (x.look.parts[i].size = v))} />
                   <Vec3 label={tr("offset")} value={part.offset} onChange={(v) => set((x) => (x.look.parts[i].offset = v))} />
                   <Vec3 label={tr("rotation")} value={part.rotation} onChange={(v) => set((x) => (x.look.parts[i].rotation = v))} />
-                  <input type="color" value={part.color ?? "#9aa3ad"} onChange={(e) => set((x) => (x.look.parts[i].color = e.target.value))} aria-label={tr("Color")} />
+                  <ColorInput value={part.color ?? "#9aa3ad"} onChange={(v) => set((x) => (x.look.parts[i].color = v))} aria-label={tr("Color")} />
                   <select value={part.finish ?? "matte"} onChange={(e) => set((x) => (x.look.parts[i].finish = e.target.value))} aria-label={tr("Finish")}>
                     {FINISHES.map((f) => (
                       <option key={f} value={f}>

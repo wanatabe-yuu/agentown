@@ -67,12 +67,12 @@ export function ownerTools(s: Record<string, z.ZodType>): ChatTool[] {
           case "logs": if (!b.id) throw badRequest("id required"); return (await v.logs(a, b.id, 0)).slice(-80);
         }
       } },
-    { name: "patch_world", description: "Edit current world with JSON Patch add/replace/remove operations and the revision from inspect world. Includes rooms, buildings, floors, furniture, placements, lights and art. Server validates the entire result. Removing items requires owner confirmation; an agent's edits may wait for the owner's approval (kernel setting).",
-      schema: patchSchema, mutates: true,
+    { name: "patch_world", description: "Edit the world with JSON Patch add/replace/remove operations (rooms, floors, furniture, placements, lights, art). No revision is needed: the operations apply to the world as it is when they run, also after waiting for approval. Put every change into one call; a new call replaces your earlier one that still waits for approval. The server checks the whole result at once and tells you what is wrong. Removing items requires owner confirmation; an agent's edits may wait for the owner's approval (kernel setting).",
+      schema: patchSchema.extend({ revision: z.number().int().optional() }), mutates: true,
       execute: async ({ instance, service, actor }, b) => {
-        const current = await service.getWorld(actor);
-        if (!current.world) throw badRequest("world has no custom layout; use replace_world to create one");
-        return instance.updateOrgWorld(service, actor, { revision: b.revision, world: patchDocument(current.world, b.operations) });
+        const { rows } = await service.db.query("SELECT config->'world' AS world, config_revision FROM organizations WHERE id=$1", [service.orgId]);
+        if (!rows[0].world) throw badRequest("world has no custom layout; use replace_world to create one");
+        return instance.updateOrgWorld(service, actor, { revision: rows[0].config_revision, world: patchDocument(rows[0].world, b.operations) });
       } },
     { name: "replace_world", description: "Create or replace the complete custom world (null resets to default). Read world/config and use their revision. Requires owner confirmation unless the owner lets designers apply directly.",
       schema: s.orgWorld!, mutates: true, important: true,

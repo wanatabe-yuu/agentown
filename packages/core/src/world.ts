@@ -238,6 +238,12 @@ export const worldSchema = z.object({
   zones: z.record(idSchema, z.array(idSchema).min(1)).default({}),
   kinds: z.record(idSchema, objectKindSchema).default({}),
   objects: z.array(placementSchema).max(2000).default([]),
+  /**
+   * Chat personas by title: every object whose title (its own, else its kind's)
+   * is listed here can be talked to and speaks this way. Instructions set on its
+   * kind or on the object itself come on top.
+   */
+  chatTemplates: z.record(z.string().min(1).max(40), z.object({ instructions: z.string().min(1).max(12000) })).default({}),
   /** Outside tools (MCP servers) that come with this world. */
   connectors: z.record(idSchema, connectorSchema).default({}),
   /** How agents look: per job title, else the default (a person in the department's color). */
@@ -253,10 +259,19 @@ export const worldSchema = z.object({
 export type World = z.infer<typeof worldSchema>;
 export type Room = World["floors"][number]["rooms"][number];
 
-/** Whether a placed object can be talked to (see objectChatSchema). */
-export function canTalk(world: Pick<World, "kinds">, o: { kind: string; chat?: { enabled?: boolean } }): boolean {
+type ChatWorld = Pick<World, "kinds"> & { chatTemplates?: World["chatTemplates"] };
+type ChatObject = { kind: string; title?: string; chat?: { enabled?: boolean } };
+
+/** The world's chat template for an object, by its title (its own, else its kind's). */
+export function chatTemplateOf(world: ChatWorld, o: ChatObject) {
+  const title = o.title ?? world.kinds[o.kind]?.title;
+  return title ? world.chatTemplates?.[title] : undefined;
+}
+
+/** Whether a placed object can be talked to (see objectChatSchema and chatTemplates). */
+export function canTalk(world: ChatWorld, o: ChatObject): boolean {
   const kind = world.kinds[o.kind];
-  return o.chat?.enabled ?? kind?.chat?.enabled ?? !!kind?.chat;
+  return o.chat?.enabled ?? kind?.chat?.enabled ?? (!!kind?.chat || !!chatTemplateOf(world, o));
 }
 
 /** Cross-references a world must satisfy, given the org's departments. */

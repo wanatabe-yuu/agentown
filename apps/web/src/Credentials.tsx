@@ -333,7 +333,7 @@ export function AgentConfigForm({ detail, departmentId, harness, notify }: { det
           ))}
         </select>
       </label>
-      <label>{tr("Context budget (tokens)")}<input type="number" min={8192} max={1000000} step={1024} value={contextLimit ?? ""} placeholder={tr("Provider default")} onChange={e => setContextLimit(e.target.value ? Number(e.target.value) : null)} /></label>
+      <label>{tr("Context budget (tokens)")}<input type="number" min={8192} max={1000000} step={1} value={contextLimit ?? ""} placeholder={tr("Provider default")} onChange={e => setContextLimit(e.target.value ? Number(e.target.value) : null)} /></label>
       <p className="muted small">{tr("Effort controls reasoning. Context budget bounds estimated input plus reserved output and compacts task history automatically. It cannot increase the provider’s model window.")}</p>
       <label>
         {tr("Max turns per task")}

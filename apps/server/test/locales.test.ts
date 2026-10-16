@@ -14,4 +14,11 @@ describe("template language", () => {
     const names = Object.keys(DICTS.vi).map((name) => ({ name }));
     expect(translateNames(translateNames(names, "en", "vi"), "vi", "en")).toEqual(names);
   });
+  it("chat templates follow the titles they are keyed by", () => {
+    const w = { world: { kinds: { m: { name: "Menu board", title: "Menu" } }, chatTemplates: { Menu: { instructions: "You are the menu." } } } };
+    const vi = translateNames(w, "en", "vi");
+    expect(vi.world.kinds.m.title).toBe("Thực đơn");
+    expect(Object.keys(vi.world.chatTemplates)).toEqual(["Thực đơn"]);
+    expect(translateNames(vi, "vi", "en")).toEqual(w);
+  });
 });

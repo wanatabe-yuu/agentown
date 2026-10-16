@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Avatar } from "./Avatar.tsx";
 import { t as tr } from "./i18n.ts";
 import { api } from "./api.ts";
@@ -404,9 +404,18 @@ function SpawnForm({ manager, catalog: full, teams, templates: allowed, notify }
   useEffect(() => {
     if (!usesModel) return;
     api<{ credentials: Credential[] }>("GET", "/api/credentials")
-      .then((r) => setCreds(r.credentials.filter((c) => !c.revokedAt && (!c.departments || c.departments.includes(manager.departmentId)))))
+      .then((r) => {
+        const usable = r.credentials.filter((c) => !c.revokedAt && (!c.departments || c.departments.includes(manager.departmentId)));
+        setCreds(usable);
+        // A new hire works with its manager's key and model unless someone picks others.
+        const mine = usable.find((c) => c.id === manager.config.credentialId) ?? (usable.length === 1 ? usable[0] : undefined);
+        if (mine) {
+          setCredentialId((cur) => cur || mine.id);
+          setModel((cur) => cur || (mine.id === manager.config.credentialId && manager.config.model && mine.models.includes(manager.config.model) ? manager.config.model : ""));
+        }
+      })
       .catch(() => setCreds([]));
-  }, [usesModel, manager.departmentId]);
+  }, [usesModel, manager.departmentId, manager.config.credentialId, manager.config.model]);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -502,21 +511,41 @@ function AgentTasks({ agent, snapshot, onOpenTask }: { agent: Agent; snapshot: S
   return (
     <ul className="task-list">
       {tasks.map((x) => (
-        <li key={x.id}>
-          <button type="button" className="task-row stacked" onClick={() => onOpenTask(x.id)}>
-            <span className="task-head">
-              <StatusPill state={x.status} />
-              <span className="task-title">{x.title}</span>
-            </span>
-            {(x.summary ?? x.statusReason) && (
-              <span className="task-summary">
-                <ReportText text={x.summary ?? x.statusReason ?? ""} />
-              </span>
-            )}
-          </button>
-        </li>
+        <TaskCard key={x.id} task={x} onOpen={() => onOpenTask(x.id)} />
       ))}
     </ul>
+  );
+}
+
+/** One task: its report fades out after a few lines, with "Show more" in the corner when there is more. */
+function TaskCard({ task: x, onOpen }: { task: Snapshot["tasks"][number]; onOpen: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [more, setMore] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+  const text = x.summary ?? x.statusReason ?? "";
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el) setMore(open || el.scrollHeight > el.clientHeight + 1);
+  }, [text, open]);
+  return (
+    <li className="task-card">
+      <button type="button" className="task-row stacked" onClick={onOpen}>
+        <span className="task-head">
+          <StatusPill state={x.status} />
+          <span className="task-title">{x.title}</span>
+        </span>
+        {text && (
+          <span ref={box} className={`task-summary${open ? " open" : more ? " clipped" : ""}`}>
+            <ReportText text={text} />
+          </span>
+        )}
+      </button>
+      {more && (
+        <button type="button" className="link task-more" onClick={() => setOpen(!open)} aria-expanded={open}>
+          {open ? t("Show less") : t("Show more")}
+        </button>
+      )}
+    </li>
   );
 }
 
@@ -547,9 +576,23 @@ function Logs({ agentId }: { agentId: string }) {
       clearInterval(id);
     };
   }, [agentId]);
+  // Follow the newest line, unless the person scrolled up to read something older.
+  const box = useRef<HTMLPreElement>(null);
+  const follow = useRef(true);
+  useLayoutEffect(() => {
+    if (follow.current && box.current) box.current.scrollTop = box.current.scrollHeight;
+  }, [lines]);
   if (error && !lines.length) return <p className="error">{error}</p>;
   return (
-    <pre className="logs" aria-live="polite">
+    <pre
+      ref={box}
+      className="logs"
+      aria-live="polite"
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      }}
+    >
       {lines.length === 0 && <span className="muted">{t("No work logs yet.")}</span>}
       {lines.map((l) => (
         <div key={l.seq} className={`log-${l.stream}`}>

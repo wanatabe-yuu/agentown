@@ -1,4 +1,4 @@
-import { canTalk, FINISHES, objectState, SHAPES, type World } from "@agentown/core/world";
+import { canTalk, chatTemplateOf, FINISHES, objectState, SHAPES, type World } from "@agentown/core/world";
 import { addPart, duplicatePart, kindColors, recolorKind, removePart, updatePart } from "./office3d/kindEdit.ts";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { api } from "./api.ts";
@@ -6,7 +6,7 @@ import { t } from "./i18n.ts";
 import type { Agent, Snapshot, WorkState } from "./types.ts";
 import { Avatar, WhoName } from "./Avatar.tsx";
 import { uploadAsset } from "./Assets.tsx";
-import { StatusPill } from "./ui.tsx";
+import { ColorInput, StatusPill } from "./ui.tsx";
 import { ComputerScreen } from "./ComputerScreen.tsx";
 import { deskStates } from "./office3d/live.ts";
 
@@ -129,6 +129,7 @@ function PlacedPanel(p: PanelProps) {
   const [part, setPart] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
+  const [lookOpen, setLookOpen] = useState(false);
   const [doer, setDoer] = useState<Record<string, string>>({});
   const [refs, setRefs] = useState<Array<{ chatId: string; title: string; subject: { type: "owner" | "agent" | "object"; id: string } }>>([]);
   const clock = useTick(1000);
@@ -146,6 +147,7 @@ function PlacedPanel(p: PanelProps) {
     setWalking(false);
     setPart(null);
     setPreview(null);
+    setLookOpen(false);
   }, [p.objectId]);
   const object = draft?.object ?? saved;
   const kind = draft?.kind ?? (saved ? world?.kinds[saved.kind] : undefined);
@@ -206,6 +208,60 @@ function PlacedPanel(p: PanelProps) {
     }
   };
 
+  // The fields people change most, shared by the editor over the model and the full editor below.
+  const basics = (
+    <div className="look-grid">
+      <label>
+        {t("Name")}
+        <input value={object.label ?? ""} maxLength={40} placeholder={kind.name} onChange={(e) => edit({ label: e.target.value || undefined })} />
+      </label>
+      <label>
+        {t("Subtitle")}
+        <input value={object.title ?? ""} maxLength={40} placeholder={kind.title ?? ""} onChange={(e) => edit({ title: e.target.value || undefined })} />
+      </label>
+      <label>
+        {t("Turn")} · {object.rotationY}°
+        <input type="range" min={-180} max={180} step={15} value={object.rotationY} onChange={(e) => edit({ rotationY: Number(e.target.value) })} />
+      </label>
+      <label>
+        {t("Scale")} · ×{object.scale.toFixed(1)}
+        <input type="range" min={0.5} max={2} step={0.1} value={object.scale} onChange={(e) => edit({ scale: Number(e.target.value) })} />
+      </label>
+    </div>
+  );
+  const palette = "character" in kind.look ? (
+    <div className="look-grid">
+      <label>
+        {t("Main color")}
+        <ColorInput value={kind.look.color ?? "#9aa3ad"} onChange={(v) => edit({}, { ...kind, look: { ...kind.look, color: v } as Kind["look"] })} />
+      </label>
+      <label>
+        {t("Accent (hair, legs)")}
+        <ColorInput value={("accent" in kind.look && kind.look.accent) || "#3b2a20"} onChange={(v) => edit({}, { ...kind, look: { ...kind.look, accent: v } as Kind["look"] })} />
+      </label>
+    </div>
+  ) : (
+    colors.length > 0 && (
+                    <div className="swatches" aria-label={t("Colors")}>
+                      {colors.map((c) => (
+                        <ColorInput key={c} value={c} aria-label={c} onChange={(v) => recolor(c, v.toLowerCase())} />
+                      ))}
+                    </div>
+                  )
+  );
+  const saveBar = (
+    <div className="btn-row">
+      <button type="button" className="primary" disabled={!changed || busy} onClick={() => void save()}>
+        {t("Save")}
+      </button>
+      {changed && (
+        <button type="button" disabled={busy} onClick={() => setDraft(null)}>
+          {t("Cancel")}
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <aside className="panel agent-panel object-panel" aria-label={name}>
       <header className="panel-head">
@@ -228,10 +284,27 @@ function PlacedPanel(p: PanelProps) {
       <div className="panel-body">
         {kind.browser && (p.owner || p.canDesign) && <ComputerScreen objectId={p.objectId} notify={p.notify} />}
         {kind.browser && !(p.owner || p.canDesign) && <p className="muted small">{t("A computer the agents use. Only the owner, and people who may design the world, see its screen.")}</p>}
-        <section className={`studio ${kind.browser && (p.owner || p.canDesign) ? "studio-small" : ""}`}>
-          <Suspense fallback={<div className="studio-stage studio-loading" />}>
-            <ObjectStudio kind={kind} scale={object.scale} walking={walking} state={shown} highlight={p.canDesign ? part : null} />
-          </Suspense>
+        <section className={`studio ${kind.browser && (p.owner || p.canDesign) ? "studio-small" : ""}${lookOpen ? " preset-open" : ""}`}>
+          <div className="studio-host">
+            <Suspense fallback={<div className="studio-stage studio-loading" />}>
+              <ObjectStudio kind={kind} scale={object.scale} walking={walking} state={shown} highlight={p.canDesign ? part : null} />
+            </Suspense>
+            {p.canDesign && (
+              // Like an agent's look: edit it beside the model and save right there.
+              <aside className={`studio-preset${lookOpen ? " open" : ""}`} aria-label={t("Edit")}>
+                <button type="button" className="studio-preset-toggle" aria-expanded={lookOpen} onClick={() => setLookOpen((x) => !x)}>
+                  {lookOpen ? `${t("Edit")} ›` : `‹ ${t("Edit")}`}
+                </button>
+                {lookOpen && (
+                  <div className="studio-preset-body">
+                    {basics}
+                    {palette}
+                    {saveBar}
+                  </div>
+                )}
+              </aside>
+            )}
+          </div>
           {kind.states.length > 0 && (
             <div className="state-chips" role="group" aria-label={t("Show the object")}>
               <button type="button" className={preview === null ? "active" : ""} onClick={() => setPreview(null)}>
@@ -378,46 +451,14 @@ function PlacedPanel(p: PanelProps) {
                 </span>
               </div>
             </div>
-            <div className="look-grid">
-              <label>
-                {t("Name")}
-                <input value={object.label ?? ""} maxLength={40} placeholder={kind.name} onChange={(e) => edit({ label: e.target.value || undefined })} />
-              </label>
-              <label>
-                {t("Subtitle")}
-                <input value={object.title ?? ""} maxLength={40} placeholder={kind.title ?? ""} onChange={(e) => edit({ title: e.target.value || undefined })} />
-              </label>
-              <label>
-                {t("Turn")} · {object.rotationY}°
-                <input type="range" min={-180} max={180} step={15} value={object.rotationY} onChange={(e) => edit({ rotationY: Number(e.target.value) })} />
-              </label>
-              <label>
-                {t("Scale")} · ×{object.scale.toFixed(1)}
-                <input type="range" min={0.5} max={2} step={0.1} value={object.scale} onChange={(e) => edit({ scale: Number(e.target.value) })} />
-              </label>
-            </div>
+            {basics}
             {"character" in kind.look ? (
-              <div className="look-grid">
-                <label>
-                  {t("Main color")}
-                  <input type="color" value={kind.look.color ?? "#9aa3ad"} onChange={(e) => edit({}, { ...kind, look: { ...kind.look, color: e.target.value } as Kind["look"] })} />
-                </label>
-                <label>
-                  {t("Accent (hair, legs)")}
-                  <input type="color" value={("accent" in kind.look && kind.look.accent) || "#3b2a20"} onChange={(e) => edit({}, { ...kind, look: { ...kind.look, accent: e.target.value } as Kind["look"] })} />
-                </label>
-              </div>
+              palette
             ) : (
               parts && (
                 <div className="shape-edit">
                   <div className="muted small">{others > 0 ? t("Look and shape: for every {kind} ({n} more in the world)", { kind: kind.name, n: others }) : t("Look and shape")}</div>
-                  {colors.length > 0 && (
-                    <div className="swatches" aria-label={t("Colors")}>
-                      {colors.map((c) => (
-                        <input key={c} type="color" value={c} aria-label={c} onChange={(e) => recolor(c, e.target.value.toLowerCase())} />
-                      ))}
-                    </div>
-                  )}
+                  {!("character" in kind.look) && palette}
                   <div className="part-chips" role="listbox" aria-label={t("Parts")}>
                     {parts.map((x, i) => (
                       <button key={i} type="button" role="option" aria-selected={part === i} className={part === i ? "active" : ""} onClick={() => setPart(part === i ? null : i)}>
@@ -454,7 +495,7 @@ function PlacedPanel(p: PanelProps) {
                         </label>
                         <label>
                           {t("Color")}
-                          <input type="color" value={sel.color} onChange={(e) => shape(updatePart(kind, part, { color: e.target.value, ...(sel.emissive ? { emissive: e.target.value } : {}) }))} />
+                          <ColorInput value={sel.color} onChange={(v) => shape(updatePart(kind, part, { color: v, ...(sel.emissive ? { emissive: v } : {}) }))} />
                         </label>
                         <label className="check">
                           <input type="checkbox" checked={!!sel.emissive} onChange={(e) => shape(updatePart(kind, part, { emissive: e.target.checked ? sel.color : undefined }))} />
@@ -481,24 +522,21 @@ function PlacedPanel(p: PanelProps) {
               <input type="checkbox" checked={canTalk(world, object)} onChange={(e) => edit({ chat: { ...object.chat, enabled: e.target.checked } })} />
               {t("Can be talked to")}
             </label>
+            {canTalk(world, object) && chatTemplateOf(world, object) && (
+              <details className="object-chat-field">
+                <summary>{t("Chat template for “{title}”", { title: object.title ?? kind.title ?? "" })}</summary>
+                <p className="muted small">{chatTemplateOf(world, object)!.instructions}</p>
+              </details>
+            )}
             {canTalk(world, object) && (
               <label>
                 {t("Personality")}
                 <textarea rows={3} maxLength={12000} value={object.chat?.instructions ?? ""} placeholder={kind.chat?.instructions ?? t("Optional personality or context for this object")} onChange={(e) => edit({ chat: { ...object.chat, instructions: e.target.value || undefined } })} />
               </label>
             )}
-            <div className="btn-row">
-              <button type="button" className="primary" disabled={!changed || busy} onClick={() => void save()}>
-                {t("Save")}
-              </button>
-              {changed && (
-                <button type="button" disabled={busy} onClick={() => setDraft(null)}>
-                  {t("Cancel")}
-                </button>
-              )}
-            </div>
           </section>
         )}
+        {changed && !lookOpen && <div className="save-bar">{saveBar}</div>}
       </div>
     </aside>
   );

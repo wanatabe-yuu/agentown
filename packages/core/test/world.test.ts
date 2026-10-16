@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseTemplate, splitInstanceConfig } from "../src/index.ts";
+import { canTalk, chatTemplateOf, worldSchema } from "../src/world.ts";
 
 const { catalog } = splitInstanceConfig(readFileSync(new URL("../../../config/agentown.yaml", import.meta.url), "utf8"));
 const coffee = readFileSync(new URL("../../../config/templates/coffee-store.yaml", import.meta.url), "utf8");
@@ -23,5 +24,18 @@ describe("world in a template", () => {
     expect(broken("behaviors: [{ type: roam, amount: 0.6 }]", "behaviors: [{ type: teleport }]")).toThrow();
     expect(broken("access: own-department", "access: { zone: vip }")).toThrow(/unknown zone vip/);
     expect(broken("{ to: 2b, side: east, at: 4 }", "{ to: 1b, side: east, at: 4 }")).toThrow(/different floors/);
+  });
+
+  it("objects talk with the chat template of their title; their own settings win", () => {
+    const { doc } = parseTemplate(coffee, catalog);
+    const world = worldSchema.parse(doc.world);
+    const counter = world.objects.find((o) => o.kind === "counter")!;
+    const rug = world.objects.find((o) => o.kind === "rug")!;
+    expect(canTalk(world, counter)).toBe(true);
+    expect(chatTemplateOf(world, counter)?.instructions).toMatch(/order counter/);
+    expect(canTalk(world, rug)).toBe(false);
+    // A title of its own picks another template; switching chat off still wins.
+    expect(chatTemplateOf(world, { ...rug, title: "Menu" })?.instructions).toMatch(/menu board/);
+    expect(canTalk(world, { ...counter, chat: { enabled: false } })).toBe(false);
   });
 });

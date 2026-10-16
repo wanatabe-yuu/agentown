@@ -58,6 +58,8 @@ body {
   color: var(--text);
   font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* A long URL or id that does not fit its line breaks instead of running off the screen. */
+  overflow-wrap: break-word;
 }
 code,
 .mono {
@@ -522,7 +524,8 @@ select {
 }
 .form-row select,
 .form-row input {
-  flex: 1 1 140px;
+  /* wide enough to read a role's name: on a phone each field gets its own line */
+  flex: 1 1 180px;
 }
 
 .pill {
@@ -577,6 +580,8 @@ select {
   margin: 0;
   padding: 0;
   display: grid;
+  /* One column no wider than the panel: a long command line must not size it (it widened the whole page). */
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px;
 }
 .task-row,
@@ -1957,7 +1962,8 @@ input.short {
 .needs-you h3, .conversations h3, .feed-section h3 { margin-bottom: 6px; }
 .inbox { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .inbox li { border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; padding: 8px 10px; background: var(--surface-2); }
-.inbox-main { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; border: 0; background: none; padding: 0; color: var(--text); text-align: left; min-height: 0; }
+.inbox-main { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-width: 0; border: 0; background: none; padding: 0; color: var(--text); text-align: left; min-height: 0; overflow-wrap: anywhere; }
+.inbox-main > * { max-width: 100%; }
 .inbox-main:disabled { cursor: default; opacity: 1; }
 .inbox-main b { font-weight: 600; overflow-wrap: anywhere; }
 .inbox-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--warn); }
@@ -1981,6 +1987,11 @@ input.short {
 .task-row.stacked { flex-direction: column; align-items: stretch; gap: 4px; }
 .task-row.stacked .task-head { display: flex; align-items: center; gap: 8px; }
 .task-row.stacked .task-summary { color: var(--muted); font-size: 12px; max-height: 4.6em; overflow: hidden; position: relative; text-align: left; }
+/* A long report fades out instead of stopping mid-line; "Show more" sits in the card's bottom-right corner. */
+.task-row.stacked .task-summary.clipped { mask-image: linear-gradient(to bottom, #000 55%, transparent); -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent); }
+.task-row.stacked .task-summary.open { max-height: none; }
+.task-card { position: relative; display: flex; flex-direction: column; }
+.task-card .task-more { align-self: flex-end; font-size: 12px; margin: -2px 10px 6px 0; min-height: 0; padding: 2px 4px; }
 .task-row.stacked .task-summary .report-markdown { font-size: 12px; }
 .task-row.stacked .task-summary .report-markdown > :first-child { margin-top: 0; }
 .implicit-teams { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 4px; }
@@ -2007,8 +2018,8 @@ input.short {
   .has-owner-chat .topbar > .menu:not(:last-child),
   .topbar > .menu:not(:last-child) { grid-column: 2; grid-row: 1; justify-self: end; }
   .topbar > .menu:not(:last-child) .btn-text { display: none; }
-  .topbar > .menu:not(:last-child) .btn-icon { display: inline; font-size: 18px; }
-  .topbar > .menu:not(:last-child) .menu-trigger { width: 44px; padding: 0; }
+  .topbar > .menu:not(:last-child) .btn-icon { display: flex; }
+  .topbar > .menu:not(:last-child) .menu-trigger { width: 44px; padding: 0; justify-content: center; }
   .topbar > .menu:last-child { grid-column: 3; grid-row: 1; }
   .topbar > .conn { grid-column: 1; grid-row: 1; justify-self: end; margin-right: 4px; }
   .brand { grid-column: 1; grid-row: 1; padding-right: 40px; }
@@ -2500,6 +2511,8 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
 .campaign-card.campaign-stopped { border-left-color: var(--muted); }
 .campaign-card > header { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
 .campaign-card h4 { margin: 0 0 2px; font-size: 15px; }
+/* Titles, goals and names come from people and agents: they wrap inside the card, long ids included. */
+.project-card, .campaign-card, .campaign-card > header > div, .project-card > header > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .campaign-tags { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .campaign-goal { margin: 0; white-space: pre-wrap; line-height: 1.5; }
 .campaign-progress { display: flex; flex-direction: column; gap: 4px; }
@@ -2545,7 +2558,10 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
 /* Editable rows: fields fill their column, the row action sits at the right edge. */
 .grid.mobile-cards td > input:not([type="color"]):not([type="checkbox"]),
 .grid.mobile-cards td > select { width: 100%; }
-.grid.mobile-cards td:last-child { text-align: right; width: 1%; white-space: nowrap; }
+/* Only as a table: as phone cards the last cell spans the card (a 1% width squeezed its buttons to a letter per line). */
+@media (min-width: 701px) {
+  .grid.mobile-cards td:last-child { text-align: right; width: 1%; white-space: nowrap; }
+}
 /* Agent table: name and its Chat button stay on one line; text cells do not wrap mid-word into tall rows */
 @media (min-width: 701px) {
   .grid.agents td:first-child { white-space: nowrap; }
@@ -2557,7 +2573,7 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
 }
 
 /* ---- Activity: agents' own words, like a chat */
-.feed .feed-say > button { width: 100%; display: flex; gap: 8px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 6px 0; color: var(--text); min-height: 0; }
+.feed .feed-say > button { width: 100%; display: flex; gap: 8px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 6px 0; color: var(--text); min-height: 0; white-space: normal; }
 .feed .say-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px 12px 12px 12px; padding: 6px 10px; }
 .feed .say-head { display: flex; gap: 6px; align-items: baseline; font-size: 12px; }
 .feed .say-text { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
@@ -2573,6 +2589,8 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
 .inbox .inbox-question { border-left-color: var(--accent); }
 .question-reply { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; width: 100%; }
 .question-options { display: flex; flex-wrap: wrap; gap: 6px; }
+/* An agent's options can be whole sentences: they wrap inside the card instead of running off it. */
+.question-options button { white-space: normal; text-align: left; max-width: 100%; min-height: var(--h); height: auto; padding: 7px 12px; line-height: 1.35; overflow-wrap: anywhere; }
 .question-answer { display: flex; gap: 6px; }
 .question-answer input { flex: 1; min-width: 0; }
 .question-reply > .link { align-self: flex-start; color: var(--muted); }
@@ -2637,3 +2655,69 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
 .connector-cred input[type="password"] { flex: 1; min-width: 140px; }
 .computer-keys { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; resize: none; border: 0; padding: 0; pointer-events: none; }
 .computer-screen:focus-within { box-shadow: 0 0 0 2px var(--accent); }
+
+/* ---- reloading without a browser bar (home-screen app): pull down, or the new-version notice */
+.pull-refresh {
+  position: fixed;
+  left: 50%;
+  top: calc(env(safe-area-inset-top) + 8px);
+  z-index: 100;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.pull-refresh.ready { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.new-version {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 16px);
+  transform: translateX(-50%);
+  z-index: 100;
+  width: min(480px, calc(100vw - 32px));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px 10px 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  animation: new-version-in 0.25s ease-out;
+}
+.new-version span { flex: 1; min-width: 0; }
+.new-version button { flex-shrink: 0; }
+@keyframes new-version-in { from { transform: translate(-50%, 20px); opacity: 0; } }
+
+/* Text people or agents wrote never runs out of its box: link-buttons inside text wrap with it. */
+button.link { white-space: normal; text-align: left; overflow-wrap: anywhere; max-width: 100%; }
+/* Safety net: nothing widens the page sideways (on a phone that scrolls the whole app off its edges). */
+#root { overflow-x: clip; }
+/* A clamped activity line ends at its second line: no sliver of the third shows in the bottom padding. */
+.feed .feed-row { padding-bottom: 0; margin-bottom: 4px; }
+/* Single-column lists of things people or agents wrote: the column is never wider than its box,
+   so one long, unbreakable line (a title, a command) cannot push the panel off the screen. */
+.task-detail, .review-box, .toasts, .editor-card, .chat-suggestions, .chat-activity > div,
+.object-life, .chat-refs > div, .object-refs, .menu-header { grid-template-columns: minmax(0, 1fr); }
+.chat-ref { min-width: 0; width: 100%; }
+.chat-ref-title { min-width: 0; flex: 1; }
+/* An object's editor over its model (like an agent's look), and Save/Cancel kept in view while there are changes. */
+.studio-host { position: relative; }
+.object-panel .studio-preset-body .look-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 0; }
+.object-panel .studio-preset-body .swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.object-panel .studio-preset-body .btn-row { position: sticky; bottom: -10px; margin: 0 -10px -10px; padding: 8px 10px; background: var(--surface); border-top: 1px solid var(--border); }
+.object-panel .save-bar { position: sticky; bottom: 0; z-index: 4; margin-top: 12px; padding: 10px 0 calc(10px + env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--border); }
+@media (max-width: 700px) { .studio-preset.open { width: min(72%, 280px); } }
+/* On a phone the object editor is a sheet over the lower part of the model, so the model stays in sight. */
+@media (max-width: 700px) {
+  .object-panel .studio-preset.open { left: 8px; width: auto; top: auto; height: 60%; }
+}

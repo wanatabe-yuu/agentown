@@ -300,7 +300,7 @@ export function OwnerChatDialog({ orgId, ownerId, orgName, subject, agents = [],
             <label>{t("Confirm changes")}<select value={config.approvalMode} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, approvalMode: e.target.value as Config["approvalMode"] })}>
               <option value="important">{t("Important actions")}</option><option value="all">{t("Every change")}</option>
             </select></label>
-            <label>{t("Context budget")}<input type="number" min={8192} max={1000000} step={1024} value={config.contextLimit} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, contextLimit: Number(e.target.value) })} /></label>
+            <label>{t("Context budget")}<input type="number" min={8192} max={1000000} step={1} value={config.contextLimit} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, contextLimit: Number(e.target.value) })} /></label>
             <label>{t("Output limit")}<input type="number" min={256} max={32000} step={256} value={config.maxOutputTokens} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, maxOutputTokens: Number(e.target.value) })} /></label>
             <label>{t("Steps per reply")}<input type="number" min={1} max={40} value={config.maxTurns} disabled={active || busy || readOnly} onChange={e => setConfig({ ...config, maxTurns: Number(e.target.value) })} /></label>
           </div></details>

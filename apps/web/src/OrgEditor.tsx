@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { HttpError, api } from "./api.ts";
 import type { Catalog, Snapshot } from "./types.ts";
-import { Modal } from "./ui.tsx";
+import { ColorInput, Modal } from "./ui.tsx";
 import { languageLabel, t as tr } from "./i18n.ts";
 import { askConfirm } from "./dialogs.tsx";
 
@@ -133,7 +133,7 @@ export function OrgEditor({ orgId, catalog, snapshot, onClose, notify }: { orgId
           onRemove={(i) => edit((d) => d.departments.splice(i, 1))}
           render={(row, i) => [
             <input key="n" value={row.name} onChange={(e) => rename("departments", i, "name", e.target.value)} placeholder={tr("e.g. Kitchen")} aria-label={tr("Department name")} required />,
-            <input key="c" type="color" value={row.color ?? "#8899aa"} onChange={(e) => edit((d) => (d.departments[i].color = e.target.value))} aria-label={tr("Department color")} />,
+            <ColorInput key="c" value={row.color ?? "#8899aa"} onChange={(v) => edit((d) => (d.departments[i].color = v))} aria-label={tr("Department color")} />,
           ]}
           note="A department with agents cannot be removed."
         />
