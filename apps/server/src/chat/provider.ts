@@ -35,6 +35,7 @@ export function anthropicMessages(messages: Message[]): any[] {
       else out.push({ role: "user", content: [block] });
     } else {
       const content = m.native ?? [
+        ...(m.images ?? []).map(data => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data } })),
         ...(m.text ? [{ type: "text", text: m.text }] : []),
         ...(m.calls ?? []).map(c => ({ type: "tool_use", id: c.id, name: c.name, input: c.args })),
       ];
@@ -123,7 +124,8 @@ export class AnthropicChatModel implements ChatModel {
 }
 
 export function compatibleMessages(i: ModelInput): any[] {
-  return [{ role: "system", content: i.system }, ...i.messages.map(m => ({ role: m.role, content: m.text || null,
+  return [{ role: "system", content: i.system }, ...i.messages.map(m => ({ role: m.role,
+    content: m.images?.length ? [...m.images.map(data => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${data}` } })), { type: "text", text: m.text }] : m.text || null,
     ...(m.role === "tool" ? { tool_call_id: m.toolId } : {}),
     ...(m.calls?.length ? { tool_calls: m.calls.map(c => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args) } })) } : {}),
     ...(m.reasoning ? { reasoning_content: m.reasoning } : {}) }))];

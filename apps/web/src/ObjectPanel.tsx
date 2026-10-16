@@ -1,4 +1,4 @@
-import { canTalk, chatTemplateOf, FINISHES, objectState, SHAPES, type World } from "@agentown/core/world";
+import { canTalk, chatTemplateOf, computerOf, FINISHES, isComputerKind, objectState, SHAPES, type World } from "@agentown/core/world";
 import { addPart, duplicatePart, kindColors, recolorKind, removePart, updatePart } from "./office3d/kindEdit.ts";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { api } from "./api.ts";
@@ -7,13 +7,14 @@ import type { Agent, Snapshot, WorkState } from "./types.ts";
 import { Avatar, WhoName } from "./Avatar.tsx";
 import { uploadAsset } from "./Assets.tsx";
 import { ColorInput, StatusPill } from "./ui.tsx";
-import { ComputerScreen } from "./ComputerScreen.tsx";
+import { ComputerConfig, ComputerDesk, ComputerHealth, ComputerScreen } from "./ComputerScreen.tsx";
 import { deskStates } from "./office3d/live.ts";
 
 const ObjectStudio = lazy(() => import("./office3d/ObjectStudio.tsx"));
 
 type Kind = World["kinds"][string];
 type Placed = World["objects"][number];
+type Desk = World["desks"][string];
 
 const BEHAVIOR: Record<string, string> = {
   spin: "turns",
@@ -49,6 +50,34 @@ export function ObjectPanel(p: PanelProps) {
   return p.objectId.startsWith("desk:") ? <WorkstationPanel {...p} agentId={p.objectId.slice(5)} /> : <PlacedPanel {...p} />;
 }
 
+/** The name in an inspector's head; people who may change it rename it right there (✎, Enter saves, Esc leaves it). */
+function EditableName({ name, placeholder, canEdit, onSave }: { name: string; placeholder: string; canEdit: boolean; onSave: (v: string | undefined) => Promise<void> }) {
+  const [text, setText] = useState<string | null>(null);
+  useEffect(() => setText(null), [name]);
+  if (text === null) {
+    return (
+      <h2 className="editable-name">
+        <span>{name}</span>
+        {canEdit && (
+          <button type="button" className="icon-btn rename-btn" aria-label={t("Rename")} title={t("Rename")} onClick={() => setText(name)}>
+            ✎
+          </button>
+        )}
+      </h2>
+    );
+  }
+  const done = (keep: boolean) => {
+    const v = text.trim();
+    setText(null);
+    if (keep && v !== name) void onSave(v || undefined);
+  };
+  return (
+    <input className="rename-input" autoFocus value={text} maxLength={40} placeholder={placeholder} aria-label={t("Name")}
+      onChange={(e) => setText(e.target.value)} onFocus={(e) => e.target.select()}
+      onKeyDown={(e) => (e.key === "Enter" ? done(true) : e.key === "Escape" ? done(false) : undefined)} onBlur={() => done(true)} />
+  );
+}
+
 /** Re-render every `ms`, for things that change with time (an object's own rhythm). */
 function useTick(ms: number) {
   const [now, setNow] = useState(Date.now());
@@ -67,49 +96,135 @@ const DESK: Record<string, string> = { off: "Off", sleep: "Asleep", on: "On", wo
  */
 function WorkstationPanel(p: PanelProps & { agentId: string }) {
   useTick(1000);
+  const world = p.snapshot.world;
+  const saved = world?.desks?.[p.agentId];
+  // Its computer: off (just a desk) until its studio computer is turned on in Config.
+  const [draft, setDraft] = useState<Desk | null>(null);
+  const [tab, setTab] = useState<"appearance" | "pc" | "config">("pc");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setDraft(null);
+    setTab("pc");
+  }, [p.agentId]);
+  // Saved: the world comes back with it.
+  useEffect(() => {
+    if (draft && JSON.stringify(draft) === JSON.stringify(saved)) setDraft(null);
+  }, [saved]);
   const agent = p.snapshot.agents.find((a) => a.id === p.agentId);
-  if (!agent) return null;
+  if (!agent || !world) return null;
   const work = p.workOf(agent);
   // As the office shows it (whether they sit at it); before the office has drawn it, from their work alone.
   const state = deskStates.get(agent.id) ?? (work === "offline" ? "off" : work === "executing" || work === "thinking" ? "working" : "on");
   const room = p.snapshot.departments.find((d) => d.id === agent.departmentId)?.name;
+  const id = `desk:${agent.id}`;
+  const base: Desk = saved ?? { studio: false, apps: ["browser"], connectors: [], network: "direct", remote: false };
+  const value = draft ?? base;
+  const computer = saved?.studio ? saved : null;
+  const tabs = !!(p.owner || p.canDesign);
+  const shownTab = !tabs ? "appearance" : tab === "pc" && !computer ? "config" : tab;
+  const changed = !!draft && JSON.stringify(draft) !== JSON.stringify(base);
+  const title = saved?.label || t("PC of {name}", { name: agent.displayName });
+  /** Its own name (empty: its person's). */
+  const rename = async (label: string | undefined) => {
+    try {
+      const cur = await api<{ revision: number; world: World }>("GET", "/api/world");
+      const { label: _, ...rest } = cur.world.desks[agent.id] ?? base;
+      await api("PUT", "/api/world", { revision: cur.revision, world: { ...cur.world, desks: { ...cur.world.desks, [agent.id]: label ? { ...rest, label } : rest } } });
+      p.notify(t("{name} renamed", { name: label || t("PC of {name}", { name: agent.displayName }) }), "info");
+    } catch (e) {
+      p.notify((e as Error).message, "error");
+    }
+  };
+  const save = async () => {
+    if (!draft) return;
+    setBusy(true);
+    try {
+      const cur = await api<{ revision: number; world: World }>("GET", "/api/world");
+      await api("PUT", "/api/world", { revision: cur.revision, world: { ...cur.world, desks: { ...cur.world.desks, [agent.id]: draft } } });
+      p.notify(t("{name} saved", { name: title }), "info");
+    } catch (e) {
+      p.notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <aside className="panel agent-panel object-panel" aria-label={t("Workstation of {name}", { name: agent.displayName })}>
+    <aside className="panel agent-panel object-panel" aria-label={title}>
       <header className="panel-head">
         <div className="avatar object-avatar" aria-hidden>
           ▣
         </div>
         <div className="panel-title">
-          <h2>{t("Workstation of {name}", { name: agent.displayName })}</h2>
-          <div className="muted">{[t("Desk and computer"), room].filter(Boolean).join(" · ")}</div>
+          <EditableName name={title} placeholder={t("PC of {name}", { name: agent.displayName })} canEdit={tabs} onSave={rename} />
+          <div className="muted">{[t("Desk and PC"), room].filter(Boolean).join(" · ")}</div>
         </div>
         <button type="button" className="icon-btn" onClick={p.onClose} aria-label={t("Close panel")}>
           ×
         </button>
       </header>
+      {tabs && (
+        <div className="tabs-row">
+          <nav className="tabs" role="tablist">
+            {(["appearance", "pc", "config"] as const).map((x) => (
+              <button key={x} role="tab" aria-selected={shownTab === x} className={shownTab === x ? "active" : ""} disabled={x === "pc" && !computer}
+                title={x === "pc" && !computer ? t("Turn on Studio PC in Config") : undefined} onClick={() => setTab(x)}>
+                {t({ appearance: "Appearance", pc: "PC", config: "Config" }[x])}
+              </button>
+            ))}
+          </nav>
+        </div>
+      )}
       <div className="panel-body">
-        <section className="studio">
-          <Suspense fallback={<div className="studio-stage studio-loading" />}>
-            <ObjectStudio scale={1} workstation={{ state, runtime: agent.runtime?.state ?? "none" }} />
-          </Suspense>
-        </section>
-        <section className="kv">
-          <div>{t("State")}</div>
-          <div>
-            <span className={`desk-state desk-${state}`}>{t(DESK[state]!)}</span>
-          </div>
-          <div>{t("Belongs to")}</div>
-          <div>
-            <button type="button" className="link who-link" onClick={() => p.onSelectAgent(agent.id)}>
-              <Avatar who={{ type: "agent", id: agent.id }} size={22} /> {agent.displayName}
-            </button>{" "}
-            <StatusPill state={work} />
-          </div>
-          <div>{t("Runtime")}</div>
-          <div>{agent.runtime?.state ?? t("none")}</div>
-          <div>{t("Can")}</div>
-          <div>{t("nothing on its own: it wakes when {name} sits down to work, sleeps when they walk away and turns off while they are offline.", { name: agent.displayName })}</div>
-        </section>
+        {shownTab === "pc" && computer && (
+          <>
+            <ComputerScreen objectId={id} apps={computer.apps} notify={p.notify} />
+            <ComputerHealth objectId={id} />
+            <ComputerDesk objectId={id} notify={p.notify}
+              nameOf={(ref) => { const [k, rid] = ref.split(":"); return k === "agent" ? p.snapshot.agents.find((a) => a.id === rid)?.displayName ?? rid! : k === "computer" ? t("its camera") : rid === "owner" ? t("Owner") : rid!; }} />
+          </>
+        )}
+        {shownTab === "config" && (
+          <>
+            <ComputerConfig objectId={id} value={value} saved={base} canEdit={tabs} owner={!!p.owner}
+              connectors={Object.entries(world.connectors ?? {}).map(([cid, c]) => ({ id: cid, name: c.name }))}
+              agents={p.snapshot.agents.filter((a) => a.lifecycleState !== "retired").map((a) => ({ id: a.id, name: a.displayName }))}
+              onChange={(v) => setDraft(v)} notify={p.notify} />
+            {changed && (
+              <div className="save-bar">
+                <div className="btn-row">
+                  <button type="button" className="primary" disabled={busy} onClick={() => void save()}>{t("Save")}</button>
+                  <button type="button" disabled={busy} onClick={() => setDraft(null)}>{t("Cancel")}</button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+        {shownTab === "appearance" && (
+          <>
+            <section className="studio">
+              <Suspense fallback={<div className="studio-stage studio-loading" />}>
+                <ObjectStudio scale={1} workstation={{ state, runtime: agent.runtime?.state ?? "none" }} />
+              </Suspense>
+            </section>
+            <section className="kv">
+              <div>{t("State")}</div>
+              <div>
+                <span className={`desk-state desk-${state}`}>{t(DESK[state]!)}</span>
+              </div>
+              <div>{t("Belongs to")}</div>
+              <div>
+                <button type="button" className="link who-link" onClick={() => p.onSelectAgent(agent.id)}>
+                  <Avatar who={{ type: "agent", id: agent.id }} size={22} /> {agent.displayName}
+                </button>{" "}
+                <StatusPill state={work} />
+              </div>
+              <div>{t("Runtime")}</div>
+              <div>{agent.runtime?.state ?? t("none")}</div>
+              <div>{t("Can")}</div>
+              <div>{computer ? t("Its own computer (a container of its own): open the PC tab.") : t("nothing on its own: it wakes when {name} sits down to work, sleeps when they walk away and turns off while they are offline.", { name: agent.displayName })}</div>
+            </section>
+          </>
+        )}
       </div>
     </aside>
   );
@@ -132,6 +247,8 @@ function PlacedPanel(p: PanelProps) {
   const [lookOpen, setLookOpen] = useState(false);
   const [doer, setDoer] = useState<Record<string, string>>({});
   const [refs, setRefs] = useState<Array<{ chatId: string; title: string; subject: { type: "owner" | "agent" | "object"; id: string } }>>([]);
+  /** A computer's inspector: its look, its screen (a studio computer), its settings. */
+  const [tab, setTab] = useState<"appearance" | "pc" | "config">("pc");
   const clock = useTick(1000);
   // The conversations it came up in (asked, used, named): the owner can open them.
   useEffect(() => {
@@ -144,11 +261,30 @@ function PlacedPanel(p: PanelProps) {
   }, [p.objectId, p.owner, p.snapshot.objectStates]);
   useEffect(() => {
     setDraft(null);
+    setSettling(false);
     setWalking(false);
     setPart(null);
     setPreview(null);
     setLookOpen(false);
+    setTab("pc");
   }, [p.objectId]);
+  // Saved, waiting for the world to come back with it: keep showing the draft (not the old values) till then.
+  const [settling, setSettling] = useState(false);
+  useEffect(() => {
+    if (!settling) return;
+    const done = () => {
+      setDraft(null);
+      setSettling(false);
+    };
+    const late = setTimeout(done, 5000);
+    return () => clearTimeout(late);
+  }, [settling]);
+  useEffect(() => {
+    if (settling) {
+      setDraft(null);
+      setSettling(false);
+    }
+  }, [saved]);
   const object = draft?.object ?? saved;
   const kind = draft?.kind ?? (saved ? world?.kinds[saved.kind] : undefined);
   const colors = useMemo(() => (kind ? kindColors(kind) : []), [kind]);
@@ -156,9 +292,16 @@ function PlacedPanel(p: PanelProps) {
   const room = world.floors.flatMap((f) => f.rooms).find((r) => r.id === object.room);
   const name = object.label || kind.name;
   const talks = canTalk(world, object);
+  const computer = computerOf(kind, object);
+  const pcKind = isComputerKind(kind);
+  const pcTabs = pcKind && (p.owner || p.canDesign);
+  // Its settings as they are (objects from before per-computer settings run as their kind said).
+  const legacy = computerOf(kind);
+  const pcOf = (o: typeof object) => o.computer ?? { studio: !!legacy, apps: legacy?.apps ?? ["browser"], home: legacy?.home, connectors: legacy?.connectors ?? [], stream: legacy?.stream, camera: legacy?.camera, network: "direct" as const, remote: false };
+  const shownTab = !pcTabs ? "appearance" : tab === "pc" && !computer ? "config" : tab;
   const roams = kind.behaviors.some((b) => b.type === "roam");
   const behaviors = [...new Set(kind.behaviors.map((b) => t(BEHAVIOR[b.type] ?? b.type)))];
-  const changed = !!draft && (JSON.stringify(draft.object) !== JSON.stringify(saved) || JSON.stringify(draft.kind) !== JSON.stringify(world.kinds[saved.kind]));
+  const changed = !!draft && !settling && (JSON.stringify(draft.object) !== JSON.stringify(saved) || JSON.stringify(draft.kind) !== JSON.stringify(world.kinds[saved.kind]));
   const others = world.objects.filter((o) => o.kind === saved.kind).length - 1;
   const access = kind.access;
   const activity = (p.snapshot.objectStates ?? []).find((x) => x.objectId === p.objectId && Date.parse(x.until) > clock);
@@ -192,6 +335,18 @@ function PlacedPanel(p: PanelProps) {
       ))}
     </div>
   );
+  /** Its name, changed right in the inspector's head (empty: its kind's). */
+  const rename = async (label: string | undefined) => {
+    try {
+      const cur = await api<{ revision: number; world: World }>("GET", "/api/world");
+      const objects = cur.world.objects.map((o) => (o.id === p.objectId ? { ...o, label } : o));
+      await api("PUT", "/api/world", { revision: cur.revision, world: { ...cur.world, objects } });
+      if (draft) setDraft({ ...draft, object: { ...draft.object, label } });
+      p.notify(t("{name} renamed", { name: label || kind.name }), "info");
+    } catch (e) {
+      p.notify((e as Error).message, "error");
+    }
+  };
   const save = async () => {
     if (!draft) return;
     setBusy(true);
@@ -199,7 +354,7 @@ function PlacedPanel(p: PanelProps) {
       const cur = await api<{ revision: number; world: World }>("GET", "/api/world");
       const objects = cur.world.objects.map((o) => (o.id === p.objectId ? draft.object : o));
       await api("PUT", "/api/world", { revision: cur.revision, world: { ...cur.world, objects, kinds: { ...cur.world.kinds, [saved.kind]: draft.kind } } });
-      setDraft(null);
+      setSettling(true);
       p.notify(t("{name} saved", { name: draft.object.label || draft.kind.name }), "info");
     } catch (e) {
       p.notify((e as Error).message, "error");
@@ -267,7 +422,7 @@ function PlacedPanel(p: PanelProps) {
       <header className="panel-head">
         <Avatar who={{ type: "object", id: p.objectId }} size={40} />
         <div className="panel-title">
-          <h2>{name}</h2>
+          <EditableName name={name} placeholder={kind.name} canEdit={!!p.canDesign} onSave={rename} />
           <div className="muted">
             {object.title ?? kind.title ?? kind.name} · {room?.name ?? object.room}
           </div>
@@ -281,10 +436,36 @@ function PlacedPanel(p: PanelProps) {
           ×
         </button>
       </header>
+      {pcTabs && (
+        <div className="tabs-row">
+          <nav className="tabs" role="tablist">
+            {(["appearance", "pc", "config"] as const).map((x) => (
+              <button key={x} role="tab" aria-selected={shownTab === x} className={shownTab === x ? "active" : ""} disabled={x === "pc" && !computer}
+                title={x === "pc" && !computer ? t("Turn on Studio PC in Config") : undefined} onClick={() => setTab(x)}>
+                {t({ appearance: "Appearance", pc: "PC", config: "Config" }[x])}
+              </button>
+            ))}
+          </nav>
+        </div>
+      )}
       <div className="panel-body">
-        {kind.browser && (p.owner || p.canDesign) && <ComputerScreen objectId={p.objectId} notify={p.notify} />}
-        {kind.browser && !(p.owner || p.canDesign) && <p className="muted small">{t("A computer the agents use. Only the owner, and people who may design the world, see its screen.")}</p>}
-        <section className={`studio ${kind.browser && (p.owner || p.canDesign) ? "studio-small" : ""}${lookOpen ? " preset-open" : ""}`}>
+        {shownTab === "pc" && computer && (
+          <>
+            <ComputerScreen objectId={p.objectId} apps={computer.apps} notify={p.notify} />
+            <ComputerHealth objectId={p.objectId} />
+            <ComputerDesk objectId={p.objectId} notify={p.notify}
+              nameOf={(ref) => { const [k, id] = ref.split(":"); return k === "agent" ? p.snapshot.agents.find((a) => a.id === id)?.displayName ?? id! : k === "computer" ? t("its camera") : id === "owner" ? t("Owner") : id!; }} />
+          </>
+        )}
+        {shownTab === "config" && (
+          <ComputerConfig objectId={p.objectId} value={pcOf(object)} saved={pcOf(saved)} canEdit={!!p.canDesign || !!p.owner} owner={!!p.owner}
+            connectors={Object.entries(world.connectors ?? {}).map(([id, c]) => ({ id, name: c.name }))}
+            agents={people.map((a) => ({ id: a.id, name: a.displayName }))}
+            onChange={(v) => edit({ computer: v })} notify={p.notify} />
+        )}
+        {shownTab === "appearance" && <>
+        {computer && !(p.owner || p.canDesign) && <p className="muted small">{t("A computer the agents use. Only the owner, and people who may design the world, see its screen.")}</p>}
+        <section className={`studio ${computer && (p.owner || p.canDesign) ? "studio-small" : ""}${lookOpen ? " preset-open" : ""}`}>
           <div className="studio-host">
             <Suspense fallback={<div className="studio-stage studio-loading" />}>
               <ObjectStudio kind={kind} scale={object.scale} walking={walking} state={shown} highlight={p.canDesign ? part : null} />
@@ -406,8 +587,8 @@ function PlacedPanel(p: PanelProps) {
           )}
           <div>{t("Can")}</div>
           <div>
-            {kind.browser
-              ? t("browse the web for the agents (agentown browser {id}). Logins you make on its screen stay; it turns itself off when unused.", { id: p.objectId })
+            {computer
+              ? t("work for whoever asks, one request at a time, with its apps: {apps} (agentown computer {id}). Logins you make on its screen stay; it turns itself off when unused.", { id: p.objectId, apps: computer.apps.join(", ") })
               : talks
               ? t("talk with the owner; it only knows its own room, changes only what it is doing itself, and suggests work to the CEO once the owner confirms")
               : kind.actions.length
@@ -536,6 +717,7 @@ function PlacedPanel(p: PanelProps) {
             )}
           </section>
         )}
+        </>}
         {changed && !lookOpen && <div className="save-bar">{saveBar}</div>}
       </div>
     </aside>

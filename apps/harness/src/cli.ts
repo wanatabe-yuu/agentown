@@ -39,11 +39,20 @@ const HELP = `agentown <command>
   proposals [--status pending]             proposals you made or may decide
   decide ID approve|reject [--note WHY]    decide a request the owner left to you (as the lead)
   team                                     your team's channel (latest messages)
-  team say TEXT                            post to your team's channel
+  team say TEXT                            post to your team's channel (only your team reads it;
+                                           reach anyone else through "ask")
   ask QUESTION [--option A --option B] [--timeout MINUTES] [--fallback WHAT_YOU_WILL_ASSUME]
                                            ask the person who gave you this task; then stop with
                                            BLOCKED: — the task resumes with their answer, or at the
                                            deadline (default 30 min) with leave to decide yourself
+  computer list                            the world's computers: id, state, apps, what they show
+  computer PC "REQUEST"                    give computer PC work in words; it does it with its apps
+                                           (browser, mcp, stream, camera) and answers when done
+  computer PC show browser|stream|camera|terminal   switch what its screen shows
+  computer PC stream URL | stream stop     play a video (file, HLS, or a page) on its screen
+  computer PC camera [QUESTION]            look through its camera
+  computer PC terminal COMMAND             run a shell command in its own container (exit code and output)
+  computer PC mcp CONNECTOR [TOOL JSON]    an attached connector's tools, or call one
   browser list                             the world's computers (real browsers): id, state, page
   browser PC look | open URL | click REF | type [REF] TEXT [--submit] | key KEY | scroll [DY]
              | back | tab N                use computer PC; prints the page as text, with a ref
@@ -171,6 +180,8 @@ async function main() {
     }
     case "browser":
       return browser(api, sub, rest);
+    case "computer":
+      return computer(api, sub, rest);
     case "connector": {
       if (sub === "list") {
         const r = await api.post("/api/tools/connector_tools/invoke", { args: {} });
@@ -301,6 +312,28 @@ async function browser(api: AgentownClient, pc: string | undefined, rest: string
   return out(r.result.page);
 }
 
+async function computer(api: AgentownClient, pc: string | undefined, rest: string[]) {
+  if (pc === "list" || !pc) {
+    const r = await api.get("/api/computers");
+    if (!r.computers.length) return out("This world has no computers.");
+    for (const c of r.computers) out(`${c.id}\t${c.state}\t${c.name}\tapps: ${c.apps.join(",")}${c.connectors?.length ? ` (connectors: ${c.connectors.join(",")})` : ""}\tshowing: ${c.showing}`);
+    return;
+  }
+  const [word, ...args] = rest;
+  let request: Record<string, unknown>;
+  if (word === "show") request = { app: "screen", show: args[0] };
+  else if (word === "stream") request = args[0] === "stop" ? { app: "stream", action: "stop" } : { app: "stream", action: "play", ...(args[0] ? { url: args[0] } : {}) };
+  else if (word === "camera") request = { app: "camera", action: "look", ...(args.length ? { question: args.join(" ") } : {}) };
+  else if (word === "terminal" && args.length) request = { app: "terminal", action: "run", command: args.join(" ") };
+  else if (word === "mcp") request = args[1] ? { app: "mcp", action: "call", connector: args[0], tool: args[1], args: JSON.parse(args[2] ?? "{}") } : { app: "mcp", action: "tools", connector: args[0] };
+  else if (word) request = { text: rest.join(" ") };
+  else throw new Error('usage: agentown computer list | agentown computer PC "REQUEST" | show APP | stream URL|stop | camera [QUESTION] | terminal COMMAND | mcp CONNECTOR [TOOL JSON]');
+  // It does its requests one at a time (and may start first): this can take a few minutes.
+  const r = await api.request("POST", "/api/tools/computer/invoke", { args: { computer: pc, request } }, false, 300_000);
+  if (r.status === "pending") return out(`Waiting for approval (proposal ${r.proposalId}).`);
+  return out(r.result.result);
+}
+
 async function agent(api: AgentownClient, sub: string | undefined, rest: string[]) {
   const { pos, flags, one } = parseFlags(rest);
   const id = pos[0];
@@ -393,6 +426,10 @@ async function task(api: AgentownClient, sub: string | undefined, rest: string[]
       const [id, decision] = pos;
       return out(await api.post(`/api/tasks/${id}/review`, { decision, note: one("note") ?? "" }));
     }
+    case "done":
+    case "complete":
+    case "finish":
+      throw new Error("there is no task done: to finish the task you are working on, stop and end your reply with a short summary");
     default:
       throw new Error(`unknown task command ${sub}\n${HELP}`);
   }

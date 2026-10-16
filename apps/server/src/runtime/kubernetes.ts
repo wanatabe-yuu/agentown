@@ -138,6 +138,7 @@ export class KubernetesDriver implements RuntimeDriver {
               "agentown.io/generation": String(spec.generation),
               "agentown.io/preset": spec.preset.id,
               "agentown.io/placement": spec.preset.placement,
+              "agentown.io/harness": spec.preset.harness,
             },
           },
           spec: {

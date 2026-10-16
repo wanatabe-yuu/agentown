@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { authHeaderSchema, anthropicBaseUrl, anthropicKeyHeaders, defaultAuthHeader } from "@agentown/core";
-import { type AgentIdentity, NO_CREDENTIAL, runBashTool, taskPrompts } from "./common.ts";
+import { type AgentIdentity, blockedReason, NO_CREDENTIAL, runBashTool, taskPrompts } from "./common.ts";
 import { ScriptAdapter } from "./script.ts";
 import type { Adapter, RunContext, RunResult } from "./types.ts";
 import { SUMMARY_SYSTEM, taskContext, taskOutputLimit } from "./context.ts";
@@ -99,7 +99,8 @@ export class ClaudeAdapter implements Adapter {
       const calls = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
       if (response.stop_reason !== "tool_use" || calls.length === 0) {
         if (response.stop_reason === "max_tokens") return { outcome: "failed", summary: "hit max_tokens", usage };
-        if (text.startsWith("BLOCKED:")) return { outcome: "blocked", summary: text.slice(8).trim(), usage };
+        const blocked = blockedReason(text);
+        if (blocked !== null) return { outcome: "blocked", summary: blocked, usage };
         return { outcome: "succeeded", summary: text || "done", usage };
       }
 

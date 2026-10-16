@@ -16,6 +16,7 @@ import { languageLabel, t } from "./i18n.ts";
 import { SettingsDialog } from "./Settings.tsx";
 import { UsersDialog } from "./Users.tsx";
 import { HttpError, api, setOrg } from "./api.ts";
+import { askConfirm } from "./dialogs.tsx";
 import type { Flight } from "./office3d/scene.ts";
 
 // three.js is only downloaded when the office is shown.
@@ -23,7 +24,7 @@ const Office3D = lazy(() => import("./office3d/Office3D.tsx"));
 // The object panel brings the world schema along: loaded when an object is first picked.
 const ObjectPanel = lazy(() => import("./ObjectPanel.tsx").then((m) => ({ default: m.ObjectPanel })));
 import { STRUCTURAL, useOffice } from "./store.ts";
-import type { Account, AgentEvent, Catalog, Me } from "./types.ts";
+import type { Account, AgentEvent, Catalog, Me, OrgRunState } from "./types.ts";
 import { Menu, type MenuItem, Modal, StatusPill, ago } from "./ui.tsx";
 
 // Tokens used to live in localStorage; the session is an HttpOnly cookie now.
@@ -49,6 +50,13 @@ export function App() {
       .then(setAccount)
       .catch(() => setAccount(null));
   }, []);
+  // While an organization stops, follow it until it has.
+  const stopping = account?.orgs.some((o) => o.state === "pausing" || o.state === "starting");
+  useEffect(() => {
+    if (!stopping) return;
+    const id = setInterval(reloadAccount, 4000);
+    return () => clearInterval(id);
+  }, [stopping, reloadAccount]);
   useEffect(() => {
     reloadAccount();
     const onPop = () => setOrgId(orgFromUrl());
@@ -142,7 +150,7 @@ function OrgApp({
   // A link can point at one object: …/#object=<id> opens its panel.
   useEffect(() => {
     const open = () => {
-      const m = location.hash.match(/^#object=([a-z0-9-]+)$/);
+      const m = location.hash.match(/^#object=([a-z0-9:-]+)$/);
       if (m) selectObject(m[1]!);
     };
     open();
@@ -252,9 +260,10 @@ function OrgApp({
     setShowOwnerChat(!target);
   };
 
+  const runState = account.orgs.find((o) => o.id === orgId)?.state ?? "running";
   return (
     <AvatarRoster value={{ world: snapshot.world, agents: snapshot.agents, departments: snapshot.departments, me: me.user?.displayName }}>
-    <div className={`app${me.actor.owner ? " has-owner-chat" : ""}`}>
+    <div className={`app${me.actor.owner ? " has-owner-chat" : ""}${runState !== "running" ? " read-only" : ""}`}>
       <header className="topbar">
         <div className="brand">
           <span className="logo" aria-hidden>
@@ -271,6 +280,7 @@ function OrgApp({
           ) : (
             <span className="org-name">{snapshot.organization.name}</span>
           )}
+          {account.user?.admin && <RunToggle org={account.orgs.find((o) => o.id === orgId)} others={account.orgs.filter((o) => o.id !== orgId && o.state !== "paused").map((o) => o.name)} onChanged={onAccountChanged} notify={notify} />}
         </div>
         <div className={`conn conn-${status}`} title={status === "live" ? t("{n} agents · {w} working", { n: active.length, w: working }) : undefined}>
           <span className="dot" aria-hidden />
@@ -291,7 +301,7 @@ function OrgApp({
         </div>
         <div className="task-actions">
           {me.taskTargets.length > 0 && (
-            <button type="button" className="primary new-task" onClick={() => setNewTaskFor(selected && me.taskTargets.includes(selected) ? selected : null)}>
+            <button type="button" className="primary new-task" disabled={runState !== "running"} onClick={() => setNewTaskFor(selected && me.taskTargets.includes(selected) ? selected : null)}>
               {t("+ New task")}
             </button>
           )}
@@ -341,6 +351,15 @@ function OrgApp({
           ]}
         />
       </header>
+      {runState !== "running" && (
+        <div className="org-paused-banner" role="status">
+          {runState === "pausing"
+            ? t("Stopping: tasks already running are finishing, nothing new starts. You can only look until it has stopped.")
+            : runState === "starting"
+              ? t("Starting: it waits for {others} to finish its running tasks and stop, then starts by itself.", { others: account.orgs.filter((o) => o.id !== orgId && o.state === "pausing").map((o) => o.name).join(", ") })
+              : t("Paused: nothing runs and nothing can be changed. Play it to go on where it stopped.")}
+        </div>
+      )}
 
       <main className={`main${(selected || selectedObject) && !worldEditing ? " panel-open" : ""}`}>
         <section className={`stage view-${view}`}>
@@ -652,4 +671,43 @@ function useDarkMode() {
     return () => q.removeEventListener("change", on);
   }, [q]);
   return dark;
+}
+
+/**
+ * Play or pause the organization. Pausing is graceful: nothing new starts, tasks already running finish
+ * (at most a grace period), then its agents stop. Playing one while another runs stops that one the
+ * same way and queues this one, which starts by itself once the other has stopped.
+ */
+function RunToggle({ org, others, onChanged, notify }: { org?: { id: string; name: string; state: OrgRunState }; others: string[]; onChanged: () => void; notify: (msg: string, kind?: "error" | "info") => void }) {
+  const [busy, setBusy] = useState(false);
+  if (!org) return null;
+  const play = org.state === "paused";
+  const toggle = async () => {
+    const question = org.state === "running"
+      ? tr("Stop {name}? Nothing new starts; tasks already running finish (at most 10 minutes), then its agents stop. Until then everyone can only look.", { name: org.name })
+      : org.state === "starting"
+        ? tr("Cancel starting {name}? It stays paused.", { name: org.name })
+        : play && others.length
+          ? tr("Play {name}? {others} stops first: its running tasks finish (at most 10 minutes), then {name} starts by itself.", { name: org.name, others: others.join(", ") })
+          : null;
+    if (question && !(await askConfirm(question))) return;
+    setBusy(true);
+    try {
+      await api("PATCH", `/api/admin/orgs/${org.id}`, { running: play });
+      onChanged();
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const title = org.state === "running" ? tr("Running: click to stop")
+    : org.state === "pausing" ? tr("Stopping: waiting for the tasks already running to finish")
+    : org.state === "starting" ? tr("Starting once {others} has stopped: click to cancel", { others: others.join(", ") })
+    : tr("Paused: click to play");
+  return (
+    <button type="button" className={`run-toggle ${org.state}`} disabled={busy || org.state === "pausing"} onClick={() => void toggle()} title={title} aria-label={title}>
+      {org.state === "running" ? "⏸" : org.state === "paused" ? "▶" : "⏳"}
+    </button>
+  );
 }

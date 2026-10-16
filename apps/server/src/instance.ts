@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { type Actor, orgConfigFrom, parseTemplate, splitInstanceConfig, type TemplateMeta } from "@agentown/core";
 import { z } from "zod";
 import type { EventBus } from "./bus.ts";
-import { type Db, tx } from "./db.ts";
+import { type Db, type Queryable, tx } from "./db.ts";
 import type { Computers } from "./computers.ts";
 import type { ModelLister } from "./providers.ts";
 import type { SecretBox } from "./secrets.ts";
@@ -14,6 +14,11 @@ import { Service } from "./service.ts";
 import { ApiError, badRequest, conflict, deny, newId, notFound, sha256 } from "./util.ts";
 
 const ORG_ID = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
+/** How long a pausing organization's runs in flight may take to finish before they are cut (like a cloud shutdown's grace period). */
+export const PAUSE_GRACE_MS = 10 * 60_000;
+export type OrgRunState = "running" | "pausing" | "paused" | "starting";
+const runStateOf = (o: { paused_at: Date | null; stopped_at: Date | null; start_queued_at: Date | null }): OrgRunState =>
+  o.stopped_at ? (o.start_queued_at ? "starting" : "paused") : o.paused_at ? "pausing" : "running";
 
 /** Preserve the author's document, changing only legacy template presets. */
 function upgradeScriptTemplates(doc: Record<string, unknown>): Record<string, unknown> {
@@ -124,14 +129,17 @@ export class Instance {
 
   /** The Service of one organization, rebuilt whenever its document changes. Archived orgs are not found. */
   async org(orgId: string, opts: { includeArchived?: boolean } = {}): Promise<Service> {
-    const { rows } = await this.db.query<{ name: string; language: string; term: string | null; template_id: string | null; config: unknown; config_revision: number; archived_at: Date | null; runtime_namespace: string | null }>(
-      "SELECT name, language, term, template_id, config, config_revision, archived_at, runtime_namespace FROM organizations WHERE id=$1",
+    const { rows } = await this.db.query<{ name: string; language: string; term: string | null; template_id: string | null; config: unknown; config_revision: number; archived_at: Date | null; runtime_namespace: string | null; paused_at: Date | null; stopped_at: Date | null; start_queued_at: Date | null }>(
+      "SELECT name, language, term, template_id, config, config_revision, archived_at, runtime_namespace, paused_at, stopped_at, start_queued_at FROM organizations WHERE id=$1",
       [orgId],
     );
     const o = rows[0];
     if (!o || !o.config || (o.archived_at && !opts.includeArchived)) throw notFound("organization");
     const hit = this.cache.get(orgId);
-    if (hit && hit.revision === o.config_revision && hit.name === o.name) return hit.service;
+    if (hit && hit.revision === o.config_revision && hit.name === o.name) {
+      hit.service.runState = runStateOf(o);
+      return hit.service;
+    }
     let config;
     try {
       // Organizations made before terms existed take their built-in template's.
@@ -142,6 +150,7 @@ export class Instance {
       throw new ApiError(503, "org_config_invalid", `organization ${orgId} has a configuration this server cannot load: ${err instanceof z.ZodError ? z.prettifyError(err).slice(0, 500) : (err as Error).message}`);
     }
     const service = new Service(this.db, config, this.bus, this.secrets, this.modelLister, orgId, o.runtime_namespace);
+    service.runState = runStateOf(o);
     this.cache.set(orgId, { revision: o.config_revision, name: o.name, service });
     return service;
   }
@@ -175,14 +184,14 @@ export class Instance {
   async me(p: Principal) {
     if (p.kind !== "human") return { user: null, orgs: [{ id: p.orgId }] };
     const user = (await this.db.query("SELECT id, display_name FROM users WHERE id=$1", [p.id])).rows[0];
-    const { rows } = await this.db.query<{ id: string; name: string; is_owner: boolean }>(
-      `SELECT o.id, o.name, m.is_owner FROM org_members m JOIN organizations o ON o.id = m.org_id
+    const { rows } = await this.db.query<{ id: string; name: string; is_owner: boolean; paused_at: Date | null; stopped_at: Date | null; start_queued_at: Date | null }>(
+      `SELECT o.id, o.name, m.is_owner, o.paused_at, o.stopped_at, o.start_queued_at FROM org_members m JOIN organizations o ON o.id = m.org_id
         WHERE m.user_id=$1 AND m.disabled_at IS NULL AND o.archived_at IS NULL AND o.config IS NOT NULL ORDER BY o.name`,
       [p.id],
     );
     return {
       user: { id: user.id as string, displayName: user.display_name as string, admin: p.admin },
-      orgs: rows.map((r) => ({ id: r.id, name: r.name, owner: r.is_owner })),
+      orgs: rows.map((r) => ({ id: r.id, name: r.name, owner: r.is_owner, state: runStateOf(r) })),
     };
   }
 
@@ -451,8 +460,13 @@ export class Instance {
     return { org: (await this.listOrgs(p)).find((o) => o.id === input.id)!, ownerToken: token };
   }
 
-  /** Rename, change the owner, archive (stops every runtime; members get "not found") or restore. */
-  async updateOrg(p: Principal, id: string, input: { name?: string; ownerUserId?: string; archived?: boolean }) {
+  /**
+   * Rename, change the owner, archive (stops every runtime; members get "not found") or restore,
+   * pause or play. Pausing is graceful: nothing new starts, runs in flight finish (see settlePause),
+   * then its runtimes stop; data and workspaces stay. One organization plays at a time: playing one
+   * while another runs stops that one gracefully and queues this one, which starts once it has stopped.
+   */
+  async updateOrg(p: Principal, id: string, input: { name?: string; ownerUserId?: string; archived?: boolean; running?: boolean }) {
     this.requireAdmin(p);
     await tx(this.db, async (c) => {
       if (!(await c.query("SELECT 1 FROM organizations WHERE id=$1 FOR UPDATE", [id])).rowCount) throw notFound("organization");
@@ -473,9 +487,44 @@ export class Instance {
         await c.query("UPDATE organizations SET archived_at=NULL WHERE id=$1", [id]);
         await c.query("UPDATE agents SET desired_runtime='running' WHERE org_id=$1 AND lifecycle_state <> 'retired'", [id]);
       }
+      if (input.running === false) {
+        // Stop it, or take it out of the start queue.
+        await c.query("UPDATE organizations SET paused_at=COALESCE(paused_at, now()), start_queued_at=NULL WHERE id=$1", [id]);
+      } else if (input.running === true) {
+        // The others still running stop gracefully; this one waits for them in the queue (one at a time).
+        const busy = await c.query("SELECT 1 FROM organizations WHERE id<>$1 AND archived_at IS NULL AND config IS NOT NULL AND stopped_at IS NULL FOR UPDATE", [id]);
+        if (busy.rows.length) {
+          await c.query("UPDATE organizations SET paused_at=now() WHERE id<>$1 AND archived_at IS NULL AND paused_at IS NULL", [id]);
+          await c.query("UPDATE organizations SET start_queued_at = CASE WHEN id=$1 THEN now() END WHERE start_queued_at IS NOT NULL OR id=$1", [id]);
+        } else await this.startOrg(c, id);
+      }
     });
+    if (input.running !== undefined) await this.settlePausing();
     await this.auditInstance(p, "org.update", id, input, id);
     return (await this.listOrgs(p)).find((o) => o.id === id)!;
+  }
+
+  /** Every pausing organization stops once its runs have finished (or its grace period is over). */
+  async settlePausing(graceMs = PAUSE_GRACE_MS) {
+    const { rows } = await this.db.query<{ id: string }>("SELECT id FROM organizations WHERE paused_at IS NOT NULL AND stopped_at IS NULL");
+    for (const r of rows) await (await this.org(r.id, { includeArchived: true })).settlePause(graceMs);
+    // The queued organization starts once every other has fully stopped.
+    await tx(this.db, async (c) => {
+      const next = (await c.query<{ id: string }>("SELECT id FROM organizations WHERE start_queued_at IS NOT NULL FOR UPDATE")).rows[0];
+      if (!next) return;
+      const busy = await c.query("SELECT 1 FROM organizations WHERE id<>$1 AND archived_at IS NULL AND config IS NOT NULL AND stopped_at IS NULL", [next.id]);
+      if (!busy.rows.length) await this.startOrg(c, next.id);
+    });
+  }
+
+  /** Play: questions waiting on people keep the time they had left (their deadlines move by the pause). */
+  private async startOrg(c: Queryable, id: string) {
+    await c.query(
+      `UPDATE proposals p SET payload = jsonb_set(p.payload, '{deadline}', to_jsonb((p.payload->>'deadline')::timestamptz + (now() - o.paused_at)))
+         FROM organizations o WHERE o.id=$1 AND o.paused_at IS NOT NULL AND p.org_id=o.id AND p.kind='question' AND p.status='pending'`,
+      [id],
+    );
+    await c.query("UPDATE organizations SET paused_at=NULL, stopped_at=NULL, start_queued_at=NULL WHERE id=$1", [id]);
   }
 
   /** Open terminals that must close, across all organizations. */

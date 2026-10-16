@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { buildApp } from "../src/app.ts";
+import { type AppOptions, buildApp } from "../src/app.ts";
 import { EventBus } from "../src/bus.ts";
 import { createPool, migrate } from "../src/db.ts";
 import { RuntimeController } from "../src/runtime/controller.ts";
@@ -58,7 +58,7 @@ export class FakeDriver implements RuntimeDriver {
 
 const AGENT_TOKEN = "test-agent-session:";
 
-export async function setup(chatModelFactory?: ChatModelFactory) {
+export async function setup(chatModelFactory?: ChatModelFactory, extra?: Partial<AppOptions>) {
   const url = process.env.DATABASE_URL_TEST ?? "postgres://agentown:agentown@127.0.0.1:5432/agentown_test";
   const db = createPool(url);
   await db.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
@@ -82,7 +82,7 @@ export async function setup(chatModelFactory?: ChatModelFactory) {
   const service = await instance.org(instance.defaultOrgId);
   const driver = new FakeDriver();
   const controller = new RuntimeController(instance, driver, { apiUrlForRuntimes: "http://test" });
-  const { app, recheckTerminals, ownerChat } = await buildApp({ instance, driver, chatModelFactory });
+  const { app, recheckTerminals, ownerChat } = await buildApp({ instance, driver, chatModelFactory, ...extra });
   // Two passes: create pods, then observe them Ready.
   const settle = async () => {
     await controller.reconcileAll();

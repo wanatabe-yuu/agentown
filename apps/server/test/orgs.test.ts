@@ -206,5 +206,10 @@ describe("cluster manifests", () => {
     expect(yaml).not.toMatch(/kind: Namespace\nmetadata:\n  name: kube-system/);
     expect(yaml).not.toContain("agentown-Bad!");
     expect(yaml).toContain("c.image in ['agentown/harness:1']");
+    // Computers reach any public port (a proxy, a VPN endpoint), never a private network.
+    const computer = yaml.split("---\n").find((d) => d.includes("name: computer-egress") && d.includes("namespace: agentown-o-factory"));
+    expect(computer).toContain("agentown.io/harness: browser");
+    expect(computer).toContain("10.0.0.0/8");
+    expect(computer).not.toContain("port:");
   });
 });

@@ -136,6 +136,45 @@ const actionSchema = z.object({
   gesture: z.enum(GESTURES).default("use"),
 });
 
+export const COMPUTER_APPS = ["browser", "mcp", "stream", "camera", "terminal"] as const;
+export type ComputerApp = (typeof COMPUTER_APPS)[number];
+const computerFields = {
+  apps: z.array(z.enum(COMPUTER_APPS)).min(1).default(["browser"]),
+  /** browser: the page it opens first. */
+  home: z.string().url().max(500).optional(),
+  /** mcp: the world's connectors (ids) this computer may call; attaching one is the owner's approval. */
+  connectors: z.array(z.string().max(64)).max(20).default([]),
+  /** stream: what it plays when asked to play without a link (a video file, HLS .m3u8, or any page). */
+  stream: z.string().url().max(1000).optional(),
+  /** camera: an image, MJPEG or HLS feed; it looks every so often and reports changes it was told to watch for. */
+  camera: z.object({
+    url: z.string().url().max(1000),
+    everySeconds: z.number().int().min(10).max(3600).default(60),
+    watchFor: z.string().max(500).optional(),
+    /** The agent that gets a task when it sees something worth reporting. */
+    notify: z.string().max(64).optional(),
+  }).optional(),
+};
+/** On a kind: the defaults of its computers (older worlds kept a computer's settings here). */
+const computerSchema = z.object(computerFields);
+/**
+ * On one placed computer: off (a desk ornament) until `studio` is on; then it runs in a
+ * container of its own (its own browser profile and network: direct, a proxy or a VPN,
+ * whose secrets the owner sets apart), or, with `remote`, on a paired machine elsewhere.
+ */
+const placedComputerSchema = z.object({
+  studio: z.boolean().default(false),
+  ...computerFields,
+  network: z.enum(["direct", "proxy", "vpn"]).default("direct"),
+  remote: z.boolean().default(false),
+}).refine((c) => !(c.apps.includes("terminal") && c.network !== "direct" && !c.remote), {
+  // A shell in the computer reads what its runtime holds, its proxy login or VPN key included.
+  message: "a computer with a terminal browses directly: its shell could read the proxy or VPN secret",
+  path: ["network"],
+});
+export type Computer = z.infer<typeof computerSchema> & { network?: "direct" | "proxy" | "vpn"; remote?: boolean };
+export type PlacedComputer = z.infer<typeof placedComputerSchema>;
+
 const objectKindSchema = z.object({
   chat: objectChatSchema.optional(),
   name: z.string().min(1).max(60),
@@ -160,8 +199,30 @@ const objectKindSchema = z.object({
    * take over to log in, from the object's inspector. `home` opens first.
    */
   browser: z.object({ home: z.string().url().max(500).optional() }).optional(),
+  /**
+   * A computer that waits for requests like an agent (from agents, people chatting
+   * with it, or its own camera), one at a time, and does them with its apps. Its screen
+   * shows one app at a time. `browser` alone is the same as apps ["browser"].
+   */
+  computer: computerSchema.optional(),
 });
 export type ObjectKind = z.infer<typeof objectKindSchema>;
+
+/** Whether objects of this kind are computers (they may run, with studio on). */
+export function isComputerKind(kind: Pick<ObjectKind, "browser" | "computer"> | undefined): boolean {
+  return !!(kind?.computer || kind?.browser);
+}
+
+/**
+ * What a placed computer runs: its own settings when it has them (null while studio is off),
+ * else its kind's (worlds from before per-object settings: every such computer ran).
+ */
+export function computerOf(kind: Pick<ObjectKind, "browser" | "computer"> | undefined, object?: { computer?: PlacedComputer }): Computer | null {
+  if (!isComputerKind(kind)) return null;
+  const own = object?.computer;
+  if (own) return own.studio ? own : null;
+  return kind!.computer ?? { apps: ["browser"], home: kind!.browser?.home, connectors: [] };
+}
 
 const roomSchema = z.object({
   id: idSchema,
@@ -208,6 +269,8 @@ const placementSchema = z.object({
   title: z.string().max(40).optional(),
   /** Its picture in chats and on the 2D map (an image asset); default: a portrait of its model. */
   image: z.string().min(1).max(64).optional(),
+  /** A computer's own settings (its kind must be a computer: `computer` or `browser`). */
+  computer: placedComputerSchema.optional(),
 });
 
 /**
@@ -238,6 +301,8 @@ export const worldSchema = z.object({
   zones: z.record(idSchema, z.array(idSchema).min(1)).default({}),
   kinds: z.record(idSchema, objectKindSchema).default({}),
   objects: z.array(placementSchema).max(2000).default([]),
+  /** Each agent's PC at their desk ("desk:<agent id>"): its name and settings, by agent id (studio off: just a PC on the desk). */
+  desks: z.record(z.string().min(1).max(64), placedComputerSchema.and(z.object({ label: z.string().trim().min(1).max(40).optional() }))).default({}),
   /**
    * Chat personas by title: every object whose title (its own, else its kind's)
    * is listed here can be talked to and speaks this way. Instructions set on its
@@ -271,7 +336,8 @@ export function chatTemplateOf(world: ChatWorld, o: ChatObject) {
 /** Whether a placed object can be talked to (see objectChatSchema and chatTemplates). */
 export function canTalk(world: ChatWorld, o: ChatObject): boolean {
   const kind = world.kinds[o.kind];
-  return o.chat?.enabled ?? kind?.chat?.enabled ?? (!!kind?.chat || !!chatTemplateOf(world, o));
+  // A computer talks: what is said to it becomes a request it does.
+  return o.chat?.enabled ?? kind?.chat?.enabled ?? (!!kind?.chat || !!computerOf(kind, o as { computer?: PlacedComputer }) || !!chatTemplateOf(world, o));
 }
 
 /** Cross-references a world must satisfy, given the org's departments. */

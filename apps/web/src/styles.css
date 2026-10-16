@@ -243,6 +243,31 @@ select {
 .org-switch:hover {
   border-color: var(--border);
 }
+.run-toggle {
+  min-width: 32px;
+  padding: 4px 8px;
+  line-height: 1;
+}
+.run-toggle.paused:not(:disabled) {
+  color: var(--accent, inherit);
+  border-color: currentColor;
+}
+/* Stopping or paused: people can only look (the server refuses changes too). */
+.app.read-only .needs-you button,
+.app.read-only .edit-world,
+.app.read-only .edit-world-icon,
+.app.read-only .owner-chat-button,
+.app.read-only .owner-chat-composer,
+.app.read-only .campaign-actions {
+  pointer-events: none;
+  opacity: 0.45;
+}
+.org-paused-banner {
+  padding: 8px 16px;
+  background: var(--panel-2, rgba(201, 162, 39, 0.12));
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
 .spacer {
   flex: 1;
 }
@@ -2618,8 +2643,8 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
   cursor: default;
 }
 .computer-screen:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
-.computer-screen img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
-.computer-screen img.hidden { display: none; }
+.computer-screen canvas { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.computer-screen canvas.hidden { display: none; }
 .computer-off { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 16px; text-align: center; color: #e6eaf2; }
 .computer-off .muted { color: #8b95a8; }
 .computer-led { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; flex-shrink: 0; }
@@ -2630,7 +2655,8 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
 .computer-type input { flex: 1; min-width: 0; font-size: 13px; }
 .computer-type button { flex-shrink: 0; min-width: 36px; padding: 0 8px; }
 .computer-foot { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.computer-foot > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.computer-foot > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.computer-foot .link { flex-shrink: 0; white-space: nowrap; }
 .computer-foot .spacer { flex: 1; }
 .computer-big {
   position: fixed;
@@ -2641,7 +2667,7 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
   background: var(--bg);
 }
 .computer-big .computer-screen { flex: 1; aspect-ratio: auto; min-height: 0; }
-.computer-big .computer-screen img { object-fit: contain; }
+.computer-big .computer-screen canvas { object-fit: contain; }
 .studio-small .studio-stage { height: 200px; }
 
 /* ---- connectors (Settings) */
@@ -2653,7 +2679,15 @@ html.chat-open, html.chat-open body { overflow: hidden; overscroll-behavior: non
 .connector-cred { display: flex; gap: 6px; flex-wrap: wrap; }
 .connector-cred .connector-header { width: 140px; flex-shrink: 0; }
 .connector-cred input[type="password"] { flex: 1; min-width: 140px; }
-.computer-keys { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; resize: none; border: 0; padding: 0; pointer-events: none; }
+/* 16px: iOS zooms into fields with smaller text. */
+.computer-keys { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; resize: none; border: 0; padding: 0; pointer-events: none; font-size: 16px; }
+@media (pointer: coarse) {
+  .computer-address input, .computer-type input { font-size: 16px; }
+}
+.computer-kbd { display: none; }
+@media (pointer: coarse) {
+  .computer-kbd { display: inline-flex; }
+}
 .computer-screen:focus-within { box-shadow: 0 0 0 2px var(--accent); }
 
 /* ---- reloading without a browser bar (home-screen app): pull down, or the new-version notice */
@@ -2721,3 +2755,77 @@ button.link { white-space: normal; text-align: left; overflow-wrap: anywhere; ma
 @media (max-width: 700px) {
   .object-panel .studio-preset.open { left: 8px; width: auto; top: auto; height: 60%; }
 }
+
+/* A computer's apps, its ask box and its queue of requests. */
+.computer-desk {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.computer-ask {
+  display: flex;
+  gap: 6px;
+}
+.computer-ask input {
+  flex: 1;
+  min-width: 0;
+}
+.computer-requests {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+.computer-requests li {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.computer-requests li { cursor: pointer; }
+.computer-requests .req-result {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.computer-requests .req-result.open { display: block; -webkit-line-clamp: unset; max-height: 240px; overflow: auto; }
+.computer-requests .req-more { border: 0; padding: 0; text-align: center; }
+.computer-app { flex-shrink: 0; max-width: 112px; border-radius: 999px; padding: 0 8px; font-size: 13px; }
+.computer-title { display: flex; align-items: center; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+/* Phones: the bar keeps what fits (app, back, address, keyboard, full screen); typing by field only full screen. */
+@media (pointer: coarse) {
+  .computer-extra { display: none; }
+  .computer-app { font-size: 16px; }
+  .computer:not(.computer-big) .computer-type { display: none; }
+}
+
+/* A computer's settings, health and pairing (inspector: Config and PC tabs). */
+.computer-config { display: grid; gap: 10px; }
+.computer-config label { display: grid; gap: 4px; font-size: 13px; }
+.computer-config label.check { display: flex; align-items: flex-start; gap: 8px; }
+.computer-config label.check input { margin-top: 3px; }
+.computer-config .check-inline { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; }
+.computer-config fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: grid; gap: 8px; margin: 0; }
+.computer-config legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+.computer-secret { display: grid; gap: 6px; }
+.computer-secret textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.pair-command { display: block; padding: 8px 10px; border-radius: 8px; background: var(--panel-2, rgba(0, 0, 0, 0.05)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; cursor: copy; }
+.computer-health { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 0 0 10px; font-size: 12px; }
+.computer-health .req-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.health-grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 6px 0 0; }
+.health-grid dt { color: var(--muted); }
+.health-grid dd { margin: 0; overflow-wrap: anywhere; }
+
+.pair-warning { color: var(--warn); margin: 6px 0; }
+
+.editable-name { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.editable-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rename-btn { font-size: 14px; opacity: 0.55; padding: 2px 6px; }
+.rename-btn:hover, .rename-btn:focus-visible { opacity: 1; }
+.rename-input { font: inherit; font-size: 18px; font-weight: 600; width: 100%; min-width: 0; padding: 2px 6px; }

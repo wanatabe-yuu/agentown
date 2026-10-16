@@ -242,6 +242,13 @@ export class Service {
     this.kernel = new Kernel(db, config, orgId, secrets);
   }
 
+  /**
+   * Set by Instance.org from the organization row. pausing: no new work starts, runs in flight finish;
+   * paused: nothing runs (no runtimes); starting: paused, queued to start once the running one has stopped.
+   * People can only look while it is not running.
+   */
+  runState: "running" | "pausing" | "paused" | "starting" = "running";
+
   /** Rules, identity, resources and permissions of this organization. */
   readonly kernel: Kernel;
 
@@ -819,7 +826,7 @@ export class Service {
         const m = this.memberShare(a, preset);
         return { cpu: s.cpu + m.cpu, memory: s.memory + m.memory };
       }, { cpu: cpuMillis(preset.resources.cpu), memory: memoryMib(preset.resources.memory) });
-      plans.push({ team, runtime, preset, members, resources, wanted: running.length > 0 });
+      plans.push({ team, runtime, preset, members, resources, wanted: running.length > 0 && (this.runState === "running" || this.runState === "pausing") });
     }
     return plans;
   }
@@ -1665,7 +1672,9 @@ export class Service {
   private async sharedTaskIds(actor: Actor, q: Queryable = this.db): Promise<Set<string>> {
     if (actor.kind !== "agent") return new Set();
     const { rows } = await q.query<{ id: string }>(
-      "SELECT DISTINCT unnest(input_task_ids) AS id FROM tasks WHERE assignee_agent_id = $1",
+      // A campaign's lead reads every task in it (it puts the results together), even from other teams.
+      `SELECT DISTINCT unnest(input_task_ids) AS id FROM tasks WHERE assignee_agent_id = $1
+       UNION SELECT t.id FROM tasks t JOIN campaigns c ON c.id = t.campaign_id WHERE c.lead_agent_id = $1`,
       [actor.id],
     );
     return new Set(rows.map((r) => r.id));
@@ -2024,7 +2033,7 @@ export class Service {
       steps === 0
         ? "Before planning, make sure the goal is clear enough to act on (what counts as done, by when, any budget or limits). If something essential is missing, ask with `agentown ask \"...\" --fallback \"what you will assume\"` and stop with BLOCKED: — the campaign waits for the answer, or for the deadline."
         : null,
-      `Decide the next step toward the goal. Do the work yourself in this task, and/or hand parts to others with \`agentown task create --campaign ${c.id} --to AGENT --title T --desc D\` (\`agentown agents\` lists who can help); the next step starts once all of them have finished.`,
+      `Decide the next step toward the goal. Do the work yourself in this task, and/or hand parts to others with \`agentown task create --campaign ${c.id} --to AGENT --title T --desc D\` (\`agentown agents\` lists who you can hand work to; others exist outside your reach); the next step starts once all of them have finished. If the goal needs someone you cannot hand work to, never do their part in their name and never wait on a channel they do not read: \`agentown ask\` to have the owner arrange it, then stop with BLOCKED:.`,
       `Write a short line before each command saying what you are doing; the owner follows it live.`,
       `When the goal is fully met, run \`agentown campaign done ${c.id} --summary "what was achieved"\`. If it cannot be met, run \`agentown campaign fail ${c.id} --summary "why"\`. Otherwise finish this task with a short summary of what you did; the campaign continues with its next step.`,
     ].filter(Boolean).join("\n\n");
@@ -2042,6 +2051,8 @@ export class Service {
         idempotencyKey: `campaign-${c.id}-step-${step}`,
       });
     } catch (err) {
+      // Another driver made this step a moment ago: the idempotency key clashed, nothing is missing.
+      if ((await this.db.query("SELECT 1 FROM tasks WHERE campaign_id=$1 AND campaign_step=$2", [id, step])).rows.length) return;
       // The lead lost its key or the creator its rights: stop rather than retry forever.
       await this.withTx(async (ctx) => {
         await ctx.c.query("UPDATE campaigns SET status='stopped', summary=$2, updated_at=now() WHERE id=$1 AND status='active'", [id, `could not start the next step: ${(err as Error).message}`.slice(0, 1000)]);
@@ -2291,6 +2302,7 @@ export class Service {
     const agentId = this.requireAgent(actor);
     return this.withTx(async (ctx) => {
       const rt = await this.requireCurrentGeneration(agentId, generation, ctx.c);
+      if (this.runState !== "running") return null; // stopping: runs in flight finish, nothing new starts
       const agent = await this.getAgentRow(agentId, ctx.c);
       const existing = await ctx.c.query(
         "SELECT * FROM task_runs WHERE agent_id=$1 AND status='running' AND runtime_generation=$2 LIMIT 1",
@@ -2528,6 +2540,10 @@ export class Service {
     return this.withTx(async (ctx) => {
       const run = await this.requireOwnRun(agentId, runId, generation, ctx.c, true);
       const summary = input.summary ? redactLine(input.summary).slice(0, 4000) : null;
+      // It asked a question and stopped without saying BLOCKED: it still waits for the answer, it is not done.
+      const asking = input.outcome === "succeeded" &&
+        (await ctx.c.query("SELECT 1 FROM proposals WHERE org_id=$2 AND kind='question' AND status='pending' AND payload->>'taskId'=$1 LIMIT 1", [run.task_id, this.orgId])).rows.length > 0;
+      input = { ...input, outcome: asking ? "blocked" : input.outcome };
       await ctx.c.query("UPDATE task_runs SET status=$2, finished_at=now(), summary=$3, usage=$4 WHERE id=$1", [
         runId,
         input.outcome,
@@ -2545,6 +2561,44 @@ export class Service {
       }
       await this.emit(ctx, { type: "run.finished", agentId, taskId: t.id, runId, payload: { outcome: input.outcome, summary, usage: input.usage ?? null } });
       return { taskStatus: t.status };
+    });
+  }
+
+  /**
+   * Pausing ends once no run is left, or when the grace period is over: then runs still going are cut
+   * and their tasks wait in the queue, without using up a retry. Then nothing of the org runs.
+   */
+  async settlePause(graceMs: number) {
+    // The grace period is measured on the database's clock, the one paused_at was written with.
+    const { rows } = await this.db.query<{ over: boolean; running: string }>(
+      `SELECT now() - paused_at >= make_interval(secs => $2::float8 / 1000) AS over,
+              (SELECT count(*) FROM task_runs r JOIN agents a ON a.id = r.agent_id WHERE a.org_id = $1 AND r.status = 'running') AS running
+         FROM organizations WHERE id = $1 AND paused_at IS NOT NULL AND stopped_at IS NULL`,
+      [this.orgId, graceMs],
+    );
+    const o = rows[0];
+    if (!o) return;
+    if (Number(o.running) > 0) {
+      if (!o.over) return;
+      await this.releaseRunsForPause();
+    }
+    await this.db.query("UPDATE organizations SET stopped_at = now() WHERE id = $1 AND paused_at IS NOT NULL AND stopped_at IS NULL", [this.orgId]);
+  }
+
+  private async releaseRunsForPause() {
+    await this.withTx(async (ctx) => {
+      const { rows } = await ctx.c.query<{ task_id: string }>(
+        `UPDATE task_runs SET status='lost', finished_at=now(), summary='organization paused: cut at the end of the grace period'
+          WHERE status='running' AND agent_id IN (SELECT id FROM agents WHERE org_id=$1) RETURNING task_id`,
+        [this.orgId],
+      );
+      for (const r of rows) {
+        const t = await this.getTaskRow(r.task_id, ctx.c, true);
+        if (t.status !== "in_progress") continue;
+        // A new run needs a new attempt; the pause gives it for free.
+        await ctx.c.query("UPDATE tasks SET attempt = attempt + 1, max_attempts = max_attempts + 1 WHERE id=$1", [t.id]);
+        await this.setTaskStatus(ctx, t, "assigned", "organization paused; it goes on when the organization plays again");
+      }
     });
   }
 

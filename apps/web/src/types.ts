@@ -131,10 +131,13 @@ export interface TaskProgress {
 
 export type Scope = { kind: string; ids?: string[] };
 
+export type OrgRunState = "running" | "pausing" | "paused" | "starting";
+
 /** The signed-in account and the organizations it can open. */
 export interface Account {
   user: { id: string; displayName: string; admin: boolean } | null;
-  orgs: Array<{ id: string; name: string; owner: boolean }>;
+  /** state: pausing = runs in flight finish, nothing new starts; paused = nothing runs; starting = queued, starts once the running one has stopped. */
+  orgs: Array<{ id: string; name: string; owner: boolean; state: OrgRunState }>;
 }
 
 /** The signed-in person inside one organization, and what they may do outside any one agent. */

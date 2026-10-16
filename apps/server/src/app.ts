@@ -1,5 +1,7 @@
+import type { RemotePort } from "./remote-port.ts";
 import { chatSubjectSchema, type ChatSubject } from "./chat/subjects.ts";
 import { createReadStream, existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { ACTIONS, type Actor, EFFORTS, WORK_STATES, authHeaderSchema, termSchema } from "@agentown/core";
 import fastifyStatic from "@fastify/static";
@@ -11,13 +13,13 @@ import { PROVIDERS } from "./providers.ts";
 import type { RuntimeDriver } from "./runtime/driver.ts";
 import type { Instance, Principal } from "./instance.ts";
 import type { Service } from "./service.ts";
-import { ApiError, badRequest, deny, notFound } from "./util.ts";
+import { actorRef, ApiError, badRequest, deny, notFound } from "./util.ts";
 import { proposalDiff, SELF_REPO, sourceTarball } from "./selfpatch.ts";
 import { OwnerChat } from "./owner-chat.ts";
 import { FEED_KINDS, type FeedKind, feed, listTeamMessages, postTeamMessage } from "./conversations.ts";
 import { PROPOSAL_KINDS, PROPOSAL_STATUSES, ProposalEngine } from "./proposals.ts";
 import { CapabilityGateway } from "./capabilities.ts";
-import { Computers } from "./computers.ts";
+import { Computers, computerRequestSchema } from "./computers.ts";
 import { connectorTools, listConnectors, setConnectorCredential } from "./connectors.ts";
 import { ownerTools } from "./chat/tools.ts";
 import type { ChatModelFactory } from "./chat/types.ts";
@@ -173,7 +175,7 @@ const S = {
     language: z.enum(LANGUAGES).optional(),
     owner: z.union([z.object({ userId: z.string() }), z.object({ displayName: z.string().trim().min(1).max(60) })]),
   }),
-  updateOrg: z.object({ name: z.string().trim().min(1).max(80).optional(), ownerUserId: z.string().optional(), archived: z.boolean().optional() }),
+  updateOrg: z.object({ name: z.string().trim().min(1).max(80).optional(), ownerUserId: z.string().optional(), archived: z.boolean().optional(), running: z.boolean().optional() }),
   addMember: z.object({ userId: z.string() }),
   orgConfig: z.object({ revision: z.number().int(), doc: z.record(z.string(), z.unknown()) }),
   orgWorld: z.object({ revision: z.number().int(), world: z.record(z.string(), z.unknown()).nullable() }),
@@ -244,6 +246,10 @@ export interface AppOptions {
   chatModelFactory?: ChatModelFactory;
   /** How pods (agent runtimes, computers) reach this server. */
   runtimeApiUrl?: string;
+  /** cloudflared, to give pairing links a temporary public address. */
+  cloudflared?: string | null;
+  /** The port paired machines reach this server on directly. */
+  remote?: RemotePort | null;
 }
 
 export async function buildApp(opts: AppOptions) {
@@ -266,7 +272,7 @@ export async function buildApp(opts: AppOptions) {
   proposals.register("task", {
     decide: async (actor, p, verdict, note) => (await instance.org(p.org_id)).reviewTask(actor, String(p.payload.taskId), verdict, note),
   });
-  const computers = new Computers(instance, driver, { apiUrl: opts.runtimeApiUrl ?? "http://host.docker.internal:8080", log: (msg, extra) => console.log(`[computers] ${msg}`, extra ?? "") });
+  const computers = new Computers(instance, driver, { apiUrl: opts.runtimeApiUrl ?? "http://host.docker.internal:8080", log: (msg, extra) => console.log(`[computers] ${msg}`, extra ?? ""), chatModelFactory: opts.chatModelFactory, cloudflared: opts.cloudflared, remote: opts.remote });
   instance.computers = computers;
   if (driver) computers.start();
   app.addHook("onClose", async () => computers.stop());
@@ -275,7 +281,8 @@ export async function buildApp(opts: AppOptions) {
   app.addHook("onClose", async () => ownerChat.close());
   await app.register(fastifyWebsocket);
   app.addHook("onSend", async (req, _reply, payload) => {
-    if (!req.url.startsWith("/api/")) return payload;
+    // A computer's runtime fetching its own proxy or VPN config needs it in the clear (only it may ask).
+    if (!req.url.startsWith("/api/") || (req.url === "/api/browser/network" && req.principal?.kind === "computer")) return payload;
     if (typeof payload === "string") return redactProviderKeys(payload);
     if (Buffer.isBuffer(payload)) {
       const text = payload.toString("utf8"), filtered = redactProviderKeys(text);
@@ -314,6 +321,19 @@ export async function buildApp(opts: AppOptions) {
 
   // ---- instance level: who am I, which organizations, browser session
   app.get("/healthz", async () => ({ ok: true }));
+  // A computer's player: a video file or HLS stream full-window (its stream and camera apps open it).
+  // The player page a computer's browser opens for videos and camera feeds (/api/browser/…: paired machines reach it too).
+  const player = async (req: FastifyRequest<{ Querystring: { src?: string } }>, reply: FastifyReply) => {
+    const src = String(req.query.src ?? "");
+    if (!/^https?:\/\//i.test(src) || src.length > 1000) throw badRequest("src must be an http(s) link");
+    reply.type("text/html; charset=utf-8").header("content-security-policy", "default-src 'none'; media-src * blob: data:; img-src * data:; connect-src *; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; worker-src blob:");
+    return `<!doctype html><meta charset="utf-8"><title>Player</title><style>html,body{margin:0;height:100%;background:#000}video{width:100%;height:100%;object-fit:contain}</style>` +
+      `<video id="v" autoplay muted playsinline controls loop></video><script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>` +
+      `<script>const src=${JSON.stringify(src).replace(/</g, "\\u003c")};const v=document.getElementById("v");` +
+      `if(/\\.m3u8(\\?|#|$)/i.test(src)&&window.Hls&&Hls.isSupported()){const h=new Hls({capLevelToPlayerSize:true});h.loadSource(src);h.attachMedia(v)}else v.src=src;</script>`;
+  };
+  app.get("/player", player);
+  app.get("/api/browser/player", player);
   app.get("/api/me", async (req) => instance.me(principalOf(req)));
 
   // ---- team runtimes: list their members and start a session (own token) for each.
@@ -374,6 +394,10 @@ export async function buildApp(opts: AppOptions) {
     r.addHook("preHandler", async (req) => {
       const { orgId } = req.params as { orgId?: string };
       const { service, actor } = await instance.resolve(principalOf(req), orgId);
+      // While it stops or is paused, people can only look; agents may still finish the runs they have.
+      if (actor.kind === "human" && req.method !== "GET" && req.method !== "HEAD" && service.runState !== "running") {
+        throw new ApiError(409, "org_paused", service.runState === "pausing" ? "the organization is stopping: wait until it has stopped, then play it again" : service.runState === "starting" ? "the organization starts once the one running now has stopped" : "the organization is paused: play it to make changes");
+      }
       req.svc = service;
       req.actor = actor;
     });
@@ -544,11 +568,22 @@ export async function buildApp(opts: AppOptions) {
     return reply.header("content-type", "text/plain; charset=utf-8").header("content-security-policy", "sandbox").send(await proposalDiff(svc.db, svc.orgId, req.params.id));
   });
   // ---- the world's computers: listed for everyone, watched and used by hand by the owner (and designers).
-  r.get("/computers", async (req) => ({ computers: computers.list(svcOf(req)) }));
+  r.get("/computers", async (req) => ({ computers: await computers.listAll(svcOf(req)) }));
   r.get<{ Params: { id: string } }>("/computers/:id", async (req) => computers.status(svcOf(req), req.params.id));
   r.post<{ Params: { id: string } }>("/computers/:id/stop", async (req) => {
     if (!(await computers.mayWatch(svcOf(req), actorOf(req)))) throw deny("only the owner, or people who may design the world, turn computers off");
     return computers.shutDown(svcOf(req), req.params.id);
+  });
+  r.put<{ Params: { id: string } }>("/computers/:id/network", async (req) =>
+    computers.setNetwork(svcOf(req), actorOf(req), req.params.id, parse(z.object({ secret: z.string().min(1).max(8000).nullable() }), req.body).secret));
+  r.post<{ Params: { id: string } }>("/computers/:id/pair", async (req) => computers.pair(svcOf(req), actorOf(req), req.params.id));
+  r.delete<{ Params: { id: string } }>("/computers/:id/pair", async (req) => computers.unpair(svcOf(req), actorOf(req), req.params.id));
+  r.get<{ Params: { id: string } }>("/computers/:id/requests", async (req) => ({ requests: await computers.requests(svcOf(req), req.params.id) }));
+  // Give a computer work. Agents may; among people, those who may use its screen (others chat with it).
+  r.post<{ Params: { id: string } }>("/computers/:id/requests", async (req) => {
+    const actor = actorOf(req);
+    if (actor.kind === "human" && !(await computers.mayWatch(svcOf(req), actor))) throw deny("only the owner, or people who may design the world, give the computers work; others chat with them");
+    return computers.request(svcOf(req), req.params.id, actorRef(actor), parse(computerRequestSchema, req.body));
   });
   r.get<{ Params: { id: string } }>("/computers/:id/screen", { websocket: true }, (socket, req) => {
     // Mouse and keyboard reach a logged-in browser: only from our own pages.
@@ -797,6 +832,21 @@ export async function buildApp(opts: AppOptions) {
     if (p?.kind !== "computer") return socket.close(4401, "computer token required");
     void computers.attachBridge(p.orgId, p.objectId, socket);
   });
+  // A paired machine checks it can reach Agentown here (no login).
+  app.get("/api/browser/hello", async () => ({ agentown: true }));
+  // A computer's runtime asks how to connect (its proxy or VPN) and, on a paired machine, fetches its image.
+  app.get("/api/browser/network", async (req) => {
+    const p = req.principal;
+    if (p?.kind !== "computer") throw deny("computer token required");
+    return computers.networkFor(p.orgId, p.objectId);
+  });
+  app.get("/api/browser/image", async (req, reply) => {
+    if (req.principal?.kind !== "computer") throw deny("computer token required");
+    const file = resolvePath(process.env.AGENTOWN_STATE_DIR ?? ".agentown", "images", "browser.tar.gz");
+    if (!existsSync(file)) throw notFound("computer image (this install keeps none for paired machines)");
+    return reply.type("application/gzip").send(createReadStream(file));
+  });
+  // Pairing another machine: the one command it runs fetches this script, which claims the link once.
 
   // ---- terminal: the WebSocket redeems the one-time ticket (the ticket names the org).
   const terminals = new Map<string, (reason: string) => void>();

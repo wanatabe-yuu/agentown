@@ -5,7 +5,7 @@ import type { ChatTool, ToolContext } from "./chat/types.ts";
 import { postTeamMessage } from "./conversations.ts";
 import type { Instance } from "./instance.ts";
 import { openProposal, type ProposalEngine, type ProposalRow, recordProposal } from "./proposals.ts";
-import { BROWSER_KEYS } from "./computers.ts";
+import { BROWSER_KEYS, computerRequestSchema } from "./computers.ts";
 import { callConnector, connectorAsks, connectorTools, listConnectors } from "./connectors.ts";
 import { queuePatch } from "./selfpatch.ts";
 import type { Service } from "./service.ts";
@@ -122,9 +122,25 @@ export function capabilityRegistry(tools: ChatTool[]): CapabilityDescriptor[] {
       effect: "write",
       approval: "never",
       executor: "kernel",
-      execute: async ({ instance, service }, { computer, ...a }) => {
+      execute: async ({ instance, service, actor }, { computer, ...a }) => {
         if (!instance.computers) throw badRequest("this install has no computers");
-        return { page: await instance.computers.act(service, computer, a) };
+        // Through the computer's queue: two agents on one computer take turns.
+        return { page: (await instance.computers.request(service, computer, actorRef(actor), { app: "browser", ...a })).result };
+      },
+    },
+    {
+      id: "computer",
+      title: "ask a computer",
+      description:
+        "Give one of the world's computers work (`agentown browser list` shows them, with their apps). It does its requests one at a time and answers when this one is done. Say it in words ({text}) and the computer works it out with its apps, or ask exactly: {app:'screen', show}, {app:'mcp', action:'tools'|'call', connector, tool, args}, {app:'stream', action:'play'|'stop', url}, {app:'camera', action:'look', question}.",
+      input: z.object({ computer: z.string().min(1).max(40), request: computerRequestSchema }).strict(),
+      permission: null,
+      effect: "write",
+      approval: "never",
+      executor: "kernel",
+      execute: async ({ instance, service, actor }, a) => {
+        if (!instance.computers) throw badRequest("this install has no computers");
+        return instance.computers.request(service, a.computer, actorRef(actor), a.request);
       },
     },
     {
@@ -260,6 +276,12 @@ export class CapabilityGateway {
       const world = id === "replace_world" ? a.world ?? null : ((await service.db.query("SELECT config->'world' AS w FROM organizations WHERE id=$1", [service.orgId])).rows[0].w ?? null);
       if (id === "patch_world" && !world) throw badRequest("world has no custom layout; use replace_world to create one");
       await this.instance.checkOrgWorld(service, id === "patch_world" ? (patchDocument(world, a.operations!) as Record<string, unknown>) : world);
+    }
+    if (needs && !owner && id === "task_action" && actor.kind === "agent") {
+      // Reviewing your own work can never be approved: say so now instead of queuing it for the owner.
+      const a = parsed.data as { id: string; action: string };
+      const mine = await service.db.query("SELECT 1 FROM tasks WHERE id=$1 AND org_id=$2 AND assignee_agent_id=$3", [a.id, service.orgId, actor.id]);
+      if (["approve", "reject"].includes(a.action) && mine.rows[0]) throw deny("cannot review your own work; to finish your task, end your reply with a summary");
     }
     if (needs && !owner) {
       // The same request asked again (an agent retrying) waits on the first one.

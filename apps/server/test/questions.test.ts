@@ -55,6 +55,25 @@ describe("agents wait for people", () => {
     await finishResumed(id);
   });
 
+  it("an agent that asks and then reports success (no BLOCKED: line) still waits for the answer", async () => {
+    const { id, run, g } = await start("Plan the tasting");
+    const asked = await env.call(env.token(worker), "POST", `/api/tasks/${id}/ask`, { question: "Which day?" });
+    await stop(run, g, "succeeded", "Asked the owner. **BLOCKED:** waiting for the answer");
+    expect((await task(id)).status).toBe("blocked");
+    await env.call(env.owner, "POST", `/api/proposals/${asked.body.questionId}/decide`, { verdict: "approve", note: "Saturday" });
+    expect((await task(id)).status).toBe("assigned");
+    await finishResumed(id);
+  });
+
+  it("approving your own task through the gateway is refused at once, not queued for the owner", async () => {
+    // lead-eng may review others' tasks (task.assign), so only the self-review rule stops it.
+    const id = (await env.call(env.owner, "POST", "/api/tasks", { title: "Write the menu", assigneeAgentId: "lead-eng" })).body.task.id;
+    const r = await env.call(env.token("lead-eng"), "POST", "/api/tools/task_action/invoke", { args: { id, action: "approve" } });
+    expect(r.status).toBe(403);
+    expect((await pending()).some((p) => p.payload?.args?.id === id)).toBe(false);
+    await env.call(env.owner, "POST", `/api/tasks/${id}/cancel`, {});
+  });
+
   it("nobody answers in time: the agent goes on with its fallback", async () => {
     const { id, run, g } = await start("Order cups");
     const asked = await env.call(env.token(worker), "POST", `/api/tasks/${id}/ask`, { question: "How many?", fallback: "200", timeoutMinutes: 5 });

@@ -536,6 +536,51 @@ const MIGRATIONS: string[] = [
      updated_at timestamptz NOT NULL DEFAULT now(),
      PRIMARY KEY (org_id, connector_id)
    );`,
+  // 26: an organization can be paused (nothing of it runs; one plays at a time on a machine).
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS paused_at timestamptz;`,
+  // 27: pausing is graceful: paused_at = asked to stop (runs in flight finish), stopped_at = nothing runs any more.
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS stopped_at timestamptz;
+   UPDATE organizations SET stopped_at = paused_at WHERE paused_at IS NOT NULL AND stopped_at IS NULL;`,
+  // 28: play while another organization runs: that one stops gracefully, this one starts once it has.
+  `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS start_queued_at timestamptz;`,
+  // 29: computers wait for requests like agents: one at a time, from agents, people, or their own camera.
+  `CREATE TABLE IF NOT EXISTS computer_requests (
+     id text PRIMARY KEY,
+     org_id text NOT NULL REFERENCES organizations(id),
+     object_id text NOT NULL,
+     requester text NOT NULL,
+     app text,
+     input jsonb NOT NULL,
+     status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','failed')),
+     result text,
+     created_at timestamptz NOT NULL DEFAULT now(),
+     started_at timestamptz,
+     finished_at timestamptz
+   );
+   CREATE INDEX IF NOT EXISTS computer_requests_object ON computer_requests(org_id, object_id, created_at DESC);`,
+  // 30: a computer's network secret (proxy address or WireGuard config, sealed), and machines paired to run one elsewhere.
+  `CREATE TABLE IF NOT EXISTS computer_secrets (
+     org_id text NOT NULL REFERENCES organizations(id),
+     object_id text NOT NULL,
+     ciphertext bytea NOT NULL,
+     updated_at timestamptz NOT NULL DEFAULT now(),
+     PRIMARY KEY (org_id, object_id)
+   );
+   CREATE TABLE IF NOT EXISTS computer_pairings (
+     hash text PRIMARY KEY,
+     org_id text NOT NULL REFERENCES organizations(id),
+     object_id text NOT NULL,
+     expires_at timestamptz NOT NULL,
+     claimed_at timestamptz
+   );
+   CREATE TABLE IF NOT EXISTS computer_machines (
+     org_id text NOT NULL REFERENCES organizations(id),
+     object_id text NOT NULL,
+     host text, os text, arch text, cpus int, memory_mb int,
+     paired_at timestamptz NOT NULL DEFAULT now(),
+     last_seen_at timestamptz,
+     PRIMARY KEY (org_id, object_id)
+   );`,
 ];
 
 /** Bring the schema up to date (or only up to version `upTo`, for upgrade tests). */

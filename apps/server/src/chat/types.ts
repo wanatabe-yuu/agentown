@@ -16,6 +16,8 @@ export type ChatConfig = z.infer<typeof chatConfigSchema>;
 export interface ToolCall { id: string; name: string; args: Record<string, unknown> }
 export interface Message {
   role: "user" | "assistant" | "tool"; text: string;
+  /** JPEG images (base64) shown with a user message: what a computer's camera sees. */
+  images?: string[];
   calls?: ToolCall[]; toolId?: string; isError?: boolean;
   /** Provider blocks (including thinking/compaction signatures) never leave the server. */
   native?: unknown[]; reasoning?: string;

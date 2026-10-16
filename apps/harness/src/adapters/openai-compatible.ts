@@ -1,4 +1,4 @@
-import { type AgentIdentity, NO_CREDENTIAL, runBashTool, taskPrompts } from "./common.ts";
+import { type AgentIdentity, blockedReason, NO_CREDENTIAL, runBashTool, taskPrompts } from "./common.ts";
 import { ScriptAdapter } from "./script.ts";
 import type { Adapter, RunContext, RunResult } from "./types.ts";
 import { SUMMARY_SYSTEM, taskContext, taskOutputLimit } from "./context.ts";
@@ -113,7 +113,8 @@ export class OpenAICompatibleAdapter implements Adapter {
       if (!calls.length) {
         if (choice.finish_reason === "length") return { outcome: "failed", summary: "hit the output token limit", usage };
         if (choice.finish_reason === "content_filter") return { outcome: "failed", summary: "the provider's content filter stopped the response", usage };
-        if (text.startsWith("BLOCKED:")) return { outcome: "blocked", summary: text.slice(8).trim(), usage };
+        const blocked = blockedReason(text);
+        if (blocked !== null) return { outcome: "blocked", summary: blocked, usage };
         return { outcome: "succeeded", summary: text || "done", usage };
       }
 

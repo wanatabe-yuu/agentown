@@ -133,7 +133,7 @@ describe("OpenAICompatibleAdapter", () => {
           ],
         },
       },
-      { status: 200, body: { choices: [{ finish_reason: "stop", message: { content: "BLOCKED: need a spec" } }] } },
+      { status: 200, body: { choices: [{ finish_reason: "stop", message: { content: "Asked the owner.\n\nBLOCKED: need a spec" } }] } },
     ];
     const result = await new OpenAICompatibleAdapter({ provider: "custom", baseUrl, apiKey: undefined, identity, sleep: noSleep }).run(context("llama3.3", "high"));
     expect(result).toMatchObject({ outcome: "blocked", summary: "need a spec" });

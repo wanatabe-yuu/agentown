@@ -193,6 +193,10 @@ case "$HOST_IP" in
   *) PUBLIC_IP=1 ;;
 esac
 
+# Machines paired to run a computer elsewhere download the computer image from this install.
+install -d -o agentown -g agentown -m 0750 "$STATE/images"
+install -o agentown -g agentown -m 0640 "$DL/$BROWSER" "$STATE/images/browser.tar.gz"
+
 if [ "$DRIVER" = kubernetes ]; then
   say "Loading agent image and applying cluster guard rails"
   kc() { k3s kubectl "$@"; }

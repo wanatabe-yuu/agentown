@@ -89,6 +89,18 @@ export function renderManifests(opts: { images: string[]; namespaces: AgentNames
         },
       },
       {
+        // The world's computers browse like a person's PC: any port on the public internet (plain
+        // HTTP, a proxy, a WireGuard endpoint), still never this cluster's or a private network.
+        apiVersion: "networking.k8s.io/v1",
+        kind: "NetworkPolicy",
+        metadata: { name: "computer-egress", namespace: ns },
+        spec: {
+          podSelector: { matchLabels: { "agentown.io/harness": "browser" } },
+          policyTypes: ["Egress"],
+          egress: [{ to: [{ ipBlock: { cidr: "0.0.0.0/0", except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10"] } }] }],
+        },
+      },
+      {
         apiVersion: "v1",
         kind: "ResourceQuota",
         metadata: { name: "agentown-quota", namespace: ns },

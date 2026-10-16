@@ -100,7 +100,8 @@ describe("the world's computers", () => {
     await fakeBridge(env.driver.tokens.get(pod!.runtimeId)!);
     const r = await pending;
     expect(r.status).toBe(200);
-    expect(sent.find((m) => m.method === "Page.navigate")?.params.url).toBe("https://example.com");
+    // A computer naming no home page opens Google first; then the page it was asked for.
+    expect(sent.filter((m) => m.method === "Page.navigate").map((m) => m.params.url)).toEqual(["https://www.google.com", "https://example.com"]);
     const page: string = r.body.result.page;
     expect(page).toContain("URL: https://example.com");
     expect(page).toContain("heading: Example Domain");
@@ -126,9 +127,11 @@ describe("the world's computers", () => {
   it("the owner watches the screen and drives it by hand; agents cannot watch", async () => {
     const path = `/api/orgs/${env.instance.defaultOrgId}/computers/pc-1/screen`;
     const frames: any[] = [];
-    const viewer = await env.app.injectWS(path, { headers: { authorization: `Bearer ${env.owner}` } } as any, { onInit: (v) => v.on("message", (d: Buffer) => frames.push(JSON.parse(d.toString()))) });
+    const viewer = await env.app.injectWS(path, { headers: { authorization: `Bearer ${env.owner}` } } as any, { onInit: (v) => v.on("message", (d: Buffer, binary: boolean) => frames.push(binary ? { jpeg: d.toString() } : JSON.parse(d.toString()))) });
     await new Promise((r) => setTimeout(r, 300));
-    expect(frames).toContainEqual({ t: "frame", data: "SlBFRw==", w: 1280, h: 800 });
+    // Frames are binary JPEG (here the bytes "JPEG"); their page size comes once, as JSON.
+    expect(frames).toContainEqual({ jpeg: "JPEG" });
+    expect(frames).toContainEqual({ t: "size", w: 1280, h: 800 });
     expect(frames).toContainEqual(expect.objectContaining({ t: "page", url: "https://example.com", title: "Example Domain" }));
     sent.length = 0;
     viewer.send(JSON.stringify({ t: "mouse", type: "mousePressed", x: 5, y: 6, button: "left", clickCount: 1 }));
