@@ -10,13 +10,15 @@ Agents with real jobs, real permissions and their own computers, working in a 3D
 [![CI](https://github.com/wanatabe-yuu/agentown/actions/workflows/ci.yml/badge.svg)](https://github.com/wanatabe-yuu/agentown/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![A coffee store run by agents: baristas, a baker, a roaster and the shop cat, with your conversations and activity on the right](docs/images/office.jpg)
-
 </div>
+
+https://github.com/user-attachments/assets/88e922ae-86a7-4e63-b514-a38d6790aa09
 
 ## What it is
 
 Agentown runs an organization of AI agents on your own servers. Each agent is a lasting employee: a name, a job, a manager, a desk in the office, a workspace that survives restarts, and **permissions the server enforces**. A title like CEO or lead grants nothing by itself; only grants do. You watch and steer it all from the browser.
+
+![A coffee store run by agents: baristas, a baker, a roaster and the shop cat, with your conversations and activity on the right](docs/images/office.jpg)
 
 - **A real hierarchy.** The CEO hires from the job templates it was allowed, leads hand out work to their team, workers do it and send it up for review. Each step is checked against the reporting tree as it is *now*.
 - **Agents use the whole world.** Coffee machines, wall calendars, a cleaning robot and a trash can, cameras, edit PCs with a real browser and terminal. They use what their permissions reach, and **ask you** for the rest: you approve once, or grant the permission for good.
