@@ -20,7 +20,7 @@
     "zod": "4.6.5",
     "@fastify/static": "10.1.6",
     "yaml": "2.9.1",
-    "@anthropic-ai/sdk": "0.133.0"
+    "@anthropic-ai/sdk": "0.137.0"
   },
   "devDependencies": {
     "@types/pg": "8.23.1",
